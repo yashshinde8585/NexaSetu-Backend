@@ -7,18 +7,14 @@ dotenv.config();
 const app = express();
 
 const helmet = require('helmet');
-const mongoSanitize = require('express-mongo-sanitize');
-const xss = require('xss-clean');
-const hpp = require('hpp');
 const rateLimit = require('express-rate-limit');
 
 const authRoutes = require('./routes/authRoutes');
 
 app.use(helmet());
-app.use(mongoSanitize());
-app.use(xss());
-app.use(hpp());
+app.use(cors()); // CORS first to handle OPTIONS preflight
 
+// Rate limiting (optional, but keep early)
 const limiter = rateLimit({
     windowMs: 15 * 60 * 1000,
     max: 100,
@@ -26,9 +22,10 @@ const limiter = rateLimit({
 });
 app.use('/api', limiter);
 
-app.use(cors());
+// Body parsing
 app.use(express.json({ limit: '10kb' }));
 
+// Routes
 app.use('/api/auth', authRoutes);
 
 app.get('/', (req, res) => {
