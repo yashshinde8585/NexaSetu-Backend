@@ -10,6 +10,11 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 
 const authRoutes = require('./routes/authRoutes');
+const projectRoutes = require('./routes/projectRoutes');
+const taskRoutes = require('./routes/taskRoutes');
+const aiRoutes = require('./routes/aiRoutes');
+const githubRoutes = require('./routes/githubRoutes');
+const dashboardRoutes = require('./routes/dashboardRoutes');
 
 app.use(helmet());
 app.use(cors()); // CORS first to handle OPTIONS preflight
@@ -27,6 +32,11 @@ app.use(express.json({ limit: '10kb' }));
 
 // Routes
 app.use('/api/auth', authRoutes);
+app.use('/api/projects', projectRoutes);
+app.use('/api/tasks', taskRoutes);
+app.use('/api/ai', aiRoutes);
+app.use('/api/github', githubRoutes);
+app.use('/api/dashboard', dashboardRoutes);
 
 app.get('/', (req, res) => {
     res.json({ message: 'NexaSetu API is running!' });
