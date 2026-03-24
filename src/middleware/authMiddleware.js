@@ -15,7 +15,10 @@ const protect = async (req, res, next) => {
     }
 
     // 2. Verify token
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'yoursecretkey');
+    if (!process.env.JWT_SECRET) {
+      throw new Error('JWT_SECRET is missing');
+    }
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
     // 3. Check if user still exists
     const user = await User.findById(decoded.id).select('-password');

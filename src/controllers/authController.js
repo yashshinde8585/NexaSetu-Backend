@@ -2,7 +2,10 @@ const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 
 const signToken = (id) => {
-  return jwt.sign({ id: id.toString() }, process.env.JWT_SECRET || 'yoursecretkey', {
+  if (!process.env.JWT_SECRET) {
+      throw new Error('JWT_SECRET is not defined in environment variables');
+  }
+  return jwt.sign({ id: id.toString() }, process.env.JWT_SECRET, {
     expiresIn: '30d',
   });
 };
@@ -12,8 +15,8 @@ exports.registerUser = async (req, res) => {
     const { name, email, password } = req.body;
 
     // 1. Basic Validation
-    if (!name || !email || !password) {
-      return res.status(400).json({ status: 'fail', message: 'All fields are required' });
+    if (!name || !email || !password || typeof name !== 'string' || typeof email !== 'string') {
+      return res.status(400).json({ status: 'fail', message: 'All fields are required and must be valid' });
     }
 
     if (password.length < 8) {
@@ -53,7 +56,7 @@ exports.loginUser = async (req, res) => {
     const { email, password } = req.body;
 
     // 1. Validate inputs
-    if (!email || !password) {
+    if (!email || !password || typeof email !== 'string') {
       return res.status(400).json({ status: 'fail', message: 'Email and password are required' });
     }
 
