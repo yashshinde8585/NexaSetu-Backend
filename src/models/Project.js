@@ -20,6 +20,15 @@ const projectSchema = new mongoose.Schema({
     repo: String,
     fullName: String,
   },
+  lastTaskNumber: {
+    type: Number,
+    default: 0,
+  },
+  workspaceId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Workspace',
+    required: true,
+  },
 }, {
   timestamps: true,
 });

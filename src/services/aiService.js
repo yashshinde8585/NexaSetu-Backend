@@ -1,4 +1,5 @@
 const axios = require('axios');
+const aiHelpers = require('../utils/aiHelpers');
 
 const ROUTER_URL = "https://router.huggingface.co/v1/chat/completions";
 
@@ -22,12 +23,12 @@ exports.extractTaskFromText = async (text) => {
 
   const systemPrompt = `
     You are a task management assistant. Your goal is to extract ONE concise and clear task from the given input text. 
-    Map the status based on keywords (e.g., "finished", "completed", "done" -> "done"; "working", "ongoing" -> "in_progress"; default -> "todo").
+    Map the status based on keywords (e.g., "finished", "completed", "done" -> "done"; "verifying", "reviewing" -> "in_review"; "working", "ongoing" -> "in_progress"; default -> "todo").
     
     Return the result ONLY as a JSON object with these fields:
     - title: (short, clear string)
     - description: (brief context, optional string)
-    - status: (string, one of: "todo", "in_progress", "done")
+    - status: (string, one of: "todo", "in_progress", "in_review", "done")
   `.trim();
 
   for (const currentModel of MODEL_FALLBACK_LIST) {
@@ -56,12 +57,11 @@ exports.extractTaskFromText = async (text) => {
         const resultText = data.choices[0].message.content;
 
         // Try to parse the JSON output from the AI
-        const jsonMatch = resultText.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-          const parsed = JSON.parse(jsonMatch[0]);
-          
+        const parsed = aiHelpers.extractAndParseJSON(resultText);
+        
+        if (parsed) {
           let status = parsed.status || 'todo';
-          if (!['todo', 'in_progress', 'done'].includes(status)) {
+          if (!['todo', 'in_progress', 'in_review', 'done'].includes(status)) {
               status = 'todo';
           }
 

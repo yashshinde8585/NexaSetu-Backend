@@ -5,9 +5,11 @@ const protect = async (req, res, next) => {
   try {
     let token;
 
-    // 1. Get token from header
+    // 1. Get token from header or cookies
     if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
       token = req.headers.authorization.split(' ')[1];
+    } else if (req.cookies.jwt) {
+      token = req.cookies.jwt;
     }
 
     if (!token) {
@@ -15,9 +17,6 @@ const protect = async (req, res, next) => {
     }
 
     // 2. Verify token
-    if (!process.env.JWT_SECRET) {
-      throw new Error('JWT_SECRET is missing');
-    }
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
     // 3. Check if user still exists
@@ -33,5 +32,13 @@ const protect = async (req, res, next) => {
     res.status(401).json({ status: 'fail', message: 'Not authorized, invalid token' });
   }
 };
+const restrictTo = (...roles) => {
+  return (req, res, next) => {
+    if (!roles.includes(req.user.role)) {
+      return res.status(403).json({ status: 'fail', message: 'You do not have permission to perform this action' });
+    }
+    next();
+  };
+};
 
-module.exports = { protect };
+module.exports = { protect, restrictTo };
