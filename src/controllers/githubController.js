@@ -2,6 +2,7 @@ const githubService = require('../services/githubService');
 const User = require('../models/User');
 const Project = require('../models/Project');
 const Task = require('../models/Task');
+const AgentOrchestrator = require('../services/agentOrchestrator');
 
 /**
  * Controller for handling GitHub-related operations
@@ -109,6 +110,28 @@ exports.getActivitySuggestions = async (req, res) => {
       project.githubRepo.owner,
       project.githubRepo.repo
     );
+
+    // 🧠 Trigger Harvester Agent via Orchestrator for each activity
+    // This happens in the background.
+    for (const item of activity) {
+        AgentOrchestrator.handleEvent({
+            type: 'GITHUB_ACTIVITY',
+            project: projectId,
+            user: req.user._id,
+            entityId: item.nodeId, 
+            entityType: 'github_event',
+            payload: {
+                projectId,
+                githubId: item.nodeId,
+                type: item.type,
+                message: item.message,
+                author: item.author,
+                statusHint: item.type === 'commit' ? 'done' : 'in_progress'
+            }
+        }).catch(err => {
+            console.error(`[AgentOrchestrator Error] Failed to handle GitHub activity ${item.nodeId}:`, err.message);
+        });
+    }
 
     const suggestions = await githubService.generateTaskSuggestions(activity, projectId);
 

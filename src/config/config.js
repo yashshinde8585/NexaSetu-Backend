@@ -1,0 +1,40 @@
+/**
+ * Central configuration validation and environment variable mapping for NexaSetu.
+ * Ensures the server fails fast if critical infrastructure settings are missing.
+ */
+
+const dotenv = require('dotenv');
+dotenv.config();
+
+const REQUIRED_VARS = [
+  'JWT_SECRET',
+  'DB_URI',
+  'HUGGINGFACE_API_KEY'
+];
+
+const missing = REQUIRED_VARS.filter(v => !process.env[v]);
+
+if (missing.length > 0) {
+  console.error('\x1b[31m[CRITICAL CONFIG ERROR]: The following environment variables are missing:\x1b[0m');
+  missing.forEach(v => console.error(`  - ${v}`));
+  console.error('\x1b[31mx--- ABORTING STARTUP ---x\x1b[0m');
+  process.exit(1);
+}
+
+module.exports = {
+  jwt: {
+    secret: process.env.JWT_SECRET,
+    expiresIn: process.env.JWT_EXPIRES_IN || '5d'
+  },
+  db: {
+    uri: process.env.DB_URI
+  },
+  ai: {
+    hfKey: process.env.HUGGINGFACE_API_KEY
+  },
+  app: {
+    port: process.env.PORT || 5000,
+    clientUrl: process.env.CLIENT_URL || 'http://localhost:5173',
+    nodeEnv: process.env.NODE_ENV || 'development'
+  }
+};
