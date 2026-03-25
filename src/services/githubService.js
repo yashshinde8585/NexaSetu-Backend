@@ -98,22 +98,53 @@ exports.generateTaskSuggestions = async (activity, projectId) => {
   }).distinct('githubId');
 
   const existingIdsSet = new Set(existingGithubIds);
+  const resourceService = require('./resourceService');
 
   for (const item of activity) {
+    // 1. Process Direct Context (Transitions for Existing Tasks)
+    // Regex for "Fixes #(\d+)" or "Closes #(\d+)" patterns
+    const taskRefs = item.message.match(/(?:Fixes|Closes|Resolves)\s#(\d+)/gi);
+    if (taskRefs) {
+      for (const ref of taskRefs) {
+        const taskNum = parseInt(ref.split('#')[1]);
+        const task = await Task.findOne({ project: projectId, taskNumber: taskNum });
+        
+        if (task && task.status !== 'done') {
+          // If PR merged or commit pushed to main logic
+          if (item.type === 'pull_request' && item.status === 'closed') {
+            task.status = 'done';
+            task.completedAt = new Date();
+          } else if (item.type === 'pull_request') {
+             task.status = 'in_review';
+          } else {
+             // Commit pushed
+             task.status = 'in_progress';
+          }
+          await task.save();
+        }
+      }
+    }
+
+    // 2. Process Suggestions (New Tasks)
     // Skip if this activity item has already been converted to a task
     if (existingIdsSet.has(item.id)) continue;
 
     try {
       const extractedTask = await aiService.extractTaskFromText(item.message);
       
-      suggestions.push({
+      const suggestedTask = await Task.create({
         ...extractedTask,
+        project: projectId,
         githubId: item.id,
         githubUrl: item.url,
-        type: item.type,
-        originalMessage: item.message,
-        author: item.author
+        source: 'github',
+        isAiGenerated: true
       });
+
+      // Step 2: AI Auto-Triage & Assignment
+      await resourceService.autoAssignTask(suggestedTask._id);
+      
+      suggestions.push(suggestedTask);
     } catch (error) {
       // Skip failed AI extractions
     }

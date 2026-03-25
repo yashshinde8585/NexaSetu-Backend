@@ -1,83 +1,148 @@
-const jwt = require('jsonwebtoken');
 const User = require('../models/User');
+const jwt = require('jsonwebtoken');
+const Workspace = require('../models/Workspace');
+const mongoose = require('mongoose');
+const Invitation = require('../models/Invitation');
 
-const signToken = (id) => {
-  if (!process.env.JWT_SECRET) {
-      throw new Error('JWT_SECRET is not defined in environment variables');
-  }
-  return jwt.sign({ id: id.toString() }, process.env.JWT_SECRET, {
-    expiresIn: '30d',
+const signToken = id => {
+  return jwt.sign({ id }, process.env.JWT_SECRET, {
+    expiresIn: process.env.JWT_EXPIRES_IN || '5d'
+  });
+};
+
+const createSendToken = (user, statusCode, res) => {
+  const token = signToken(user._id);
+  const cookieOptions = {
+    expires: new Date(
+      Date.now() + 90 * 24 * 60 * 60 * 1000
+    ),
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production'
+  };
+
+  res.cookie('jwt', token, cookieOptions);
+
+  // Remove password from output
+  user.password = undefined;
+
+  res.status(statusCode).json({
+    status: 'success',
+    token,
+    data: {
+      user
+    }
   });
 };
 
 exports.registerUser = async (req, res) => {
   try {
-    const { name, email, password } = req.body;
+    const { name, email, password, role, assignedProjectId, workspaceName, plan } = req.body;
+    
+    if (!name || !email || !password) return res.status(400).json({ status: 'fail', message: 'Missing fields' });
 
-    // 1. Basic Validation
-    if (!name || !email || !password || typeof name !== 'string' || typeof email !== 'string') {
-      return res.status(400).json({ status: 'fail', message: 'All fields are required and must be valid' });
+    const existingUser = await User.findOne({ email });
+    if (existingUser) return res.status(400).json({ status: 'fail', message: 'Email already exists' });
+
+    // Multi-tenant Assignment Logic
+    const userId = new mongoose.Types.ObjectId();
+    let workspaceId;
+    let finalRole = role || 'ADMIN'; 
+    let finalWorkspaceDisplayName;
+
+    const invitation = await Invitation.findOne({ email, status: 'pending' });
+    
+    if (invitation) {
+      workspaceId = invitation.workspaceId;
+    } else if (finalRole === 'ADMIN') {
+      finalWorkspaceDisplayName = workspaceName || `${name}'s Hub`;
+      const newWorkspace = await Workspace.create({ 
+        name: finalWorkspaceDisplayName, 
+        admin: userId, // Link to the pre-allocated user ID
+        subscription: { plan: plan || 'free' }
+      });
+      workspaceId = newWorkspace._id;
+    } else {
+      return res.status(400).json({ status: 'fail', message: 'Registration requires invitation or ADMIN status' });
     }
 
-    if (password.length < 8) {
-      return res.status(400).json({ status: 'fail', message: 'Password must be at least 8 characters long' });
-    }
-
-    // 2. Check for existing user
-    const existingUser = await User.findOne({ email: email.toLowerCase() });
-    if (existingUser) {
-      return res.status(409).json({ status: 'fail', message: 'Email already registered' });
-    }
-
-    // 3. Create user
     const user = await User.create({
-      name: name.trim(),
-      email: email.toLowerCase().trim(),
+      _id: userId, // Use the pre-allocated ID
+      name,
+      email,
       password,
+      role: finalRole,
+      workspaceId,
+      assignedProjectId: assignedProjectId || (invitation ? invitation.projectId : null)
     });
 
-    // 4. Send response
-    res.status(201).json({
-      status: 'success',
-      data: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        token: signToken(user._id),
-      },
-    });
-  } catch (error) {
-    res.status(500).json({ status: 'error', message: 'Internal Server Error' });
+    // If they used an invitation, mark it accepted
+    if (invitation) {
+      invitation.status = 'accepted';
+      await invitation.save();
+    }
+
+    createSendToken(user, 201, res);
+  } catch (err) {
+    res.status(500).json({ status: 'error', message: err.message });
   }
 };
 
 exports.loginUser = async (req, res) => {
   try {
     const { email, password } = req.body;
+    if (!email || !password) return res.status(400).json({ status: 'fail', message: 'Please provide email and password' });
 
-    // 1. Validate inputs
-    if (!email || !password || typeof email !== 'string') {
-      return res.status(400).json({ status: 'fail', message: 'Email and password are required' });
+    const user = await User.findOne({ email }).select('+password');
+    if (!user || !(await user.comparePassword(password))) {
+      return res.status(401).json({ status: 'fail', message: 'Incorrect email or password' });
     }
 
-    // 2. Find user
-    const user = await User.findOne({ email: email.toLowerCase().trim() });
-
-    // 3. Verify user and password
-    if (user && (await user.comparePassword(password))) {
-      res.status(200).json({
-        status: 'success',
-        data: {
-          id: user._id,
-          name: user.name,
-          email: user.email,
-          token: signToken(user._id),
-        },
-      });
-    } else {
-      res.status(401).json({ status: 'fail', message: 'Invalid email or password' });
-    }
-  } catch (error) {
-    res.status(500).json({ status: 'error', message: 'Internal Server Error' });
+    createSendToken(user, 200, res);
+  } catch (err) {
+    res.status(500).json({ status: 'error', message: err.message });
   }
 };
+
+exports.logoutUser = (req, res) => {
+  res.cookie('jwt', 'loggedout', {
+    expires: new Date(Date.now() + 10 * 1000),
+    httpOnly: true
+  });
+  res.status(200).json({ status: 'success' });
+};
+
+exports.getMe = async (req, res) => {
+    res.status(200).json({
+      status: 'success',
+      data: {
+        user: req.user
+      }
+    });
+};
+
+exports.activateInvitation = async (req, res) => {
+  try {
+    const { token, name, password } = req.body;
+    if (!token || !name || !password) return res.status(400).json({ status: 'fail', message: 'Missing activation data' });
+
+    const invitation = await Invitation.findOne({ token, status: 'pending', expiresAt: { $gt: Date.now() } });
+    if (!invitation) return res.status(400).json({ status: 'fail', message: 'Invalid or expired invitation' });
+
+    const user = await User.create({
+      name,
+      email: invitation.email,
+      password,
+      role: invitation.role,
+      workspaceId: invitation.workspaceId,
+      assignedProjectId: invitation.projectId
+    });
+
+    await Invitation.deleteOne({ _id: invitation._id });
+
+    createSendToken(user, 201, res);
+  } catch (err) {
+    if (err.code === 11000) return res.status(400).json({ status: 'fail', message: 'Email already registered' });
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+};
+
