@@ -4,21 +4,12 @@ const AILog = require('../models/AILog');
 const harvesterAgent = require('./harvesterAgent');
 const schedulerAgent = require('./schedulerAgent');
 const actionExecutor = require('./actionExecutor');
-
-/**
- * Agent Orchestrator: The "Brain" of NexaSetu.
- * Coordinates between events, decisions, and agents.
- */
+const aiService = require('./aiService'); // Add this for processCommand
 
 class AgentOrchestrator {
   constructor() {
     this.name = 'Orchestrator';
   }
-
-  /**
-   * Main entry point for any system event.
-   * Event { type, payload, project, user, entityId, entityType }
-   */
   async handleEvent(event) {
     try {
       const { type, payload, project, user, entityId, entityType } = event;
@@ -58,10 +49,11 @@ class AgentOrchestrator {
           break;
 
         case 'TASK_CREATED':
+        case 'TASK_UPDATED':
           agent = 'Portfolio';
           decision = 'metric updated';
           actionTaken = 're-calculated project health score';
-          reason = 'New entry impact assessment';
+          reason = type === 'TASK_CREATED' ? 'New entry impact assessment' : 'Status/Assignment change impact';
           break;
 
         default:
@@ -92,9 +84,6 @@ class AgentOrchestrator {
     }
   }
 
-  /**
-   * Proactive scan for delayed tasks (Periodic Brain Activity)
-   */
   async scanForDelays() {
     const now = new Date();
     const tasks = await Task.find({
@@ -119,6 +108,27 @@ class AgentOrchestrator {
                 payload: task
             });
         }
+    }
+  }
+
+  async processCommand(prompt, user) {
+    try {
+        console.log(`[AgentOrchestrator] Processing command for user ${user._id}`);
+        
+        const response = await aiService.processPrompt(prompt);
+        
+        return {
+            status: 'success',
+            response,
+            processedAt: new Date()
+        };
+    } catch (error) {
+        console.error('[AgentOrchestrator] Command routing failed:', error);
+        return {
+            status: 'error',
+            message: 'Failed to process strategic command',
+            error: error.message
+        };
     }
   }
 }

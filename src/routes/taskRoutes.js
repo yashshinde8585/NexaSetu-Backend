@@ -1,12 +1,14 @@
 const express = require('express');
-const { createTask, getTasks, updateTask } = require('../controllers/taskController');
-const { protect } = require('../middleware/authMiddleware');
+const { createTask, getTasks, updateTask, getMyTasks } = require('../controllers/taskController');
+const { protect, requirePermission } = require('../middleware/authMiddleware');
+const { PERMISSIONS } = require('../config/permissions');
 
 const router = express.Router();
 
 router.use(protect); // Protect all task routes
 
-router.post('/', createTask);
+router.post('/', requirePermission(PERMISSIONS.CREATE_TASKS), createTask);
+router.get('/my-tasks', getMyTasks);
 router.get('/project/:projectId', getTasks);
 router.patch('/:id', updateTask);
 

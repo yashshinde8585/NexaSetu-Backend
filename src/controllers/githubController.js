@@ -4,9 +4,7 @@ const Project = require('../models/Project');
 const Task = require('../models/Task');
 const AgentOrchestrator = require('../services/agentOrchestrator');
 
-/**
- * Controller for handling GitHub-related operations
- */
+// Controller for handling GitHub-related operations
 
 // 1. Connect User Github Account
 exports.connectGithub = async (req, res) => {
@@ -23,7 +21,7 @@ exports.connectGithub = async (req, res) => {
     const user = await User.findByIdAndUpdate(req.user._id, {
       githubId: githubUser.id.toString(),
       githubAccessToken: accessToken
-    }, { new: true });
+    }, { returnDocument: 'after' });
 
     res.status(200).json({
       status: 'success',
@@ -70,10 +68,17 @@ exports.linkProject = async (req, res) => {
       return res.status(400).json({ status: 'fail', message: 'Project ID and Repository info are required' });
     }
 
+    const isAdminOrManager = req.user.role === 'WORKSPACE_ADMIN' || req.user.role === 'WORKSPACE_MANAGER' || req.user.role === 'ADMIN' || req.user.role === 'MANAGER';
+    
+    const filter = { _id: projectId, workspaceId: req.user.workspaceId };
+    if (!isAdminOrManager) {
+        filter.createdBy = req.user._id;
+    }
+
     const project = await Project.findOneAndUpdate(
-      { _id: projectId, createdBy: req.user._id },
+      filter,
       { githubRepo: repoInfo },
-      { new: true }
+      { returnDocument: 'after' }
     );
 
     if (!project) {
@@ -94,8 +99,16 @@ exports.linkProject = async (req, res) => {
 exports.getActivitySuggestions = async (req, res) => {
   try {
     const { projectId } = req.params;
-    // Security: Ensure project exists and user is a member
-    const project = await Project.findOne({ _id: projectId, members: req.user._id });
+    const isAdminOrManager = req.user.role === 'WORKSPACE_ADMIN' || req.user.role === 'WORKSPACE_MANAGER' || req.user.role === 'ADMIN' || req.user.role === 'MANAGER';
+    
+    // Security: Ensure project exists and user is a member OR an admin in the workspace
+    const projectFilter = { _id: projectId, workspaceId: req.user.workspaceId };
+    if (!isAdminOrManager) {
+        projectFilter.members = req.user._id;
+    }
+
+    const project = await Project.findOne(projectFilter);
+    
     if (!project || !project.githubRepo) {
       return res.status(403).json({ status: 'fail', message: 'Project not found, not linked to GitHub, or access denied' });
     }
@@ -111,8 +124,6 @@ exports.getActivitySuggestions = async (req, res) => {
       project.githubRepo.repo
     );
 
-    // 🧠 Trigger Harvester Agent via Orchestrator for each activity
-    // This happens in the background.
     for (const item of activity) {
         AgentOrchestrator.handleEvent({
             type: 'GITHUB_ACTIVITY',
@@ -152,8 +163,13 @@ exports.approveTasks = async (req, res) => {
        return res.status(400).json({ status: 'fail', message: 'Project ID and tasks array are required' });
     }
 
-    // Security: Ensure user is member of the project
-    const project = await Project.findOne({ _id: projectId, members: req.user._id });
+    const isAdminOrManager = req.user.role === 'WORKSPACE_ADMIN' || req.user.role === 'WORKSPACE_MANAGER' || req.user.role === 'ADMIN' || req.user.role === 'MANAGER';
+    const projectFilter = { _id: projectId, workspaceId: req.user.workspaceId };
+    if (!isAdminOrManager) {
+        projectFilter.members = req.user._id;
+    }
+
+    const project = await Project.findOne(projectFilter);
     if (!project) {
       return res.status(403).json({ status: 'fail', message: 'Access denied to this project' });
     }

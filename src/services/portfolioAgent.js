@@ -1,19 +1,14 @@
 const Project = require('../models/Project');
 const Task = require('../models/Task');
 
-/**
- * Portfolio Agent: Cross-Project Intelligence.
- * Analyzes the entire organization's health to prioritize attention and resources.
- */
+
 
 class PortfolioAgent {
   constructor() {
     this.name = 'Portfolio';
   }
 
-  /**
-   * Performs an organizational-level audit of all projects.
-   */
+  
   async performAudit(projects, resources) {
     try {
       const recommendations = [];

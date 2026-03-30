@@ -1,29 +1,80 @@
+const mongoose = require('mongoose');
 const Project = require('../models/Project');
 const Task = require('../models/Task');
+const { getProjectAccessQuery } = require('../utils/queryHelpers');
 
-/**
- * Controller for aggregating dashboard analytics
- */
+// Controller for aggregating dashboard analytics
 
 exports.getDashboardStats = async (req, res) => {
   try {
-    // 1. Get all projects where the user is a creator or member
-    const projects = await Project.find({
-      $or: [
-        { createdBy: req.user._id },
-        { members: req.user._id }
-      ]
-    }).populate('createdBy', 'name email').populate('members', 'name email');
+    const { sprintId } = req.query;
+    const sprintFilter = sprintId ? new mongoose.Types.ObjectId(sprintId) : null;
+
+    // 1. Get all projects authorized for this user
+    const projects = await Project.find(getProjectAccessQuery(req.user))
+      .populate('createdBy', 'name email')
+      .populate('members', 'name email');
 
     const projectIds = projects.map(p => p._id);
+    const projectsInSprintIds = projects.filter(p => p.sprint?.toString() === sprintId).map(p => p._id);
 
-    // 2. Aggregate overall and project-wise stats in one scan
+    // Initial filter for the aggregation
+    const baseMatch = { project: { $in: projectIds } };
+    if (sprintFilter) {
+      baseMatch.$or = [
+        { sprint: sprintFilter },
+        { 
+          $and: [
+            { sprint: { $exists: false } },
+            { project: { $in: projectsInSprintIds } }
+          ]
+        },
+        { 
+          $and: [
+            { sprint: null },
+            { project: { $in: projectsInSprintIds } }
+          ]
+        }
+      ];
+    }
+
+    // 2. Aggregate stats (Optimized: Match before Lookup)
     const aggregationResult = await Task.aggregate([
-      { $match: { project: { $in: projectIds } } },
+      { $match: baseMatch },
       {
         $facet: {
+
           overallStats: [
             { $group: { _id: "$status", count: { $sum: 1 } } }
+          ],
+          personalStats: [
+            { $match: { assignedUser: req.user._id } },
+            { $group: { _id: "$status", count: { $sum: 1 } } }
+          ],
+          workloadStats: [
+            { $match: { status: { $ne: 'done' }, assignedUser: { $ne: null } } },
+            { $group: { _id: "$assignedUser", tasks: { $sum: 1 } } },
+            { $sort: { tasks: -1 } },
+            { $limit: 5 },
+            {
+              $lookup: {
+                from: 'users',
+                localField: '_id',
+                foreignField: '_id',
+                as: 'userData'
+              }
+            },
+            { $unwind: '$userData' },
+            {
+              $project: {
+                _id: 0,
+                name: '$userData.name',
+                tasks: 1
+              }
+            }
+          ],
+          aiImpact: [
+            { $group: { _id: "$isAiGenerated", count: { $sum: 1 } } }
           ],
           projectWiseStats: [
             { 
@@ -59,6 +110,22 @@ exports.getDashboardStats = async (req, res) => {
                       }, 1, 0
                     ] 
                   } 
+                },
+                // Personal insights for the current user
+                myTotal: { $sum: { $cond: [{ $eq: ["$assignedUser", new mongoose.Types.ObjectId(req.user._id)] }, 1, 0] } },
+                myDone: { $sum: { $cond: [{ $and: [{ $eq: ["$assignedUser", new mongoose.Types.ObjectId(req.user._id)] }, { $eq: ["$status", "done"] }] }, 1, 0] } },
+                myDelayed: { 
+                  $sum: { 
+                    $cond: [
+                      { 
+                        $and: [
+                          { $eq: ["$assignedUser", new mongoose.Types.ObjectId(req.user._id)] },
+                          { $ne: ["$status", "done"] },
+                          { $lt: ["$dueDate", new Date()] }
+                        ] 
+                      }, 1, 0
+                    ] 
+                  } 
                 }
               } 
             }
@@ -67,8 +134,26 @@ exports.getDashboardStats = async (req, res) => {
       }
     ]);
 
-    const statusStats = aggregationResult[0].overallStats;
-    const projectStats = aggregationResult[0].projectWiseStats;
+    // 3. Post-process results with defensive checks
+    const raw = aggregationResult[0] || { 
+      overallStats: [], 
+      personalStats: [], 
+      workloadStats: [], 
+      aiImpact: [], 
+      projectWiseStats: [] 
+    };
+
+    const workload = raw.workloadStats || [];
+
+    const aiImpactRaw = raw.aiImpact || [];
+    const aiStats = {
+        ai: aiImpactRaw.find(a => a._id === true)?.count || 0,
+        manual: aiImpactRaw.find(a => a._id === false)?.count || 0
+    };
+
+    const statusStats = raw.overallStats || [];
+    const personalRaw = raw.personalStats || [];
+    const projectStats = raw.projectWiseStats || [];
 
     const stats = {
       todo: 0,
@@ -78,9 +163,21 @@ exports.getDashboardStats = async (req, res) => {
       total: 0
     };
 
+    const personal = {
+       active: 0,
+       completed: 0,
+       total: 0
+    };
+
     statusStats.forEach(s => {
       stats[s._id] = s.count;
       stats.total += s.count;
+    });
+
+    personalRaw.forEach(s => {
+       if (s._id === 'done') personal.completed += s.count;
+       else personal.active += s.count;
+       personal.total += s.count;
     });
 
     // Combine project details with stats
@@ -93,7 +190,10 @@ exports.getDashboardStats = async (req, res) => {
         inReview: 0,
         aiGenerated: 0,
         delayed: 0,
-        atRisk: 0
+        atRisk: 0,
+        myTotal: 0,
+        myDone: 0,
+        myDelayed: 0
       };
       
       const percentage = pStat.total > 0 ? Math.round((pStat.done / pStat.total) * 100) : 0;
@@ -134,7 +234,12 @@ exports.getDashboardStats = async (req, res) => {
         riskLevel: healthScore < 50 || pStat.delayed > 5 ? 'High' : (healthScore < 80 || pStat.delayed > 2 ? 'Medium' : 'Low'),
         createdAt: p.createdAt,
         createdBy: p.createdBy,
-        members: p.members
+        members: p.members,
+        myTasksTotal: pStat.myTotal,
+        myTasksCompleted: pStat.myDone,
+        myTasksDelayed: pStat.myDelayed,
+        myPercentage: pStat.myTotal > 0 ? Math.round((pStat.myDone / pStat.myTotal) * 100) : 0,
+        sprint: p.sprint
       };
     });
 
@@ -148,6 +253,9 @@ exports.getDashboardStats = async (req, res) => {
       status: 'success',
       data: {
         summary: stats,
+        personal,
+        workload: workload,
+        aiImpact: aiStats,
         projects: enrichedProjects,
         recentActivity
       }

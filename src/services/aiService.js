@@ -1,24 +1,19 @@
 const axios = require('axios');
 const aiHelpers = require('../utils/aiHelpers');
 
-const ROUTER_URL = "https://router.huggingface.co/v1/chat/completions";
+const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
 
-// List of available models to try in sequence
+// High-speed Groq models for instant task extraction
 const MODEL_FALLBACK_LIST = [
-  "mistralai/Mistral-7B-Instruct-v0.3",
-  "meta-llama/Llama-3.2-3B-Instruct",
-  "Qwen/Qwen2.5-72B-Instruct",
-  "mistralai/Mistral-7B-Instruct-v0.2"
+  "llama-3.1-8b-instant",
+  "llama-3.3-70b-versatile",
+  "mixtral-8x7b-32768"
 ];
 
-/**
- * Extracts a task from raw text using a prompt.
- * Features a fallback mechanism to handle model availability on the router.
- */
 exports.extractTaskFromText = async (text) => {
-  const apiKey = process.env.HUGGINGFACE_API_KEY;
+  const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) {
-    throw new Error('Hugging Face API key is missing. Ensure HUGGINGFACE_API_KEY is set in .env');
+    throw new Error('Groq API key is missing. Ensure GROQ_API_KEY is set in .env');
   }
 
   const systemPrompt = `
@@ -37,7 +32,7 @@ exports.extractTaskFromText = async (text) => {
 
     while (retryCount < maxRetries) {
       try {
-        const response = await axios.post(ROUTER_URL, {
+        const response = await axios.post(GROQ_URL, {
           model: currentModel,
           messages: [
             { role: "system", content: systemPrompt },
@@ -71,7 +66,7 @@ exports.extractTaskFromText = async (text) => {
             status: status,
           };
         } else {
-          break; // Try next model
+          break;
         }
 
       } catch (error) {
@@ -91,10 +86,36 @@ exports.extractTaskFromText = async (text) => {
           continue;
         }
 
-        break; // Try next model
+        break;
       }
     }
   }
 
-  throw new Error('All available AI models failed to process your request. Please check your HUGGINGFACE_API_KEY or connection.');
+  throw new Error('All available AI models failed to process your request. Please check your GROQ_API_KEY or connection.');
 };
+
+
+exports.processPrompt = async (prompt) => {
+  const apiKey = process.env.GROQ_API_KEY;
+  if (!apiKey) throw new Error('GROQ_API_KEY is not set');
+
+  try {
+    const response = await axios.post(GROQ_URL, {
+      model: "llama-3.3-70b-versatile",
+      messages: [{ role: "user", content: prompt }],
+      max_tokens: 800,
+    }, {
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      timeout: 15000,
+    });
+
+    return response.data.choices[0].message.content;
+  } catch (error) {
+    console.error('[AIService] Failed strategic processing:', error);
+    throw error;
+  }
+};
+

@@ -1,15 +1,19 @@
+const mongoose = require('mongoose');
 const Task = require('../models/Task');
 const Project = require('../models/Project');
 const AgentOrchestrator = require('../services/agentOrchestrator');
 const { calculateDelayStatus } = require('../utils/taskUtils');
+const { isManagerOrAdmin } = require('../utils/authHelpers');
+const { getTaskAccessQuery, getProjectAccessQuery } = require('../utils/queryHelpers');
+const catchAsync = require('../utils/catchAsync');
 
 // Create new task in a project
-exports.createTask = async (req, res) => {
-  try {
-    const { title, description, project, assignedUser, status, source, isAiGenerated, dueDate } = req.body;
+exports.createTask = catchAsync(async (req, res, next) => {
+    const { title, description, project, assignedUser, status, source, isAiGenerated, dueDate, sprint } = req.body;
 
-    // Check if project exists and user is member
-    const projectDoc = await Project.findOne({ _id: project, members: req.user.id });
+    const query = getProjectAccessQuery(req.user);
+    query._id = project;
+    const projectDoc = await Project.findOne(query);
     if (!projectDoc) {
       return res.status(404).json({ status: 'fail', message: 'Project not found or you are not a member' });
     }
@@ -18,6 +22,7 @@ exports.createTask = async (req, res) => {
       title,
       description,
       project,
+      sprint,
       assignedUser: assignedUser || null,
       status: status || 'todo',
       source: source || 'manual',
@@ -49,42 +54,95 @@ exports.createTask = async (req, res) => {
       status: 'success',
       data: { task },
     });
-  } catch (error) {
-    res.status(400).json({ status: 'fail', message: error.message });
-  }
-};
+});
 
 // Get all tasks for a project
-exports.getTasks = async (req, res) => {
-  try {
+exports.getTasks = catchAsync(async (req, res, next) => {
     const { projectId } = req.params;
-
-    // Check project member access
-    const project = await Project.findOne({ _id: projectId, members: req.user.id });
+    const { sprintId } = req.query;
+    
+    const projectQuery = getProjectAccessQuery(req.user);
+    projectQuery._id = projectId;
+    const project = await Project.findOne(projectQuery);
     if (!project) {
       return res.status(404).json({ status: 'fail', message: 'Project not found or access denied' });
     }
 
-    const tasks = await Task.find({ project: projectId }).populate('assignedUser', 'name email');
+    const pipeline = [
+      { $match: { project: new mongoose.Types.ObjectId(projectId) } },
+      {
+        $lookup: {
+          from: 'projects',
+          localField: 'project',
+          foreignField: '_id',
+          as: 'projectData'
+        }
+      },
+      { $unwind: '$projectData' }
+    ];
+
+    if (sprintId) {
+        const sprintObjectId = new mongoose.Types.ObjectId(sprintId);
+        pipeline.push({
+          $match: {
+            $or: [
+              { sprint: sprintObjectId },
+              { 
+                $and: [
+                  { sprint: { $exists: false } },
+                  { 'projectData.sprint': sprintObjectId }
+                ]
+              },
+              { 
+                $and: [
+                  { sprint: null },
+                  { 'projectData.sprint': sprintObjectId }
+                ]
+              }
+            ]
+          }
+        });
+    }
+
+    // Add User Lookup
+    pipeline.push(
+      {
+        $lookup: {
+          from: 'users',
+          localField: 'assignedUser',
+          foreignField: '_id',
+          as: 'assignedUserData'
+        }
+      },
+      {
+        $addFields: {
+          assignedUser: { $arrayElemAt: ['$assignedUserData', 0] }
+        }
+      },
+      {
+        $project: {
+          assignedUserData: 0,
+          projectData: 0
+        }
+      }
+    );
+
+    const tasks = await Task.aggregate(pipeline);
 
     const enrichedTasks = tasks.map(t => {
       const delayStatus = calculateDelayStatus(t);
-      return { ...t.toObject(), delayStatus };
+      return { ...t, delayStatus };
     });
 
     res.status(200).json({
       status: 'success',
-      results: tasks.length,
+      results: enrichedTasks.length,
       data: { tasks: enrichedTasks },
     });
-  } catch (error) {
-    res.status(400).json({ status: 'fail', message: error.message });
-  }
-};
+});
 
 // Update task details
-exports.updateTask = async (req, res) => {
-  try {
+exports.updateTask = catchAsync(async (req, res, next) => {
     const { id } = req.params;
     const { title, description, status, assignedUser, dueDate } = req.body;
 
@@ -93,7 +151,9 @@ exports.updateTask = async (req, res) => {
       return res.status(404).json({ status: 'fail', message: 'Task not found' });
     }
 
-    const project = await Project.findOne({ _id: task.project, members: req.user.id });
+    const query = getProjectAccessQuery(req.user);
+    query._id = task.project;
+    const project = await Project.findOne(query);
     if (!project) {
       return res.status(403).json({ status: 'fail', message: 'Access denied' });
     }
@@ -103,19 +163,16 @@ exports.updateTask = async (req, res) => {
     if (status && status !== task.status) {
       updateData.status = status;
       
-      // Started work
       if (status === 'in_progress' && !task.startedAt) {
         updateData.startedAt = new Date();
       }
       
-      // Finished work
       if (status === 'done') {
         updateData.completedAt = new Date();
         const start = task.startedAt || task.createdAt;
         updateData.actualDuration = Math.round((new Date() - start) / (1000 * 60)); // Record in minutes
       }
       
-      // Re-opened task
       if (status !== 'done' && task.status === 'done') {
         updateData.completedAt = null;
         updateData.actualDuration = null;
@@ -125,15 +182,38 @@ exports.updateTask = async (req, res) => {
     const updatedTask = await Task.findByIdAndUpdate(
       id,
       updateData,
-      { new: true, runValidators: true }
+      { returnDocument: 'after', runValidators: true }
     ).populate('assignedUser', 'name email');
+
+    // 🧠 Emit Update Event to Agent Orchestrator
+    await AgentOrchestrator.handleEvent({
+        type: 'TASK_UPDATED',
+        entityId: updatedTask._id,
+        entityType: 'task',
+        project: updatedTask.project,
+        payload: updatedTask
+    });
 
     res.status(200).json({
       status: 'success',
       data: { task: updatedTask },
     });
-  } catch (error) {
-    res.status(400).json({ status: 'fail', message: error.message });
-  }
-};
+});
 
+// Get all tasks assigned to the current user
+exports.getMyTasks = catchAsync(async (req, res, next) => {
+    const tasks = await Task.find({ 
+      assignedUser: req.user._id
+    }).sort('-completedAt -updatedAt').populate('project', 'name');
+
+    const enrichedTasks = tasks.map(t => {
+      const delayStatus = calculateDelayStatus(t);
+      return { ...t.toObject(), delayStatus };
+    });
+
+    res.status(200).json({
+      status: 'success',
+      results: enrichedTasks.length,
+      data: { tasks: enrichedTasks },
+    });
+});

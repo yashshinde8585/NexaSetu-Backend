@@ -24,10 +24,14 @@ const userSchema = new mongoose.Schema({
   githubAccessToken: {
     type: String,
   },
-  role: {
+    role: {
+        type: String,
+        enum: ['WORKSPACE_ADMIN', 'WORKSPACE_MANAGER', 'TECH_LEAD', 'SENIOR_ENGINEER', 'SOFTWARE_ENGINEER', 'PROJECT_MEMBER', 'INTERN', 'RESTRICTED'],
+        default: 'PROJECT_MEMBER',
+    },
+  jobTitle: {
     type: String,
-    enum: ['ADMIN', 'MANAGER', 'DEV', 'INTERN'],
-    default: 'DEV',
+    default: 'Software Engineer'
   },
   assignedProjectId: {
     type: mongoose.Schema.Types.ObjectId,
@@ -36,6 +40,10 @@ const userSchema = new mongoose.Schema({
   workspaceId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Workspace',
+  },
+  hasSeenTour: {
+    type: Boolean,
+    default: false,
   },
 }, {
   timestamps: true,
