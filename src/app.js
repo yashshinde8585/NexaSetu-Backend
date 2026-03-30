@@ -2,14 +2,23 @@ const express = require('express');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const dotenv = require('dotenv');
-// Validate critical environment variables at startup
 const config = require('./config/config');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 
 dotenv.config();
 
+// Fail Fast: Ensure critical secrets are present
+const REQUIRED_ENV = ['JWT_SECRET', 'GROQ_API_KEY', 'DB_URI'];
+REQUIRED_ENV.forEach(key => {
+    if (!process.env[key]) {
+        console.error(`[FATAL] Missing environment variable: ${key}`);
+        process.exit(1);
+    }
+});
+
 const app = express();
+
 
 const authRoutes = require('./routes/authRoutes');
 const projectRoutes = require('./routes/projectRoutes');
@@ -21,6 +30,7 @@ const resourceRoutes = require('./routes/resourceRoutes');
 const actionRoutes = require('./routes/actionRoutes');
 const magicBarRoutes = require('./routes/magicBarRoutes');
 const teamRoutes = require('./routes/teamRoutes');
+const sprintRoutes = require('./routes/sprintRoutes');
 
 // Rate Limiting
 const globalLimiter = rateLimit({
@@ -48,14 +58,11 @@ app.use('/api/ai', aiLimiter);
 app.use(helmet());
 app.use(cookieParser());
 app.use(cors({
-    origin: process.env.CLIENT_URL || 'http://localhost:5173', 
+    origin: process.env.NODE_ENV === 'development' ? true : (process.env.CLIENT_URL || 'http://localhost:5173'), 
     credentials: true
 }));
 
-// Body parsing
 app.use(express.json({ limit: '10kb' }));
-
-// Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/projects', projectRoutes);
 app.use('/api/tasks', taskRoutes);
@@ -66,6 +73,7 @@ app.use('/api/resources', resourceRoutes);
 app.use('/api/actions', actionRoutes);
 app.use('/api/magic', magicBarRoutes);
 app.use('/api/team', teamRoutes);
+app.use('/api/sprints', sprintRoutes);
 
 app.get('/', (req, res) => {
     res.json({ message: 'NexaSetu API is running!' });

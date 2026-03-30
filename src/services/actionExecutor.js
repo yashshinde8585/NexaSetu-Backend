@@ -3,20 +3,10 @@ const Task = require('../models/Task');
 const Project = require('../models/Project');
 const executionPolicy = require('./executionPolicy');
 
-/**
- * Action Executor System: Performs actual changes in the database.
- * Supports both manual (approval) and autonomous (auto) execution.
- */
-
 class ActionExecutor {
   constructor() {
     this.name = 'ActionExecutor';
   }
-
-  /**
-   * Main entry point for any agent decision that needs execution.
-   * If mode is not specified, it uses the ExecutionPolicy to determine it.
-   */
   async processDecision(decision) {
     try {
       const { type, targetId, targetType, payload, agent, reason } = decision;
@@ -26,8 +16,6 @@ class ActionExecutor {
         throw new Error('Incomplete action data');
       }
 
-      // 2. DETERMINE EXECUTION MODE (Policy-Driven)
-      // If mode is provided, use it. Otherwise, use the system policy.
       const mode = decision.mode || executionPolicy.getExecutionMode(type, payload);
 
       console.log(`[ActionExecutor] Processing ${type} (Mode: ${mode}) for agent: ${agent}`);
@@ -54,9 +42,6 @@ class ActionExecutor {
     }
   }
 
-  /**
-   * Executes a safe, low-risk change immediately.
-   */
   async executeImmediately(type, targetId, targetType, payload, reason, agent) {
     let result = null;
     let oldValue = null;
@@ -74,19 +59,19 @@ class ActionExecutor {
                     reason: reason || 'Autonomous Scheduler Adjustment'
                 }
             }
-        }, { new: true });
+        }, { returnDocument: 'after' });
         newValue = result.dueDate;
         break;
 
       case 'STATUS_CHANGE':
         oldValue = await Task.findById(targetId, 'status');
-        result = await Task.findByIdAndUpdate(targetId, { status: payload.status }, { new: true });
+        result = await Task.findByIdAndUpdate(targetId, { status: payload.status }, { returnDocument: 'after' });
         newValue = result.status;
         break;
 
       case 'REASSIGN_TASK':
         oldValue = await Task.findById(targetId, 'assignedUser');
-        result = await Task.findByIdAndUpdate(targetId, { assignedUser: payload.newUserId }, { new: true });
+        result = await Task.findByIdAndUpdate(targetId, { assignedUser: payload.newUserId }, { returnDocument: 'after' });
         newValue = result.assignedUser;
         break;
 
@@ -104,9 +89,7 @@ class ActionExecutor {
     return { result, oldValue, newValue };
   }
 
-  /**
-   * Manages approval approval/rejection logic.
-   */
+  
   async approveRequest(requestId, userId) {
       const request = await ActionRequest.findById(requestId);
       if (!request || request.status !== 'pending') throw new Error('Request not found or already processed');

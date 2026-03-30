@@ -1,8 +1,6 @@
 const aiService = require('../services/aiService');
 
-/**
- * Controller for AI Task Extraction
- */
+
 exports.extractTask = async (req, res) => {
   try {
     const { text } = req.body;

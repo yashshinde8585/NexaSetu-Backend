@@ -1,13 +1,9 @@
 const Task = require('../models/Task');
 const Project = require('../models/Project');
 
-/**
- * Resource Service for intelligent workload management and AI auto-assignment
- */
 
-/**
- * Calculates currently active task counts for project members
- */
+
+
 exports.getMemberWorkloads = async (projectId) => {
   const project = await Project.findById(projectId).populate('members', 'name email');
   if (!project) return [];
@@ -39,9 +35,7 @@ exports.getMemberWorkloads = async (projectId) => {
   }).sort((a, b) => a.taskCount - b.taskCount);
 };
 
-/**
- * Automatically assigns a task to the member with the lowest workload
- */
+
 exports.autoAssignTask = async (taskId) => {
   const task = await Task.findById(taskId).populate('project');
   if (!task || task.assignedUser) return null;
@@ -62,9 +56,7 @@ exports.autoAssignTask = async (taskId) => {
   };
 };
 
-/**
- * Generates an AI-driven daily "Standup" summary for a project
- */
+
 exports.generateDailyStandup = async (projectId) => {
   const yesterday = new Date(new Date().getTime() - 24 * 60 * 60 * 1000);
   

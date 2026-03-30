@@ -1,7 +1,4 @@
-/**
- * Global error handler middleware for Express.
- * Provides a consistent response format for all application errors.
- */
+
 
 const globalErrorHandler = (err, req, res, next) => {
   err.statusCode = err.statusCode || 500;

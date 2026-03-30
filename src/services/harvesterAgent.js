@@ -1,20 +1,14 @@
 const Task = require('../models/Task');
 const aiService = require('./aiService');
 
-/**
- * Harvester Agent: Automatically captures work signals from external sources.
- * Specialized for GitHub Commits and PRs.
- */
+
 
 class HarvesterAgent {
   constructor() {
     this.name = 'Harvester';
   }
 
-  /**
-   * Process a GitHub event and create a task if necessary.
-   * eventData { projectId, githubId, type, message, author, statusHint }
-   */
+  
   async processGithubActivity(eventData) {
     try {
       const { projectId, githubId, type, message, author, statusHint } = eventData;

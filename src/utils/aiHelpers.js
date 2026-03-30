@@ -1,6 +1,4 @@
-/**
- * AI Helpers for robust JSON extraction and parsing from LLM outputs.
- */
+
 
 exports.extractAndParseJSON = (text) => {
   if (!text) return null;

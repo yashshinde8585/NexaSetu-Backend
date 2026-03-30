@@ -3,6 +3,8 @@ const jwt = require('jsonwebtoken');
 const Workspace = require('../models/Workspace');
 const mongoose = require('mongoose');
 const Invitation = require('../models/Invitation');
+const catchAsync = require('../utils/catchAsync');
+const { ROLE_MAPPING, mapRole } = require('../utils/authHelpers');
 
 const signToken = id => {
   return jwt.sign({ id }, process.env.JWT_SECRET, {
@@ -34,74 +36,75 @@ const createSendToken = (user, statusCode, res) => {
   });
 };
 
-exports.registerUser = async (req, res) => {
-  try {
-    const { name, email, password, role, assignedProjectId, workspaceName, plan } = req.body;
-    
-    if (!name || !email || !password) return res.status(400).json({ status: 'fail', message: 'Missing fields' });
+exports.registerUser = catchAsync(async (req, res, next) => {
+  const { name, email, password, role, assignedProjectId, workspaceName, plan } = req.body;
+  
+  if (!name || !email || !password) return res.status(400).json({ status: 'fail', message: 'Missing fields' });
 
-    const existingUser = await User.findOne({ email });
-    if (existingUser) return res.status(400).json({ status: 'fail', message: 'Email already exists' });
+  const existingUser = await User.findOne({ email });
+  if (existingUser) return res.status(400).json({ status: 'fail', message: 'Email already exists' });
 
-    // Multi-tenant Assignment Logic
-    const userId = new mongoose.Types.ObjectId();
-    let workspaceId;
-    let finalRole = role || 'ADMIN'; 
-    let finalWorkspaceDisplayName;
+  // Multi-tenant Assignment Logic
+  const userId = new mongoose.Types.ObjectId();
+  let workspaceId;
+  
+  let finalRole = mapRole(role) || mapRole(plan?.includes('executive') ? 'ADMIN' : 'ADMIN') || 'WORKSPACE_ADMIN'; 
+  let finalWorkspaceDisplayName;
 
-    const invitation = await Invitation.findOne({ email, status: 'pending' });
-    
-    if (invitation) {
-      workspaceId = invitation.workspaceId;
-    } else if (finalRole === 'ADMIN') {
-      finalWorkspaceDisplayName = workspaceName || `${name}'s Hub`;
-      const newWorkspace = await Workspace.create({ 
-        name: finalWorkspaceDisplayName, 
-        admin: userId, // Link to the pre-allocated user ID
-        subscription: { plan: plan || 'free' }
-      });
-      workspaceId = newWorkspace._id;
-    } else {
-      return res.status(400).json({ status: 'fail', message: 'Registration requires invitation or ADMIN status' });
-    }
-
-    const user = await User.create({
-      _id: userId, // Use the pre-allocated ID
-      name,
-      email,
-      password,
-      role: finalRole,
-      workspaceId,
-      assignedProjectId: assignedProjectId || (invitation ? invitation.projectId : null)
+  const invitation = await Invitation.findOne({ email, status: 'pending' });
+  
+  if (invitation) {
+    workspaceId = invitation.workspaceId;
+    finalRole = mapRole(invitation.role) || 'PROJECT_MEMBER';
+  } else if (finalRole === 'WORKSPACE_ADMIN') {
+    finalWorkspaceDisplayName = workspaceName || `${name}'s Hub`;
+    const newWorkspace = await Workspace.create({ 
+      name: finalWorkspaceDisplayName, 
+      admin: userId, 
+      subscription: { plan: plan || 'free' }
     });
-
-    // If they used an invitation, mark it accepted
-    if (invitation) {
-      invitation.status = 'accepted';
-      await invitation.save();
-    }
-
-    createSendToken(user, 201, res);
-  } catch (err) {
-    res.status(500).json({ status: 'error', message: err.message });
+    workspaceId = newWorkspace._id;
+  } else {
+    return res.status(400).json({ status: 'fail', message: 'Registration requires invitation or WORKSPACE_ADMIN status' });
   }
-};
 
-exports.loginUser = async (req, res) => {
-  try {
-    const { email, password } = req.body;
-    if (!email || !password) return res.status(400).json({ status: 'fail', message: 'Please provide email and password' });
-
-    const user = await User.findOne({ email }).select('+password');
-    if (!user || !(await user.comparePassword(password))) {
-      return res.status(401).json({ status: 'fail', message: 'Incorrect email or password' });
-    }
-
-    createSendToken(user, 200, res);
-  } catch (err) {
-    res.status(500).json({ status: 'error', message: err.message });
+  // Assign Job Title based on Plan/Role
+  let finalJobTitle = 'Software Engineer';
+  if (finalRole === 'WORKSPACE_ADMIN') {
+      finalJobTitle = plan?.includes('executive') ? 'Chief Technology Officer' : 'Workspace Administrator';
   }
-};
+
+  const user = await User.create({
+    _id: userId,
+    name,
+    email,
+    password,
+    role: finalRole,
+    jobTitle: finalJobTitle,
+    workspaceId,
+    assignedProjectId: assignedProjectId || (invitation ? invitation.projectId : null)
+  });
+
+  // If they used an invitation, mark it accepted
+  if (invitation) {
+    invitation.status = 'accepted';
+    await invitation.save();
+  }
+
+  createSendToken(user, 201, res);
+});
+
+exports.loginUser = catchAsync(async (req, res, next) => {
+  const { email, password } = req.body;
+  if (!email || !password) return res.status(400).json({ status: 'fail', message: 'Please provide email and password' });
+
+  const user = await User.findOne({ email }).select('+password');
+  if (!user || !(await user.comparePassword(password))) {
+    return res.status(401).json({ status: 'fail', message: 'Incorrect email or password' });
+  }
+
+  createSendToken(user, 200, res);
+});
 
 exports.logoutUser = (req, res) => {
   res.cookie('jwt', 'loggedout', {
@@ -111,38 +114,44 @@ exports.logoutUser = (req, res) => {
   res.status(200).json({ status: 'success' });
 };
 
-exports.getMe = async (req, res) => {
+exports.getMe = catchAsync(async (req, res, next) => {
     res.status(200).json({
       status: 'success',
       data: {
         user: req.user
       }
     });
-};
+});
 
-exports.activateInvitation = async (req, res) => {
-  try {
-    const { token, name, password } = req.body;
-    if (!token || !name || !password) return res.status(400).json({ status: 'fail', message: 'Missing activation data' });
+exports.activateInvitation = catchAsync(async (req, res, next) => {
+  const { token, name, password } = req.body;
+  if (!token || !name || !password) return res.status(400).json({ status: 'fail', message: 'Missing activation data' });
 
-    const invitation = await Invitation.findOne({ token, status: 'pending', expiresAt: { $gt: Date.now() } });
-    if (!invitation) return res.status(400).json({ status: 'fail', message: 'Invalid or expired invitation' });
+  const invitation = await Invitation.findOne({ token, status: 'pending', expiresAt: { $gt: Date.now() } });
+  if (!invitation) return res.status(400).json({ status: 'fail', message: 'Invalid or expired invitation' });
 
-    const user = await User.create({
-      name,
-      email: invitation.email,
-      password,
-      role: invitation.role,
-      workspaceId: invitation.workspaceId,
-      assignedProjectId: invitation.projectId
+  const finalRole = mapRole(invitation.role);
+
+  const user = await User.create({
+    name,
+    email: invitation.email,
+    password,
+    role: finalRole,
+    jobTitle: invitation.role === 'INTERN' || finalRole === 'RESTRICTED' ? 'Intern' : 'Software Engineer',
+    workspaceId: invitation.workspaceId,
+    assignedProjectId: invitation.projectId
+  });
+
+  invitation.status = 'accepted';
+  await invitation.save();
+
+  createSendToken(user, 201, res);
+});
+
+exports.completeTour = catchAsync(async (req, res, next) => {
+    const user = await User.findByIdAndUpdate(req.user._id, { hasSeenTour: true }, { new: true });
+    res.status(200).json({
+      status: 'success',
+      data: { user }
     });
-
-    await Invitation.deleteOne({ _id: invitation._id });
-
-    createSendToken(user, 201, res);
-  } catch (err) {
-    if (err.code === 11000) return res.status(400).json({ status: 'fail', message: 'Email already registered' });
-    res.status(500).json({ status: 'error', message: err.message });
-  }
-};
-
+});

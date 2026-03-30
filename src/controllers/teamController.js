@@ -1,53 +1,64 @@
-const Invitation = require('../models/Invitation');
-const crypto = require('crypto');
 const User = require('../models/User');
+const Project = require('../models/Project');
+const Invitation = require('../models/Invitation');
+const teamService = require('../services/teamService');
+const auditService = require('../services/auditService');
+const catchAsync = require('../utils/catchAsync');
+const { getProjectAccessQuery } = require('../utils/queryHelpers');
+const { isStrategicLead } = require('../utils/authHelpers');
 
-exports.inviteUser = async (req, res) => {
-  try {
+
+
+// 1. Single User Invitation
+exports.inviteUser = catchAsync(async (req, res, next) => {
     const { email, role, projectId } = req.body;
     if (!email || !role) return res.status(400).json({ status: 'fail', message: 'Missing fields' });
 
-    // Check if user already exists
-    const existingUser = await User.findOne({ email });
-    if (existingUser) return res.status(400).json({ status: 'fail', message: 'User already has an account' });
+    const isLeadOrAdmin = isStrategicLead(req.user);
+    if (!isLeadOrAdmin) {
+        const allowedRoles = ['PROJECT_MEMBER', 'RESTRICTED'];
+        if (!allowedRoles.includes(role)) {
+            return res.status(403).json({ 
+                status: 'fail', 
+                message: 'Unauthorized role assignment. Only Engineers and Interns can be recruited by non-admins.' 
+            });
+        }
+    }
 
-    // Generate secure token
-    const token = crypto.randomBytes(32).toString('hex');
-    
-    // Create invitation (upsert if exists)
-    const invitation = await Invitation.findOneAndUpdate(
-      { email },
-      { 
-        role, 
-        projectId, 
-        workspaceId: req.user.workspaceId, 
-        token, 
-        invitedBy: req.user._id, 
-        status: 'pending', 
-        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) 
-      },
-      { upsert: true, new: true, runValidators: true }
+    // Provision via Token Strategy
+    const result = await teamService.provisionUser(
+        { email, role, projectId }, 
+        req.user.workspaceId, 
+        req.user._id, 
+        'INVITE'
     );
 
-    // In a real app, send an email here.
+    if (result.status === 'EXISTING') {
+        return res.status(400).json({ status: 'fail', message: 'User already has an account' });
+    }
+
+    await auditService.log({
+        action: 'INVITE_USER',
+        req,
+        entityType: 'INVITATION',
+        entityId: result.invitation._id,
+        details: { email, role, projectId }
+    });
 
     res.status(200).json({
       status: 'success',
       data: {
         invitation: {
-          email: invitation.email,
-          role: invitation.role,
-          token: invitation.token // Sending for dev/testing
+          email: result.invitation.email,
+          role: result.invitation.role,
+          token: '********' // Redacted for security
         }
       }
     });
-  } catch (err) {
-    res.status(500).json({ status: 'error', message: err.message });
-  }
-};
+});
 
-exports.getInviteByToken = async (req, res) => {
-  try {
+// 2. Resolve Invitation by Token
+exports.getInviteByToken = catchAsync(async (req, res, next) => {
     const { token } = req.params;
     const invitation = await Invitation.findOne({ token, status: 'pending', expiresAt: { $gt: Date.now() } });
     
@@ -63,66 +74,63 @@ exports.getInviteByToken = async (req, res) => {
         }
       }
     });
-  } catch (err) {
-    res.status(500).json({ status: 'error', message: err.message });
-  }
-};
+});
 
-exports.inviteMultipleUsers = async (req, res) => {
-  try {
+// 3. Bulk Personnel Provisioning (Instant Birth)
+exports.inviteMultipleUsers = catchAsync(async (req, res, next) => {
     const { invites } = req.body;
-    if (!invites || !Array.isArray(invites) || invites.length === 0) return res.status(400).json({ status: 'fail', message: 'No invitations provided' });
-
-    const results = [];
-    const errors = [];
-
-    for (const invite of invites) {
-      try {
-        const { email, role, projectId } = invite;
-        if (!email || !role) throw new Error('Missing fields');
-
-        // Check if user already exists
-        const existingUser = await User.findOne({ email });
-        if (existingUser) throw new Error('User already has an account');
-
-        // Generate secure token
-        const token = crypto.randomBytes(32).toString('hex');
-        
-        // Create invitation (upsert if exists)
-        await Invitation.findOneAndUpdate(
-          { email },
-          { 
-            role, 
-            projectId, 
-            workspaceId: req.user.workspaceId, 
-            token, 
-            invitedBy: req.user._id, 
-            status: 'pending', 
-            expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) 
-          },
-          { upsert: true, new: true, runValidators: true }
-        );
-
-        results.push({ email, token }); // In dev, we send the token back for testing/demonstration.
-      } catch (err) {
-        errors.push({ email: invite.email, message: err.message });
-      }
+    if (!invites || !Array.isArray(invites) || invites.length === 0) {
+        return res.status(400).json({ status: 'fail', message: 'No invitations provided' });
     }
 
-    res.status(200).json({ status: 'success', data: { sent: results, failed: errors } });
-  } catch (err) {
-    res.status(500).json({ status: 'error', message: err.message });
-  }
-};
+    const { provisionedUsers, failedInvites } = await teamService.bulkProvision(
+        invites, 
+        req.user.workspaceId, 
+        req.user._id, 
+        isStrategicLead(req.user)
+    );
 
-exports.getWorkspaceTeam = async (req, res) => {
-  try {
+    // 📝 Audit logging
+    await auditService.log({
+        action: 'BULK_PROVISION',
+        req,
+        entityType: 'USER',
+        details: { count: provisionedUsers.length, failed: failedInvites.length }
+    });
+
+    res.status(200).json({ 
+      status: 'success', 
+      data: { 
+        provisionedUsers, 
+        failedInvites,
+        message: 'Squad provisioning complete.' 
+      } 
+    });
+});
+
+// 4. Get Workspace Personnel Hub
+exports.getWorkspaceTeam = catchAsync(async (req, res, next) => {
     const workspaceId = req.user.workspaceId;
-    const members = await User.find({ workspaceId }).select('name email role createdAt');
-    const invitations = await Invitation.find({ workspaceId, status: 'pending', expiresAt: { $gt: Date.now() } }).select('email role expiresAt');
+    
+    let memberQuery = { workspaceId };
+    let invitationQuery = { workspaceId, status: 'pending', expiresAt: { $gt: Date.now() } };
+
+    if (!isStrategicLead(req.user)) {
+        // Restricted Visibility: Only see personnel in projects you are a member of
+        const authorizedProjects = await Project.find(getProjectAccessQuery(req.user)).select('_id');
+        const authorizedProjectIds = authorizedProjects.map(p => p._id);
+
+        memberQuery.assignedProjectId = { $in: authorizedProjectIds };
+        invitationQuery.projectId = { $in: authorizedProjectIds };
+    }
+
+    const members = await User.find(memberQuery)
+      .select('name email role jobTitle createdAt assignedProjectId')
+      .populate('assignedProjectId', 'name');
+
+    const invitations = await Invitation.find(invitationQuery)
+      .select('email role expiresAt projectId')
+      .populate('projectId', 'name');
 
     res.status(200).json({ status: 'success', data: { members, invitations } });
-  } catch (err) {
-    res.status(500).json({ status: 'error', message: err.message });
-  }
-};
+});

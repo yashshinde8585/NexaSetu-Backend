@@ -2,17 +2,13 @@ const { Octokit } = require('octokit');
 const aiService = require('./aiService');
 const Task = require('../models/Task');
 
-/**
- * GitHub Service for interacting with GitHub API and processing activity
- */
+
 
 exports.getOctokit = (accessToken) => {
   return new Octokit({ auth: accessToken });
 };
 
-/**
- * Fetches user repositories
- */
+
 exports.getUserRepositories = async (accessToken) => {
   const octokit = exports.getOctokit(accessToken);
   const { data } = await octokit.rest.repos.listForAuthenticatedUser({
@@ -29,9 +25,7 @@ exports.getUserRepositories = async (accessToken) => {
   }));
 };
 
-/**
- * Fetches recent activity (commits and PRs) from a repository
- */
+
 exports.getRepositoryActivity = async (accessToken, owner, repo) => {
   const octokit = exports.getOctokit(accessToken);
   
@@ -85,9 +79,7 @@ exports.getRepositoryActivity = async (accessToken, owner, repo) => {
   return activity;
 };
 
-/**
- * Uses AI to suggest tasks from activity data
- */
+
 exports.generateTaskSuggestions = async (activity, projectId) => {
   const suggestions = [];
   
