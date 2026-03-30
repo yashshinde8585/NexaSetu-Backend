@@ -1,7 +1,4 @@
-/**
- * Execution Policy System: Centralized logic for determining action risk levels.
- * Defines whether an action can be performed autonomously or requires user approval.
- */
+
 
 class ExecutionPolicy {
   constructor() {
@@ -9,12 +6,7 @@ class ExecutionPolicy {
     this.HIGH_RISK = 'approval';
   }
 
-  /**
-   * Determines the execution mode for a given action.
-   * @param {string} actionType - The type of action (e.g., 'REASSIGN_TASK')
-   * @param {Object} payload - The data associated with the action
-   * @returns {string} - 'auto' or 'approval'
-   */
+  
   getExecutionMode(actionType, payload) {
     switch (actionType) {
       case 'STATUS_CHANGE':
@@ -46,9 +38,7 @@ class ExecutionPolicy {
     }
   }
 
-  /**
-   * Checks if an action is considered "Sensitive"
-   */
+  
   isSensitive(actionType) {
       const highRiskActions = ['REASSIGN_TASK', 'PROJECT_TIMELINE_SHIFT', 'DELETE_TASK'];
       return highRiskActions.includes(actionType);

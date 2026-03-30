@@ -24,6 +24,10 @@ const taskSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
   },
+  sprint: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Sprint',
+  },
   source: {
     type: String,
     enum: ['manual', 'ai-generated', 'github'],
@@ -79,7 +83,7 @@ taskSchema.pre('save', async function () {
     const project = await Project.findByIdAndUpdate(
       this.project,
       { $inc: { lastTaskNumber: 1 } },
-      { new: true, useFindAndModify: false }
+      { returnDocument: 'after', useFindAndModify: false }
     );
     this.taskNumber = project.lastTaskNumber;
   }

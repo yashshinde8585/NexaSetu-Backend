@@ -1,19 +1,14 @@
 const Task = require('../models/Task');
 const taskUtils = require('../utils/taskUtils');
 
-/**
- * Scheduler Agent: Manages timelines, deadlines, and task sequencing.
- * Automatically recalculates dependent task dates when delays occur.
- */
+
 
 class SchedulerAgent {
   constructor() {
     this.name = 'Scheduler';
   }
 
-  /**
-   * Adjusts the timeline of dependent tasks when a base task is delayed.
-   */
+  
   async handleTaskDelay(eventData) {
     try {
       const { entityId, project } = eventData;
@@ -65,9 +60,7 @@ class SchedulerAgent {
     }
   }
 
-  /**
-   * Recalculates entire project timeline (Placeholder for global optimization)
-   */
+  
   async optimizeProjectTimeline(projectId) {
       return { status: 'monitoring', reason: 'Timeline optimization complete' };
   }

@@ -1,5 +1,7 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
+const { ROLE_PERMISSIONS } = require('../config/permissions');
+const { mapRole } = require('../utils/authHelpers');
 
 const protect = async (req, res, next) => {
   try {
@@ -32,13 +34,24 @@ const protect = async (req, res, next) => {
     res.status(401).json({ status: 'fail', message: 'Not authorized, invalid token' });
   }
 };
-const restrictTo = (...roles) => {
+
+const requirePermission = (requiredPermission) => {
   return (req, res, next) => {
-    if (!roles.includes(req.user.role)) {
-      return res.status(403).json({ status: 'fail', message: 'You do not have permission to perform this action' });
+    // 🛡️ standardizing role using the mapping engine
+    const effectiveRole = mapRole(req.user.role);
+
+    const permissions = ROLE_PERMISSIONS[effectiveRole] || [];
+
+    // Check if user has specific permission OR is super-admin ('*')
+    if (permissions.includes('*') || permissions.includes(requiredPermission)) {
+      return next();
     }
-    next();
+
+    return res.status(403).json({ 
+      status: 'fail', 
+      message: 'You lack the required permissions for this action.' 
+    });
   };
 };
 
-module.exports = { protect, restrictTo };
+module.exports = { protect, requirePermission };

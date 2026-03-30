@@ -1,15 +1,10 @@
-/**
- * Central configuration validation and environment variable mapping for NexaSetu.
- * Ensures the server fails fast if critical infrastructure settings are missing.
- */
-
 const dotenv = require('dotenv');
 dotenv.config();
 
 const REQUIRED_VARS = [
   'JWT_SECRET',
   'DB_URI',
-  'HUGGINGFACE_API_KEY'
+  'GROQ_API_KEY'
 ];
 
 const missing = REQUIRED_VARS.filter(v => !process.env[v]);
@@ -30,7 +25,8 @@ module.exports = {
     uri: process.env.DB_URI
   },
   ai: {
-    hfKey: process.env.HUGGINGFACE_API_KEY
+    hfKey: process.env.HUGGINGFACE_API_KEY,
+    groqKey: process.env.GROQ_API_KEY
   },
   app: {
     port: process.env.PORT || 5000,

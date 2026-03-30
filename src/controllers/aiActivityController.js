@@ -1,14 +1,12 @@
 const AILog = require('../models/AILog');
 const Project = require('../models/Project');
+const { getProjectAccessQuery } = require('../utils/queryHelpers');
 
-/**
- * Controller for viewing AI Agent Decisions and Actions
- */
-
+// Controller for viewing AI Agent Decisions and Actions
 exports.getActivityLogs = async (req, res) => {
   try {
-    // 1. Get projects management access
-    const projects = await Project.find({ members: req.user.id });
+    // 1. Get projects management access authorized for this user
+    const projects = await Project.find(getProjectAccessQuery(req.user));
     const projectIds = projects.map(p => p._id);
 
     // 2. Fetch logs related to these projects

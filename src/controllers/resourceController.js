@@ -1,17 +1,14 @@
 const Project = require('../models/Project');
 const Task = require('../models/Task');
 const User = require('../models/User');
+const { getProjectAccessQuery } = require('../utils/queryHelpers');
 
-/**
- * Controller for resource workload and conflict detection
- */
+
 
 exports.getResourceWorkload = async (req, res) => {
   try {
-    // 1. Get all projects the manager is a member of
-    const managerProjects = await Project.find({
-      members: req.user.id
-    });
+    // 1. Get all projects authorized for this user
+    const managerProjects = await Project.find(getProjectAccessQuery(req.user));
 
     const managerProjectIds = managerProjects.map(p => p._id);
     

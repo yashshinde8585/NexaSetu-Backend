@@ -1,8 +1,3 @@
-/**
- * Parameter Normalizer: Centralized logic for normalizing AI-extracted parameters.
- * Ensures that human-friendly terms are converted into strict system values.
- */
-
 class ParameterNormalizer {
   constructor() {
     this.STATUS_MAP = {
@@ -24,19 +19,12 @@ class ParameterNormalizer {
     };
   }
 
-  /**
-   * Normalizes task status based on common synonyms
-   */
   normalizeStatus(status) {
     if (!status) return null;
     const cleanStatus = status.toLowerCase().replace(/[^a-z_]/g, '');
     return this.STATUS_MAP[cleanStatus] || 'todo';
   }
 
-  /**
-   * Normalizes dates (converts relative terms to Absolute JS Dates)
-   * Note: This is a simplified version; in a real app, use a library like chrono-node.
-   */
   normalizeDate(dateStr) {
     if (!dateStr) return null;
     const now = new Date();
@@ -52,12 +40,9 @@ class ParameterNormalizer {
     return isNaN(parsed.getTime()) ? null : parsed;
   }
 
-  /**
-   * Cleans up string parameters (strips fluff)
-   */
   normalizeString(str) {
       if (!str) return null;
-      return str.trim().replace(/^"(.*)"$/, '$1'); // Remove surrounding quotes
+      return str.trim().replace(/^"(.*)"$/, '$1');
   }
 }
 

@@ -2,20 +2,17 @@ const Project = require('../models/Project');
 const Task = require('../models/Task');
 const User = require('../models/User');
 const portfolioAgent = require('../services/portfolioAgent');
+const { getProjectAccessQuery } = require('../utils/queryHelpers');
 
-/**
- * Controller for rule-based AI recommendations
- */
-
+// Controller for rule-based AI recommendations
 exports.getPortfolioRecommendations = async (req, res) => {
   try {
-    // 1. Fetch all projects and tasks the user has access to
-    const projects = await Project.find({ members: req.user.id });
+    const projects = await Project.find(getProjectAccessQuery(req.user));
     const projectIds = projects.map(p => p._id);
     
     const tasks = await Task.find({ 
       project: { $in: projectIds },
-      status: { $ne: 'done' } // Only care about incomplete tasks for recommendations
+      status: { $ne: 'done' }
     }).populate('assignedUser', 'name').populate('project', 'name');
 
     // 2. Resource Data (Workload)
@@ -32,8 +29,6 @@ exports.getPortfolioRecommendations = async (req, res) => {
 
     const recommendations = [];
     const now = new Date();
-
-    // --- RULE ENGINE ---
 
     // Rule 1: Task Delay Detection (Individual Tasks)
     tasks.forEach(task => {
@@ -79,7 +74,6 @@ exports.getPortfolioRecommendations = async (req, res) => {
         });
     }
 
-    // Rule 3: Workload Balancing (Specific Redistribution Suggestion)
     if (overloadedUserIds.length > 0 && availableUserIds.length > 0) {
         recommendations.push({
             type: 'workload',
@@ -101,16 +95,13 @@ exports.getPortfolioRecommendations = async (req, res) => {
             targetType: 'portfolio'
         });
     }
-
-    // --- PORTFOLIO AGENT AUDIT ---
-    // (We simulate the resources data similar to what's in the controller)
-    const mockResources = Object.keys(userTaskCounts).map(uid => ({
+    const liveResourceData = Object.keys(userTaskCounts).map(uid => ({
         _id: uid,
         activeTasksCount: userTaskCounts[uid],
         workloadStatus: userTaskCounts[uid] >= 6 ? 'Overloaded' : (userTaskCounts[uid] >= 4 ? 'Warning' : 'Normal')
     }));
 
-    const auditRes = await portfolioAgent.performAudit(projects, mockResources);
+    const auditRes = await portfolioAgent.performAudit(projects, liveResourceData);
     recommendations.push(...auditRes.globalRecommendations);
 
     res.status(200).json({

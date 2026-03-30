@@ -20,6 +20,10 @@ const projectSchema = new mongoose.Schema({
     repo: String,
     fullName: String,
   },
+  sprint: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Sprint',
+  },
   lastTaskNumber: {
     type: Number,
     default: 0,
