@@ -28,6 +28,11 @@ const projectSchema = new mongoose.Schema({
     type: Number,
     default: 0,
   },
+  key: {
+    type: String,
+    uppercase: true,
+    trim: true,
+  },
   workspaceId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Workspace',
@@ -35,6 +40,23 @@ const projectSchema = new mongoose.Schema({
   },
 }, {
   timestamps: true,
+});
+
+// Auto-generate project key if not provided
+projectSchema.pre('save', function (next) {
+  if (!this.key && this.name) {
+    // Take first 3-4 letters of name, remove spaces, uppercase
+    this.key = this.name
+      .replace(/[^a-zA-Z]/g, '')
+      .substring(0, 3)
+      .toUpperCase();
+    
+    // If name is too short, pad with X
+    while (this.key.length < 3) {
+      this.key += 'X';
+    }
+  }
+  next();
 });
 
 module.exports = mongoose.model('Project', projectSchema);

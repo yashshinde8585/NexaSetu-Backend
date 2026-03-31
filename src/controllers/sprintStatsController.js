@@ -98,11 +98,19 @@ exports.getSprintStats = catchAsync(async (req, res, next) => {
   const aggregation = await Task.aggregate([
     { 
       $match: { 
-        project: { $in: sprintProjects },
         $or: [
           { sprint: sprintObjectId },
-          { sprint: { $exists: false } },
-          { sprint: null }
+          { 
+            $and: [
+              { project: { $in: sprintProjects } },
+              { 
+                $or: [
+                  { sprint: { $exists: false } },
+                  { sprint: null }
+                ]
+              }
+            ]
+          }
         ]
       } 
     },
