@@ -28,6 +28,7 @@ exports.createTask = catchAsync(async (req, res, next) => {
       source: source || 'manual',
       isAiGenerated: isAiGenerated || false,
       dueDate: dueDate || null,
+      createdBy: req.user._id,
     };
 
     // Initial lifecycle timestamps
@@ -69,42 +70,27 @@ exports.getTasks = catchAsync(async (req, res, next) => {
     }
 
     const pipeline = [
-      { $match: { project: new mongoose.Types.ObjectId(projectId) } },
-      {
-        $lookup: {
-          from: 'projects',
-          localField: 'project',
-          foreignField: '_id',
-          as: 'projectData'
-        }
-      },
-      { $unwind: '$projectData' }
+      { $match: { project: new mongoose.Types.ObjectId(projectId) } }
     ];
 
     if (sprintId) {
         const sprintObjectId = new mongoose.Types.ObjectId(sprintId);
-        pipeline.push({
-          $match: {
-            $or: [
-              { sprint: sprintObjectId },
-              { 
-                $and: [
-                  { sprint: { $exists: false } },
-                  { 'projectData.sprint': sprintObjectId }
-                ]
-              },
-              { 
-                $and: [
-                  { sprint: null },
-                  { 'projectData.sprint': sprintObjectId }
-                ]
-              }
-            ]
-          }
-        });
+        const projectSprintId = project.sprint ? (project.sprint._id || project.sprint).toString() : null;
+        
+        const sprintMatch = { $or: [{ sprint: sprintObjectId }] };
+        
+        // If viewing the project's current sprint, also include unassigned tasks
+        if (projectSprintId === sprintId) {
+            sprintMatch.$or.push(
+                { sprint: { $exists: false } },
+                { sprint: null }
+            );
+        }
+        
+        pipeline.push({ $match: sprintMatch });
     }
 
-    // Add User Lookup
+    // Add User and Sprint Lookup
     pipeline.push(
       {
         $lookup: {
@@ -115,14 +101,27 @@ exports.getTasks = catchAsync(async (req, res, next) => {
         }
       },
       {
+        $lookup: {
+          from: 'sprints',
+          localField: 'sprint',
+          foreignField: '_id',
+          as: 'sprintData'
+        }
+      },
+      {
+        $sort: { createdAt: -1 }
+      },
+      {
         $addFields: {
-          assignedUser: { $arrayElemAt: ['$assignedUserData', 0] }
+          assignedUser: { $arrayElemAt: ['$assignedUserData', 0] },
+          projectKey: project.key || 'NEXA',
+          sprintInfo: { $arrayElemAt: ['$sprintData', 0] }
         }
       },
       {
         $project: {
           assignedUserData: 0,
-          projectData: 0
+          sprintData: 0
         }
       }
     );

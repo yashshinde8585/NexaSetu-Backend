@@ -66,6 +66,11 @@ const taskSchema = new mongoose.Schema({
     type: String,
     sparse: true,
   },
+  createdBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: false,
+  },
   timelineHistory: [{
     oldDueDate: Date,
     newDueDate: Date,

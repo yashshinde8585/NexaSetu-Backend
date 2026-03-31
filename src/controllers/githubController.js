@@ -191,7 +191,8 @@ exports.approveTasks = async (req, res) => {
         status: t.status,
         source: 'github',
         githubId: t.githubId,
-        assignedUser: req.user._id
+        assignedUser: req.user._id,
+        createdBy: req.user._id
       }));
 
     let createdTasks = [];
