@@ -27,7 +27,18 @@ const protect = async (req, res, next) => {
       return res.status(401).json({ status: 'fail', message: 'The user belonging to this token no longer exists' });
     }
 
-    // 4. Grant access
+    // 4. Workspace Context Recovery (Self-Healing)
+    if (!user.workspaceId) {
+        const Workspace = require('../models/Workspace');
+        const workspace = await Workspace.findOne({ $or: [{ admin: user._id }, { owner: user._id }] });
+        if (workspace) {
+            user.workspaceId = workspace._id;
+            // Optionally save it back to the user for future use
+            user.save({ validateBeforeSave: false });
+        }
+    }
+
+    // 5. Grant access
     req.user = user;
     next();
   } catch (error) {

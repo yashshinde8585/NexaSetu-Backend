@@ -32,6 +32,14 @@ const magicBarRoutes = require('./routes/magicBarRoutes');
 const teamRoutes = require('./routes/teamRoutes');
 const sprintRoutes = require('./routes/sprintRoutes');
 
+app.use(cors({
+    origin: process.env.NODE_ENV === 'development' ? true : (process.env.CLIENT_URL || 'http://localhost:5173'), 
+    credentials: true
+}));
+
+app.use(helmet());
+app.use(cookieParser());
+
 // Rate Limiting
 const globalLimiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15 minutes
@@ -54,13 +62,6 @@ const aiLimiter = rateLimit({
 app.use('/api', globalLimiter);
 app.use('/api/auth/login', authLimiter);
 app.use('/api/ai', aiLimiter);
-
-app.use(helmet());
-app.use(cookieParser());
-app.use(cors({
-    origin: process.env.NODE_ENV === 'development' ? true : (process.env.CLIENT_URL || 'http://localhost:5173'), 
-    credentials: true
-}));
 
 app.use(express.json({ limit: '10kb' }));
 app.use('/api/auth', authRoutes);

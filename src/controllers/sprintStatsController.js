@@ -72,16 +72,16 @@ exports.finalizeSprint = catchAsync(async (req, res, next) => {
 
 // Helper to find projects linked to a sprint (isolated by workspace)
 async function getProjectsForSprint(sprintId, workspaceId) {
-    const Project = mongoose.model('Project');
-    const projects = await Project.find({ sprint: sprintId, workspaceId });
-    return projects.map(p => p._id);
+  const Project = mongoose.model('Project');
+  const projects = await Project.find({ sprint: sprintId, workspaceId });
+  return projects.map(p => p._id);
 }
 
 
 exports.getSprintStats = catchAsync(async (req, res, next) => {
   const sprintId = req.params.id;
   const sprintObjectId = new mongoose.Types.ObjectId(sprintId);
-  
+
   // 1. Verify sprint exists and in workspace
   const sprint = await Sprint.findOne({
     _id: sprintObjectId,
@@ -96,14 +96,14 @@ exports.getSprintStats = catchAsync(async (req, res, next) => {
 
   // 2. Aggregate stats (Directly linked tasks OR tasks in projects linked to this sprint)
   const aggregation = await Task.aggregate([
-    { 
-      $match: { 
+    {
+      $match: {
         $or: [
           { sprint: sprintObjectId },
-          { 
+          {
             $and: [
               { project: { $in: sprintProjects } },
-              { 
+              {
                 $or: [
                   { sprint: { $exists: false } },
                   { sprint: null }
@@ -112,7 +112,7 @@ exports.getSprintStats = catchAsync(async (req, res, next) => {
             ]
           }
         ]
-      } 
+      }
     },
     {
       $facet: {
@@ -127,17 +127,17 @@ exports.getSprintStats = catchAsync(async (req, res, next) => {
               inReview: { $sum: { $cond: [{ $eq: ["$status", "in_review"] }, 1, 0] } },
               pending: { $sum: { $cond: [{ $eq: ["$status", "todo"] }, 1, 0] } },
               totalOpen: { $sum: { $cond: [{ $ne: ["$status", "done"] }, 1, 0] } },
-              overdue: { 
-                $sum: { 
+              overdue: {
+                $sum: {
                   $cond: [
-                    { 
+                    {
                       $and: [
                         { $ne: ["$status", "done"] },
                         { $lt: ["$dueDate", new Date()] }
-                      ] 
+                      ]
                     }, 1, 0
-                  ] 
-                } 
+                  ]
+                }
               }
             }
           }
@@ -228,13 +228,13 @@ exports.getSprintStats = catchAsync(async (req, res, next) => {
         blockerDensity: blockerDensity > 0.5 ? 'High' : blockerDensity > 0.2 ? 'Medium' : 'Low',
         strategicDebt: `${strategicDebt}%`,
         raw: {
-            total: summary.total,
-            completed: summary.completed,
-            inProgress: summary.inProgress,
-            inReview: summary.inReview,
-            totalOpen: Math.max(0, summary.total - (summary.completed + summary.inProgress + summary.inReview)),
-            overdue: summary.overdue,
-            blockers: blockerCount
+          total: summary.total,
+          completed: summary.completed,
+          inProgress: summary.inProgress,
+          inReview: summary.inReview,
+          totalOpen: Math.max(0, summary.total - (summary.completed + summary.inProgress + summary.inReview)),
+          overdue: summary.overdue,
+          blockers: blockerCount
         },
         workload: sprintWorkload
       },
@@ -242,3 +242,53 @@ exports.getSprintStats = catchAsync(async (req, res, next) => {
     }
   });
 });
+
+exports.getSprintReportData = catchAsync(async (req, res, next) => {
+  const sprintId = req.params.id;
+  const sprintObjectId = new mongoose.Types.ObjectId(sprintId);
+
+  // 1. Fetch sprint
+  const sprint = await Sprint.findOne({ _id: sprintObjectId, workspaceId: req.user.workspaceId });
+  if (!sprint) return next(new AppError('Sprint not found', 404));
+
+  // 2. Fetch projects and tasks
+  const sprintProjects = await getProjectsForSprint(sprintObjectId, req.user.workspaceId);
+  const Project = mongoose.model('Project');
+  const projectDocs = await Project.find({ _id: { $in: sprintProjects } });
+
+  const tasks = await Task.find({
+    $or: [{ sprint: sprintObjectId }, { project: { $in: sprintProjects } }]
+  }).populate('project assignedUser createdBy');
+
+  // 3. Formulate report data
+  const reportData = {
+    sprint: {
+      name: sprint.name,
+      startDate: sprint.startDate,
+      endDate: sprint.endDate,
+      status: sprint.status
+    },
+    projects: projectDocs.map(p => ({
+      name: p.name,
+      status: p.status,
+      percentage: p.percentage || 0,
+      totalTasks: p.totalTasks || 0,
+      completedTasks: p.completedTasks || 0
+    })),
+    tasks: tasks.map(t => ({
+      title: t.title,
+      project: t.project?.name || 'Unassigned',
+      assignedTo: t.assignedUser?.name || 'Unassigned',
+      status: t.status,
+      dueDate: t.dueDate,
+      priority: t.priority || 'medium',
+      createdAt: t.createdAt
+    }))
+  };
+
+  res.status(200).json({
+    status: 'success',
+    data: reportData
+  });
+});
+

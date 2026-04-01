@@ -17,6 +17,10 @@ router
   .get(sprintStatsController.finalizeSprint);
 
 router
+  .route('/:id/report')
+  .get(sprintStatsController.getSprintReportData);
+
+router
   .route('/')
   .get(sprintController.getAllSprints)
   .post(requirePermission(PERMISSIONS.CREATE_PROJECT), sprintController.createSprint);
