@@ -8,8 +8,8 @@ const rateLimit = require('express-rate-limit');
 
 dotenv.config();
 
-// Fail Fast: Ensure critical secrets are present
-const REQUIRED_ENV = ['JWT_SECRET', 'GROQ_API_KEY', 'DB_URI'];
+const isProduction = process.env.NODE_ENV === 'production';
+const REQUIRED_ENV = ['JWT_SECRET', 'GROQ_API_KEY', isProduction ? 'DB_ATLAS_URI' : 'DB_LOCAL_URI'];
 REQUIRED_ENV.forEach(key => {
     if (!process.env[key]) {
         console.error(`[FATAL] Missing environment variable: ${key}`);
@@ -31,6 +31,14 @@ const actionRoutes = require('./routes/actionRoutes');
 const magicBarRoutes = require('./routes/magicBarRoutes');
 const teamRoutes = require('./routes/teamRoutes');
 const sprintRoutes = require('./routes/sprintRoutes');
+
+app.use(cors({
+    origin: process.env.NODE_ENV === 'development' ? true : (process.env.CLIENT_URL || 'http://localhost:5173'), 
+    credentials: true
+}));
+
+app.use(helmet());
+app.use(cookieParser());
 
 // Rate Limiting
 const globalLimiter = rateLimit({
@@ -54,13 +62,6 @@ const aiLimiter = rateLimit({
 app.use('/api', globalLimiter);
 app.use('/api/auth/login', authLimiter);
 app.use('/api/ai', aiLimiter);
-
-app.use(helmet());
-app.use(cookieParser());
-app.use(cors({
-    origin: process.env.NODE_ENV === 'development' ? true : (process.env.CLIENT_URL || 'http://localhost:5173'), 
-    credentials: true
-}));
 
 app.use(express.json({ limit: '10kb' }));
 app.use('/api/auth', authRoutes);

@@ -20,11 +20,18 @@ exports.createProject = catchAsync(async (req, res, next) => {
     return res.status(400).json({ status: 'fail', message: 'Project name is required' });
   }
 
+  if (!req.user.workspaceId) {
+    return res.status(400).json({ 
+        status: 'fail', 
+        message: 'Tactical Workspace context is missing. Please re-authenticate.' 
+    });
+  }
+
   const project = await Project.create({
     name,
-    sprint,
-    createdBy: req.user.id,
-    members: [req.user.id],
+    sprint: (sprint && sprint.trim()) ? sprint : undefined,
+    createdBy: req.user._id,
+    members: [req.user._id],
     workspaceId: req.user.workspaceId,
   });
 
@@ -45,8 +52,8 @@ exports.createProject = catchAsync(async (req, res, next) => {
 // Get all projects for logged-in user
 exports.getProjects = catchAsync(async (req, res, next) => {
   const projects = await Project.find(getProjectAccessQuery(req.user))
-    .populate('createdBy', 'name email')
-    .populate('members', 'name email');
+    .populate('createdBy', 'name email role')
+    .populate('members', 'name email role');
 
   res.status(200).json({
     status: 'success',
@@ -60,10 +67,22 @@ exports.getProject = catchAsync(async (req, res, next) => {
   const query = getProjectAccessQuery(req.user);
   query._id = req.params.id;
 
-  const project = await Project.findOne(query).populate('members', 'name email');
+  const project = await Project.findOne(query).populate('members', 'name email role');
 
   if (!project) {
-    return res.status(404).json({ status: 'fail', message: 'Project not found or you are not a member' });
+    const exists = await Project.findById(req.params.id);
+    if (!exists) {
+        return res.status(404).json({ status: 'fail', message: 'Mission footprint not found in the central ledger.' });
+    }
+    return res.status(403).json({ 
+        status: 'fail', 
+        message: 'You lack the tactical credentials to view this project.',
+        diagnostic: {
+            userWorkspace: req.user.workspaceId,
+            projectWorkspace: exists.workspaceId,
+            match: req.user.workspaceId.toString() === exists.workspaceId.toString()
+        }
+    });
   }
 
   res.status(200).json({
@@ -83,7 +102,11 @@ exports.getProjectAnalytics = catchAsync(async (req, res, next) => {
   const project = await Project.findOne(query);
 
   if (!project) {
-    return res.status(404).json({ status: 'fail', message: 'Project not found or access denied' });
+    const exists = await Project.findById(id);
+    if (!exists) {
+        return res.status(404).json({ status: 'fail', message: 'Mission footprint not found in the central ledger.' });
+    }
+    return res.status(403).json({ status: 'fail', message: 'You lack the tactical credentials to access these analytics.' });
   }
 
   const pipeline = [
@@ -188,7 +211,7 @@ exports.updateProject = catchAsync(async (req, res, next) => {
   const updatedProject = await Project.findByIdAndUpdate(id, updateData, {
     new: true,
     runValidators: true
-  }).populate('members', 'name email');
+  }).populate('members', 'name email role');
 
   res.status(200).json({
     status: 'success',

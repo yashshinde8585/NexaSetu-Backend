@@ -12,6 +12,13 @@ const globalErrorHandler = (err, req, res, next) => {
   });
 
   // Handle specific MongoDB/Mongoose errors
+  if (err.name === 'CastError') {
+    return res.status(400).json({
+      status: 'fail',
+      message: `Invalid format for field ${err.path}: ${err.value}`
+    });
+  }
+
   if (err.name === 'ValidationError') {
     const messages = Object.values(err.errors).map(el => el.message);
     return res.status(400).json({
@@ -39,6 +46,16 @@ const globalErrorHandler = (err, req, res, next) => {
     return res.status(401).json({
       status: 'fail',
       message: 'Your token has expired. Please log in again.'
+    });
+  }
+
+  // Specific details for development
+  if (process.env.NODE_ENV !== 'production') {
+    return res.status(err.statusCode).json({
+      status: err.status,
+      message: err.message,
+      stack: err.stack,
+      error: err
     });
   }
 

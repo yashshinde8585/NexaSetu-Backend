@@ -11,11 +11,14 @@ const ROLE_MAPPING = {
 };
 
 const isManagerOrAdmin = (user) => {
-    return ['WORKSPACE_ADMIN', 'WORKSPACE_MANAGER'].includes(user.role);
+    const role = (user.role || '').trim().toUpperCase();
+    return ['WORKSPACE_ADMIN', 'WORKSPACE_MANAGER'].includes(role);
 };
 
 const isStrategicLead = (user) => {
-    return ['WORKSPACE_ADMIN', 'WORKSPACE_MANAGER'].includes(user.role);
+    const role = (user.role || '').trim().toUpperCase();
+    const isLead = (user.jobTitle || '').toUpperCase().includes('LEAD');
+    return ['WORKSPACE_ADMIN', 'WORKSPACE_MANAGER'].includes(role) || isLead;
 };
 
 const hasLeadRestriction = (user) => {
