@@ -38,40 +38,38 @@ const createSendToken = (user, statusCode, res) => {
 
 exports.registerUser = catchAsync(async (req, res, next) => {
   const { name, email, password, role, assignedProjectId, workspaceName, plan } = req.body;
-  
+
   if (!name || !email || !password) return res.status(400).json({ status: 'fail', message: 'Missing fields' });
 
   const existingUser = await User.findOne({ email });
   if (existingUser) return res.status(400).json({ status: 'fail', message: 'Email already exists' });
 
-  // Multi-tenant Assignment Logic
   const userId = new mongoose.Types.ObjectId();
   let workspaceId;
-  
-  let finalRole = mapRole(role) || mapRole(plan?.includes('executive') ? 'ADMIN' : 'ADMIN') || 'WORKSPACE_ADMIN'; 
-  let finalWorkspaceDisplayName;
+  let finalRole;
+  let finalJobTitle;
+  let finalAssignedProjectId;
 
+  // 1. Check for an invitation first (Joining an EXISTING workspace)
   const invitation = await Invitation.findOne({ email, status: 'pending' });
-  
+
   if (invitation) {
     workspaceId = invitation.workspaceId;
     finalRole = mapRole(invitation.role) || 'PROJECT_MEMBER';
-  } else if (finalRole === 'WORKSPACE_ADMIN') {
-    finalWorkspaceDisplayName = workspaceName || `${name}'s Hub`;
-    const newWorkspace = await Workspace.create({ 
-      name: finalWorkspaceDisplayName, 
-      admin: userId, 
+    finalJobTitle = 'Software Engineer';
+  } else {
+    // 2. NO INVITATION: This is a completely brand new customer.
+    // They get their own isolated, BRAND NEW Workspace.
+    finalRole = 'WORKSPACE_ADMIN';
+    const finalWorkspaceDisplayName = workspaceName || `${name}'s Hub`;
+    finalJobTitle = req.body.jobTitle || (plan?.includes('executive') ? 'Chief Technology Officer' : 'Workspace Administrator');
+
+    const newWorkspace = await Workspace.create({
+      name: finalWorkspaceDisplayName,
+      admin: userId,
       subscription: { plan: plan || 'free' }
     });
     workspaceId = newWorkspace._id;
-  } else {
-    return res.status(400).json({ status: 'fail', message: 'Registration requires invitation or WORKSPACE_ADMIN status' });
-  }
-
-  // Assign Job Title based on Plan/Role
-  let finalJobTitle = 'Software Engineer';
-  if (finalRole === 'WORKSPACE_ADMIN') {
-      finalJobTitle = plan?.includes('executive') ? 'Chief Technology Officer' : 'Workspace Administrator';
   }
 
   const user = await User.create({
@@ -82,10 +80,9 @@ exports.registerUser = catchAsync(async (req, res, next) => {
     role: finalRole,
     jobTitle: finalJobTitle,
     workspaceId,
-    assignedProjectId: assignedProjectId || (invitation ? invitation.projectId : null)
+    assignedProjectId: finalAssignedProjectId || assignedProjectId || (invitation ? invitation.projectId : null)
   });
 
-  // If they used an invitation, mark it accepted
   if (invitation) {
     invitation.status = 'accepted';
     await invitation.save();
@@ -115,12 +112,12 @@ exports.logoutUser = (req, res) => {
 };
 
 exports.getMe = catchAsync(async (req, res, next) => {
-    res.status(200).json({
-      status: 'success',
-      data: {
-        user: req.user
-      }
-    });
+  res.status(200).json({
+    status: 'success',
+    data: {
+      user: req.user
+    }
+  });
 });
 
 exports.activateInvitation = catchAsync(async (req, res, next) => {
@@ -149,9 +146,9 @@ exports.activateInvitation = catchAsync(async (req, res, next) => {
 });
 
 exports.completeTour = catchAsync(async (req, res, next) => {
-    const user = await User.findByIdAndUpdate(req.user._id, { hasSeenTour: true }, { new: true });
-    res.status(200).json({
-      status: 'success',
-      data: { user }
-    });
+  const user = await User.findByIdAndUpdate(req.user._id, { hasSeenTour: true }, { new: true });
+  res.status(200).json({
+    status: 'success',
+    data: { user }
+  });
 });

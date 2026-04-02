@@ -43,7 +43,7 @@ const projectSchema = new mongoose.Schema({
 });
 
 // Auto-generate project key if not provided
-projectSchema.pre('save', function (next) {
+projectSchema.pre('save', function () {
   if (!this.key && this.name) {
     // Take first 3-4 letters of name, remove spaces, uppercase
     this.key = this.name
@@ -56,7 +56,6 @@ projectSchema.pre('save', function (next) {
       this.key += 'X';
     }
   }
-  next();
 });
 
 module.exports = mongoose.model('Project', projectSchema);

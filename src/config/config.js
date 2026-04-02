@@ -1,9 +1,11 @@
 const dotenv = require('dotenv');
 dotenv.config();
 
+const isProduction = process.env.NODE_ENV === 'production';
+
 const REQUIRED_VARS = [
   'JWT_SECRET',
-  'DB_URI',
+  isProduction ? 'DB_ATLAS_URI' : 'DB_LOCAL_URI',
   'GROQ_API_KEY'
 ];
 
@@ -22,7 +24,7 @@ module.exports = {
     expiresIn: process.env.JWT_EXPIRES_IN || '5d'
   },
   db: {
-    uri: process.env.DB_URI
+    uri: isProduction ? process.env.DB_ATLAS_URI : process.env.DB_LOCAL_URI
   },
   ai: {
     hfKey: process.env.HUGGINGFACE_API_KEY,
