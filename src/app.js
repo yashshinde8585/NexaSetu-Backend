@@ -8,8 +8,8 @@ const rateLimit = require('express-rate-limit');
 
 dotenv.config();
 
-// Fail Fast: Ensure critical secrets are present
-const REQUIRED_ENV = ['JWT_SECRET', 'GROQ_API_KEY', 'DB_URI'];
+const isProduction = process.env.NODE_ENV === 'production';
+const REQUIRED_ENV = ['JWT_SECRET', 'GROQ_API_KEY', isProduction ? 'DB_ATLAS_URI' : 'DB_LOCAL_URI'];
 REQUIRED_ENV.forEach(key => {
     if (!process.env[key]) {
         console.error(`[FATAL] Missing environment variable: ${key}`);
