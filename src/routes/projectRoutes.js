@@ -1,5 +1,11 @@
 const express = require('express');
-const { createProject, getProjects, getProject, getProjectAnalytics, updateProject } = require('../controllers/projectController');
+const {
+  createProject,
+  getProjects,
+  getProject,
+  getProjectAnalytics,
+  updateProject,
+} = require('../controllers/projectController');
 const { protect, requirePermission } = require('../middleware/authMiddleware');
 const { PERMISSIONS } = require('../config/permissions');
 

@@ -1,5 +1,4 @@
-
-
+// Intercepts unhandled application errors and normalizes API responses for clients.
 const globalErrorHandler = (err, req, res, next) => {
   err.statusCode = err.statusCode || 500;
   err.status = err.status || 'error';
@@ -8,22 +7,22 @@ const globalErrorHandler = (err, req, res, next) => {
   console.error(`[FATAL ERROR]: ${err.message}`, {
     stack: err.stack,
     path: req.originalUrl,
-    method: req.method
+    method: req.method,
   });
 
   // Handle specific MongoDB/Mongoose errors
   if (err.name === 'CastError') {
     return res.status(400).json({
       status: 'fail',
-      message: `Invalid format for field ${err.path}: ${err.value}`
+      message: `Invalid format for field ${err.path}: ${err.value}`,
     });
   }
 
   if (err.name === 'ValidationError') {
-    const messages = Object.values(err.errors).map(el => el.message);
+    const messages = Object.values(err.errors).map((el) => el.message);
     return res.status(400).json({
       status: 'fail',
-      message: `Invalid input data: ${messages.join('. ')}`
+      message: `Invalid input data: ${messages.join('. ')}`,
     });
   }
 
@@ -31,21 +30,21 @@ const globalErrorHandler = (err, req, res, next) => {
     const value = err.message.match(/(["'])(\\?.)*?\1/)[0];
     return res.status(400).json({
       status: 'fail',
-      message: `Duplicate field value: ${value}. Please use another value!`
+      message: `Duplicate field value: ${value}. Please use another value!`,
     });
   }
 
   if (err.name === 'JsonWebTokenError') {
     return res.status(401).json({
       status: 'fail',
-      message: 'Invalid token. Please log in again.'
+      message: 'Invalid token. Please log in again.',
     });
   }
 
   if (err.name === 'TokenExpiredError') {
     return res.status(401).json({
       status: 'fail',
-      message: 'Your token has expired. Please log in again.'
+      message: 'Your token has expired. Please log in again.',
     });
   }
 
@@ -55,14 +54,16 @@ const globalErrorHandler = (err, req, res, next) => {
       status: err.status,
       message: err.message,
       stack: err.stack,
-      error: err
+      error: err,
     });
   }
 
   // Generic production response
   res.status(err.statusCode).json({
     status: err.status,
-    message: err.isOperational ? err.message : 'Something went wrong on our end. Our engineers are investigating.'
+    message: err.isOperational
+      ? err.message
+      : 'Something went wrong on our end. Our engineers are investigating.',
   });
 };
 

@@ -1,47 +1,52 @@
-
-
+// Defines risk classifications for dynamic system tasks to determine autonomous vs manual execution paths.
 class ExecutionPolicy {
   constructor() {
     this.LOW_RISK = 'auto';
     this.HIGH_RISK = 'approval';
   }
 
-  
   getExecutionMode(actionType, payload) {
     switch (actionType) {
       case 'STATUS_CHANGE':
-        // Changing status (e.g., to 'in_progress' or 'done') is generally low risk
+        // Classify state changes as low risk operations.
         return this.LOW_RISK;
 
       case 'UPDATE_TASK_DEADLINE':
-        // Auto-approve if the deadline shift is small (e.g., < 3 days)
-        if (payload && payload.daysShifted && Math.abs(payload.daysShifted) <= 3) {
+        // Permit micro timeline shifts automatically while escalating major deviations.
+        if (
+          payload &&
+          payload.daysShifted &&
+          Math.abs(payload.daysShifted) <= 3
+        ) {
           return this.LOW_RISK;
         }
         return this.HIGH_RISK;
 
       case 'REASSIGN_TASK':
-        // Moving work between people is high-impact and requires human oversight
+        // Demand explicit authorization for all cross-personnel workload reassignments.
         return this.HIGH_RISK;
 
       case 'PROJECT_TIMELINE_SHIFT':
-        // Shifting an entire project schedule is high risk
+        // Classify macro project schedule adjustments as restricted high-risk actions.
         return this.HIGH_RISK;
 
       case 'GITHUB_SYNC':
-        // Syncing data is low risk as it doesn't delete user work
+        // Classify non-destructive telemetry synchronizations as safe operations.
         return this.LOW_RISK;
 
       default:
-        // Default to high risk for safety
+        // Enforce strict high-risk validation by default for unmapped actions.
         return this.HIGH_RISK;
     }
   }
 
-  
   isSensitive(actionType) {
-      const highRiskActions = ['REASSIGN_TASK', 'PROJECT_TIMELINE_SHIFT', 'DELETE_TASK'];
-      return highRiskActions.includes(actionType);
+    const highRiskActions = [
+      'REASSIGN_TASK',
+      'PROJECT_TIMELINE_SHIFT',
+      'DELETE_TASK',
+    ];
+    return highRiskActions.includes(actionType);
   }
 }
 

@@ -4,18 +4,38 @@ const Project = require('../models/Project');
 const AgentOrchestrator = require('../services/agentOrchestrator');
 const { calculateDelayStatus } = require('../utils/taskUtils');
 const { isManagerOrAdmin } = require('../utils/authHelpers');
-const { getTaskAccessQuery, getProjectAccessQuery } = require('../utils/queryHelpers');
+const {
+  getTaskAccessQuery,
+  getProjectAccessQuery,
+} = require('../utils/queryHelpers');
 const catchAsync = require('../utils/catchAsync');
 
-// Create new task in a project
+// Manages the lifecycle, creation, and retrieval of tasks across projects and sprints.
+
+// Creates a new task and emits an event to the AI agent orchestrator.
 exports.createTask = catchAsync(async (req, res, next) => {
-  const { title, description, project, assignedUser, status, source, isAiGenerated, dueDate, sprint } = req.body;
+  const {
+    title,
+    description,
+    project,
+    assignedUser,
+    status,
+    source,
+    isAiGenerated,
+    dueDate,
+    sprint,
+  } = req.body;
 
   const query = getProjectAccessQuery(req.user);
   query._id = project;
   const projectDoc = await Project.findOne(query);
   if (!projectDoc) {
-    return res.status(404).json({ status: 'fail', message: 'Project not found or you are not a member' });
+    return res
+      .status(404)
+      .json({
+        status: 'fail',
+        message: 'Project not found or you are not a member',
+      });
   }
 
   const taskData = {
@@ -48,7 +68,7 @@ exports.createTask = catchAsync(async (req, res, next) => {
     entityId: task._id,
     entityType: 'task',
     project: task.project,
-    payload: task
+    payload: task,
   });
 
   res.status(201).json({
@@ -57,7 +77,7 @@ exports.createTask = catchAsync(async (req, res, next) => {
   });
 });
 
-// Get all tasks for a project
+// Retrieves all tasks for a specified project, optionally filtered by sprint logic.
 exports.getTasks = catchAsync(async (req, res, next) => {
   const { projectId } = req.params;
   const { sprintId } = req.query;
@@ -66,25 +86,26 @@ exports.getTasks = catchAsync(async (req, res, next) => {
   projectQuery._id = projectId;
   const project = await Project.findOne(projectQuery);
   if (!project) {
-    return res.status(404).json({ status: 'fail', message: 'Project not found or access denied' });
+    return res
+      .status(404)
+      .json({ status: 'fail', message: 'Project not found or access denied' });
   }
 
   const pipeline = [
-    { $match: { project: new mongoose.Types.ObjectId(projectId) } }
+    { $match: { project: new mongoose.Types.ObjectId(projectId) } },
   ];
 
   if (sprintId) {
     const sprintObjectId = new mongoose.Types.ObjectId(sprintId);
-    const projectSprintId = project.sprint ? (project.sprint._id || project.sprint).toString() : null;
+    const projectSprintId = project.sprint
+      ? (project.sprint._id || project.sprint).toString()
+      : null;
 
     const sprintMatch = { $or: [{ sprint: sprintObjectId }] };
 
     // If viewing the project's current sprint, also include unassigned tasks
     if (projectSprintId === sprintId) {
-      sprintMatch.$or.push(
-        { sprint: { $exists: false } },
-        { sprint: null }
-      );
+      sprintMatch.$or.push({ sprint: { $exists: false } }, { sprint: null });
     }
 
     pipeline.push({ $match: sprintMatch });
@@ -97,38 +118,38 @@ exports.getTasks = catchAsync(async (req, res, next) => {
         from: 'users',
         localField: 'assignedUser',
         foreignField: '_id',
-        as: 'assignedUserData'
-      }
+        as: 'assignedUserData',
+      },
     },
     {
       $lookup: {
         from: 'sprints',
         localField: 'sprint',
         foreignField: '_id',
-        as: 'sprintData'
-      }
+        as: 'sprintData',
+      },
     },
     {
-      $sort: { createdAt: -1 }
+      $sort: { createdAt: -1 },
     },
     {
       $addFields: {
         assignedUser: { $arrayElemAt: ['$assignedUserData', 0] },
         projectKey: project.key || 'NEXA',
-        sprintInfo: { $arrayElemAt: ['$sprintData', 0] }
-      }
+        sprintInfo: { $arrayElemAt: ['$sprintData', 0] },
+      },
     },
     {
       $project: {
         assignedUserData: 0,
-        sprintData: 0
-      }
+        sprintData: 0,
+      },
     }
   );
 
   const tasks = await Task.aggregate(pipeline);
 
-  const enrichedTasks = tasks.map(t => {
+  const enrichedTasks = tasks.map((t) => {
     const delayStatus = calculateDelayStatus(t);
     return { ...t, delayStatus };
   });
@@ -140,7 +161,7 @@ exports.getTasks = catchAsync(async (req, res, next) => {
   });
 });
 
-// Get single task by ID
+// Retrieves detailed information for a specific task using its unique identifier.
 exports.getTaskById = catchAsync(async (req, res, next) => {
   const { id } = req.params;
 
@@ -162,7 +183,9 @@ exports.getTaskById = catchAsync(async (req, res, next) => {
   const projectAccess = await Project.findOne(query);
 
   if (!projectAccess) {
-    return res.status(403).json({ status: 'fail', message: 'Access denied to this project task' });
+    return res
+      .status(403)
+      .json({ status: 'fail', message: 'Access denied to this project task' });
   }
 
   const taskObj = task.toObject();
@@ -172,11 +195,11 @@ exports.getTaskById = catchAsync(async (req, res, next) => {
 
   res.status(200).json({
     status: 'success',
-    data: { task: taskObj }
+    data: { task: taskObj },
   });
 });
 
-// Update task details
+// Modifies task properties, manages lifecycle timestamps, and broadcasts updates.
 exports.updateTask = catchAsync(async (req, res, next) => {
   const { id } = req.params;
   const { title, description, status, assignedUser, dueDate } = req.body;
@@ -205,7 +228,9 @@ exports.updateTask = catchAsync(async (req, res, next) => {
     if (status === 'done') {
       updateData.completedAt = new Date();
       const start = task.startedAt || task.createdAt;
-      updateData.actualDuration = Math.round((new Date() - start) / (1000 * 60)); // Record in minutes
+      updateData.actualDuration = Math.round(
+        (new Date() - start) / (1000 * 60)
+      ); // Record in minutes
     }
 
     if (status !== 'done' && task.status === 'done') {
@@ -214,11 +239,10 @@ exports.updateTask = catchAsync(async (req, res, next) => {
     }
   }
 
-  const updatedTask = await Task.findByIdAndUpdate(
-    id,
-    updateData,
-    { returnDocument: 'after', runValidators: true }
-  ).populate('assignedUser', 'name email');
+  const updatedTask = await Task.findByIdAndUpdate(id, updateData, {
+    returnDocument: 'after',
+    runValidators: true,
+  }).populate('assignedUser', 'name email');
 
   // 🧠 Emit Update Event to Agent Orchestrator
   await AgentOrchestrator.handleEvent({
@@ -226,7 +250,7 @@ exports.updateTask = catchAsync(async (req, res, next) => {
     entityId: updatedTask._id,
     entityType: 'task',
     project: updatedTask.project,
-    payload: updatedTask
+    payload: updatedTask,
   });
 
   res.status(200).json({
@@ -235,14 +259,18 @@ exports.updateTask = catchAsync(async (req, res, next) => {
   });
 });
 
-// Get tasks assigned to the current user OR all tasks in workspace (if scope=workspace)
+// Retrieves tasks specifically assigned to the authenticated user or unassigned tasks requiring attention.
 exports.getMyTasks = catchAsync(async (req, res, next) => {
   const { scope } = req.query; // 'personal' or 'workspace'
-  const isLeadOrAdmin = req.user.role === 'TECH_LEAD' || req.user.role === 'WORKSPACE_ADMIN' || req.user.role === 'WORKSPACE_MANAGER';
+  const isLeadOrAdmin =
+    req.user.role === 'TECH_LEAD' ||
+    req.user.role === 'WORKSPACE_ADMIN' ||
+    req.user.role === 'WORKSPACE_MANAGER';
 
   const projectAccessQuery = getProjectAccessQuery(req.user);
-  const accessibleProjects = await Project.find(projectAccessQuery).select('_id');
-  const accessibleProjectIds = accessibleProjects.map(p => p._id);
+  const accessibleProjects =
+    await Project.find(projectAccessQuery).select('_id');
+  const accessibleProjectIds = accessibleProjects.map((p) => p._id);
 
   let query = { assignedUser: req.user._id };
 
@@ -258,10 +286,10 @@ exports.getMyTasks = catchAsync(async (req, res, next) => {
           project: { $in: accessibleProjectIds },
           $or: [
             { status: 'in_review' },
-            { status: { $ne: 'done' }, dueDate: { $lt: new Date() } }
-          ]
-        }
-      ]
+            { status: { $ne: 'done' }, dueDate: { $lt: new Date() } },
+          ],
+        },
+      ],
     };
   }
 
@@ -270,7 +298,7 @@ exports.getMyTasks = catchAsync(async (req, res, next) => {
     .populate('project', 'name')
     .populate('assignedUser', 'name email');
 
-  const enrichedTasks = tasks.map(t => {
+  const enrichedTasks = tasks.map((t) => {
     const delayStatus = calculateDelayStatus(t);
     return { ...t.toObject(), delayStatus };
   });

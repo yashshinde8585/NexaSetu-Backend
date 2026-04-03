@@ -5,22 +5,21 @@ const auditService = require('../services/auditService');
 const { getProjectAccessQuery } = require('../utils/queryHelpers');
 const catchAsync = require('../utils/catchAsync');
 
-
-// Controller for managing AI Action Approvals
+// Processes AI-driven action requests, managing administrative approvals and rejections.
 exports.getPendingActions = catchAsync(async (req, res, next) => {
   const projects = await Project.find(getProjectAccessQuery(req.user));
-  const projectIds = projects.map(p => p._id);
+  const projectIds = projects.map((p) => p._id);
 
-  // Fetch pending actions targeting tasks in these projects
+  // Retrieve unresolved action items targeting the authorized portfolios.
   const actions = await ActionRequest.find({
-    status: 'pending'
+    status: 'pending',
   })
-  .sort({ createdAt: -1 })
-  .populate('targetId');
+    .sort({ createdAt: -1 })
+    .populate('targetId');
 
   res.status(200).json({
     status: 'success',
-    data: { actions }
+    data: { actions },
   });
 });
 
@@ -29,38 +28,38 @@ exports.approveAction = catchAsync(async (req, res, next) => {
   const result = await actionExecutor.approveRequest(actionId, req.user.id);
 
   await auditService.log({
-      action: 'APPROVE_AI',
-      req,
-      entityType: 'AI_ACTION',
-      entityId: actionId,
-      details: { outcome: 'EXECUTED' }
+    action: 'APPROVE_AI',
+    req,
+    entityType: 'AI_ACTION',
+    entityId: actionId,
+    details: { outcome: 'EXECUTED' },
   });
 
   res.status(200).json({
     status: 'success',
     message: 'Action approved and executed',
-    data: result
+    data: result,
   });
 });
 
 exports.rejectAction = catchAsync(async (req, res, next) => {
   const { actionId } = req.params;
-  const action = await ActionRequest.findByIdAndUpdate(actionId, { 
-      status: 'rejected',
-      executedAt: new Date(),
-      createdBy: req.user.id 
+  const action = await ActionRequest.findByIdAndUpdate(actionId, {
+    status: 'rejected',
+    executedAt: new Date(),
+    createdBy: req.user.id,
   });
 
   await auditService.log({
-      action: 'REJECT_AI',
-      req,
-      entityType: 'AI_ACTION',
-      entityId: actionId,
-      details: { outcome: 'REJECTED' }
+    action: 'REJECT_AI',
+    req,
+    entityType: 'AI_ACTION',
+    entityId: actionId,
+    details: { outcome: 'REJECTED' },
   });
 
   res.status(200).json({
     status: 'success',
-    message: 'Action rejected'
+    message: 'Action rejected',
   });
 });

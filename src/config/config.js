@@ -1,3 +1,4 @@
+// Validates environment variables and exports centralized configuration settings for the backend application.
 const dotenv = require('dotenv');
 dotenv.config();
 
@@ -6,14 +7,16 @@ const isProduction = process.env.NODE_ENV === 'production';
 const REQUIRED_VARS = [
   'JWT_SECRET',
   isProduction ? 'DB_ATLAS_URI' : 'DB_LOCAL_URI',
-  'GROQ_API_KEY'
+  'GROQ_API_KEY',
 ];
 
-const missing = REQUIRED_VARS.filter(v => !process.env[v]);
+const missing = REQUIRED_VARS.filter((v) => !process.env[v]);
 
 if (missing.length > 0) {
-  console.error('\x1b[31m[CRITICAL CONFIG ERROR]: The following environment variables are missing:\x1b[0m');
-  missing.forEach(v => console.error(`  - ${v}`));
+  console.error(
+    '\x1b[31m[CRITICAL CONFIG ERROR]: The following environment variables are missing:\x1b[0m'
+  );
+  missing.forEach((v) => console.error(`  - ${v}`));
   console.error('\x1b[31mx--- ABORTING STARTUP ---x\x1b[0m');
   process.exit(1);
 }
@@ -21,18 +24,18 @@ if (missing.length > 0) {
 module.exports = {
   jwt: {
     secret: process.env.JWT_SECRET,
-    expiresIn: process.env.JWT_EXPIRES_IN || '5d'
+    expiresIn: process.env.JWT_EXPIRES_IN || '5d',
   },
   db: {
-    uri: isProduction ? process.env.DB_ATLAS_URI : process.env.DB_LOCAL_URI
+    uri: isProduction ? process.env.DB_ATLAS_URI : process.env.DB_LOCAL_URI,
   },
   ai: {
     hfKey: process.env.HUGGINGFACE_API_KEY,
-    groqKey: process.env.GROQ_API_KEY
+    groqKey: process.env.GROQ_API_KEY,
   },
   app: {
     port: process.env.PORT || 5000,
     clientUrl: process.env.CLIENT_URL || 'http://localhost:5173',
-    nodeEnv: process.env.NODE_ENV || 'development'
-  }
+    nodeEnv: process.env.NODE_ENV || 'development',
+  },
 };
