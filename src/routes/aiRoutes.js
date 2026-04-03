@@ -1,6 +1,8 @@
 const express = require('express');
 const { extractTask } = require('../controllers/aiController');
-const { getPortfolioRecommendations } = require('../controllers/aiRecommendationController');
+const {
+  getPortfolioRecommendations,
+} = require('../controllers/aiRecommendationController');
 const { getActivityLogs } = require('../controllers/aiActivityController');
 const { protect } = require('../middleware/authMiddleware');
 

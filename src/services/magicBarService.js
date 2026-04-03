@@ -1,14 +1,14 @@
 const axios = require('axios');
 const aiHelpers = require('../utils/aiHelpers');
 
-const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
+const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
 
-// Optimized Groq models for high-speed inference
+// Accelerates AI request resolution through multi-model failover chains.
 const MODEL_FALLBACK_LIST = [
-  "llama-3.3-70b-versatile",
-  "llama-3.1-8b-instant",
-  "mixtral-8x7b-32768",
-  "gemma2-9b-it"
+  'llama-3.3-70b-versatile',
+  'llama-3.1-8b-instant',
+  'mixtral-8x7b-32768',
+  'gemma2-9b-it',
 ];
 
 class MagicBarService {
@@ -23,10 +23,16 @@ class MagicBarService {
 
     const { currentProjects, user, dashboardStats } = context;
     const userName = user ? user.name : 'Unknown User';
-    const projectNames = currentProjects?.length > 0 ? currentProjects.map(p => p.name).join(', ') : 'None';
-    const statsSummary = dashboardStats?.length > 0 
-      ? dashboardStats.map(s => `${s.label}: ${s.value} (${s.trend || 'N/A'})`).join(' | ') 
-      : 'No real-time stats available';
+    const projectNames =
+      currentProjects?.length > 0
+        ? currentProjects.map((p) => p.name).join(', ')
+        : 'None';
+    const statsSummary =
+      dashboardStats?.length > 0
+        ? dashboardStats
+            .map((s) => `${s.label}: ${s.value} (${s.trend || 'N/A'})`)
+            .join(' | ')
+        : 'No real-time stats available';
 
     const systemPrompt = `
       You are Nexa, a master-level Strategic Command Optimizer for the NexaSetu platform.
@@ -137,21 +143,25 @@ class MagicBarService {
 
     for (const currentModel of MODEL_FALLBACK_LIST) {
       try {
-        const response = await axios.post(GROQ_URL, {
-          model: currentModel,
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: `Interpret this command: "${text}"` }
-          ],
-          max_tokens: 500,
-          temperature: 0.1,
-        }, {
-          headers: {
-            'Authorization': `Bearer ${this.apiKey}`,
-            'Content-Type': 'application/json',
+        const response = await axios.post(
+          GROQ_URL,
+          {
+            model: currentModel,
+            messages: [
+              { role: 'system', content: systemPrompt },
+              { role: 'user', content: `Interpret this command: "${text}"` },
+            ],
+            max_tokens: 500,
+            temperature: 0.1,
           },
-          timeout: 10000,
-        });
+          {
+            headers: {
+              Authorization: `Bearer ${this.apiKey}`,
+              'Content-Type': 'application/json',
+            },
+            timeout: 10000,
+          }
+        );
 
         const resultText = response.data.choices[0].message.content;
         const actions = aiHelpers.extractAndParseJSON(resultText);
@@ -160,14 +170,20 @@ class MagicBarService {
           return Array.isArray(actions) ? actions : [actions];
         }
       } catch (error) {
-        console.error(`[MagicBarService] error with ${currentModel}:`, error.message);
+        console.error(
+          `[MagicBarService] error with ${currentModel}:`,
+          error.message
+        );
       }
     }
 
-    return [{
-      intent: 'UNKNOWN',
-      responseMessage: "I'm having trouble understanding those steps. Could you try one at a time?"
-    }];
+    return [
+      {
+        intent: 'UNKNOWN',
+        responseMessage:
+          "I'm having trouble understanding those steps. Could you try one at a time?",
+      },
+    ];
   }
 }
 

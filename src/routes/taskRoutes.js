@@ -1,5 +1,11 @@
 const express = require('express');
-const { createTask, getTasks, updateTask, getMyTasks, getTaskById } = require('../controllers/taskController');
+const {
+  createTask,
+  getTasks,
+  updateTask,
+  getMyTasks,
+  getTaskById,
+} = require('../controllers/taskController');
 const { protect, requirePermission } = require('../middleware/authMiddleware');
 const { PERMISSIONS } = require('../config/permissions');
 

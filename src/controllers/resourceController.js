@@ -3,52 +3,60 @@ const Task = require('../models/Task');
 const User = require('../models/User');
 const { getProjectAccessQuery } = require('../utils/queryHelpers');
 
-
-
+// Evaluates team utilization and capacity to detect overarching organizational bottlenecks.
 exports.getResourceWorkload = async (req, res) => {
   try {
-    // 1. Get all projects authorized for this user
+    // Evaluate base capacity utilizing authorized project lists.
     const managerProjects = await Project.find(getProjectAccessQuery(req.user));
 
-    const managerProjectIds = managerProjects.map(p => p._id);
-    
-    // 2. Identify all team members across these projects
-    const teamMemberIds = [...new Set(managerProjects.flatMap(p => p.members))];
+    const managerProjectIds = managerProjects.map((p) => p._id);
 
-    // 3. For these team members, fetch all active tasks across the system
-    // (We want to catch cross-project overload)
+    // Identify distinct resources deployed across active projects.
+    const teamMemberIds = [
+      ...new Set(managerProjects.flatMap((p) => p.members)),
+    ];
+
+    // Measure overall systemic load dynamically.
     const activeTasks = await Task.find({
       assignedUser: { $in: teamMemberIds },
-      status: { $in: ['todo', 'in_progress'] }
+      status: { $in: ['todo', 'in_progress'] },
     }).populate('project', 'name');
 
-    // 4. Calculate workload per user
+    // Aggregate uncompleted items per individual team member.
     const userWorkloadMap = {};
 
-    teamMemberIds.forEach(userId => {
+    teamMemberIds.forEach((userId) => {
       userWorkloadMap[userId.toString()] = {
         userId: userId,
         activeTasks: [],
         taskCount: 0,
-        projectCount: new Set()
+        projectCount: new Set(),
       };
     });
 
-    activeTasks.forEach(task => {
+    activeTasks.forEach((task) => {
       const userIdStr = task.assignedUser.toString();
       if (userWorkloadMap[userIdStr]) {
         userWorkloadMap[userIdStr].activeTasks.push(task);
         userWorkloadMap[userIdStr].taskCount += 1;
-        userWorkloadMap[userIdStr].projectCount.add(task.project._id.toString());
+        userWorkloadMap[userIdStr].projectCount.add(
+          task.project._id.toString()
+        );
       }
     });
 
-    // 5. Fetch user names for display
-    const users = await User.find({ _id: { $in: teamMemberIds } }, 'name email');
+    // Append identifying attributes to active team IDs.
+    const users = await User.find(
+      { _id: { $in: teamMemberIds } },
+      'name email'
+    );
 
-    // 6. Enrich and categorize
-    const workloadData = users.map(user => {
-      const stats = userWorkloadMap[user._id.toString()] || { taskCount: 0, projectCount: new Set() };
+    // Synthesize raw totals into categorized diagnostic health statuses.
+    const workloadData = users.map((user) => {
+      const stats = userWorkloadMap[user._id.toString()] || {
+        taskCount: 0,
+        projectCount: new Set(),
+      };
       const activeCount = stats.taskCount;
       const projectsCount = stats.projectCount.size;
 
@@ -69,10 +77,17 @@ exports.getResourceWorkload = async (req, res) => {
     res.status(200).json({
       status: 'success',
       data: {
-        resources: workloadData.sort((a, b) => b.activeTasksCount - a.activeTasksCount)
-      }
+        resources: workloadData.sort(
+          (a, b) => b.activeTasksCount - a.activeTasksCount
+        ),
+      },
     });
   } catch (error) {
-    res.status(500).json({ status: 'error', message: 'Failed to calculate resource workload' });
+    res
+      .status(500)
+      .json({
+        status: 'error',
+        message: 'Failed to calculate resource workload',
+      });
   }
 };

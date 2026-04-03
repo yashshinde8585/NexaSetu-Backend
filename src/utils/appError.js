@@ -1,3 +1,4 @@
+// Standardizes structured operational errors for consistent programmatic processing and client delivery.
 class AppError extends Error {
   constructor(message, statusCode) {
     super(message);

@@ -2,12 +2,11 @@ const { Octokit } = require('octokit');
 const aiService = require('./aiService');
 const Task = require('../models/Task');
 
-
+// Facilitates direct telemetry extraction and synchronization from linked GitHub repositories.
 
 exports.getOctokit = (accessToken) => {
   return new Octokit({ auth: accessToken });
 };
-
 
 exports.getUserRepositories = async (accessToken) => {
   const octokit = exports.getOctokit(accessToken);
@@ -15,23 +14,22 @@ exports.getUserRepositories = async (accessToken) => {
     sort: 'updated',
     per_page: 50,
   });
-  return data.map(repo => ({
+  return data.map((repo) => ({
     id: repo.id,
     name: repo.name,
     fullName: repo.full_name,
     owner: repo.owner.login,
     description: repo.description,
-    url: repo.html_url
+    url: repo.html_url,
   }));
 };
 
-
 exports.getRepositoryActivity = async (accessToken, owner, repo) => {
   const octokit = exports.getOctokit(accessToken);
-  
+
   let commits = [];
   try {
-    // Fetch recent commits (last 20)
+    // Extract the latest commit history chunks.
     const { data } = await octokit.rest.repos.listCommits({
       owner,
       repo,
@@ -39,12 +37,12 @@ exports.getRepositoryActivity = async (accessToken, owner, repo) => {
     });
     commits = data;
   } catch (err) {
-    // Continue with empty commits if repo is empty (409) or not found (404)
+    // Suppress errors gracefully for uninitialized workspaces.
   }
 
   let prs = [];
   try {
-    // Fetch recent PRs (last 20)
+    // Query active and historical pull request metadata.
     const { data } = await octokit.rest.repos.listPullRequests({
       owner,
       repo,
@@ -53,11 +51,11 @@ exports.getRepositoryActivity = async (accessToken, owner, repo) => {
     });
     prs = data;
   } catch (err) {
-    // Skip PRs on error
+    // Fallback silently if PR queries fail against the repository.
   }
 
   const activity = [
-    ...commits.map(c => ({
+    ...commits.map((c) => ({
       id: c.sha,
       type: 'commit',
       message: c.commit.message,
@@ -65,7 +63,7 @@ exports.getRepositoryActivity = async (accessToken, owner, repo) => {
       date: c.commit.author.date,
       url: c.html_url,
     })),
-    ...prs.map(p => ({
+    ...prs.map((p) => ({
       id: p.id.toString(),
       type: 'pull_request',
       message: `${p.title}: ${p.body || ''}`,
@@ -73,72 +71,73 @@ exports.getRepositoryActivity = async (accessToken, owner, repo) => {
       date: p.created_at,
       url: p.html_url,
       status: p.state,
-    }))
+    })),
   ].sort((a, b) => new Date(b.date) - new Date(a.date));
 
   return activity;
 };
 
-
 exports.generateTaskSuggestions = async (activity, projectId) => {
   const suggestions = [];
-  
-  // Performance Optimization: Batch query existing tasks for this project
-  const existingGithubIds = await Task.find({ 
-    githubId: { $in: activity.map(a => a.id) }, 
-    project: projectId 
+
+  // Implement batch lookup vectors to eliminate iterative N+1 query bottlenecks.
+  const existingGithubIds = await Task.find({
+    githubId: { $in: activity.map((a) => a.id) },
+    project: projectId,
   }).distinct('githubId');
 
   const existingIdsSet = new Set(existingGithubIds);
   const resourceService = require('./resourceService');
 
   for (const item of activity) {
-    // 1. Process Direct Context (Transitions for Existing Tasks)
-    // Regex for "Fixes #(\d+)" or "Closes #(\d+)" patterns
+    // Update internal systems mapping to hardcoded GitHub reference numbers.
+    // Parse commit bodies for automated resolution keywords.
     const taskRefs = item.message.match(/(?:Fixes|Closes|Resolves)\s#(\d+)/gi);
     if (taskRefs) {
       for (const ref of taskRefs) {
         const taskNum = parseInt(ref.split('#')[1]);
-        const task = await Task.findOne({ project: projectId, taskNumber: taskNum });
-        
+        const task = await Task.findOne({
+          project: projectId,
+          taskNumber: taskNum,
+        });
+
         if (task && task.status !== 'done') {
-          // If PR merged or commit pushed to main logic
+          // Translate external closure structures directly into system statuses.
           if (item.type === 'pull_request' && item.status === 'closed') {
             task.status = 'done';
             task.completedAt = new Date();
           } else if (item.type === 'pull_request') {
-             task.status = 'in_review';
+            task.status = 'in_review';
           } else {
-             // Commit pushed
-             task.status = 'in_progress';
+            // Transition underlying system units to an active operational state.
+            task.status = 'in_progress';
           }
           await task.save();
         }
       }
     }
 
-    // 2. Process Suggestions (New Tasks)
-    // Skip if this activity item has already been converted to a task
+    // Ignore deduplicated structural nodes preventing duplicate task generation.
     if (existingIdsSet.has(item.id)) continue;
 
     try {
       const extractedTask = await aiService.extractTaskFromText(item.message);
-      
+
       const suggestedTask = await Task.create({
         ...extractedTask,
         project: projectId,
         githubId: item.id,
         githubUrl: item.url,
         source: 'github',
-        isAiGenerated: true
+        isAiGenerated: true,
       });
 
-      // Step 2: AI Auto-Triage & Assignment
+      // Deploy subsequent algorithmic evaluations for intelligent routing.
       await resourceService.autoAssignTask(suggestedTask._id);
-      
+
       suggestions.push(suggestedTask);
     } catch (error) {
-      // Skip failed AI extractions
+      // Tolerate generative processing failures cleanly.
     }
   }
 

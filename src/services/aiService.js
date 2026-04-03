@@ -1,19 +1,21 @@
 const axios = require('axios');
 const aiHelpers = require('../utils/aiHelpers');
 
-const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
+const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
 
-// High-speed Groq models for instant task extraction
+// Provides accelerated AI processing pipelines for text ingestion and command routing.
 const MODEL_FALLBACK_LIST = [
-  "llama-3.1-8b-instant",
-  "llama-3.3-70b-versatile",
-  "mixtral-8x7b-32768"
+  'llama-3.1-8b-instant',
+  'llama-3.3-70b-versatile',
+  'mixtral-8x7b-32768',
 ];
 
 exports.extractTaskFromText = async (text) => {
   const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) {
-    throw new Error('Groq API key is missing. Ensure GROQ_API_KEY is set in .env');
+    throw new Error(
+      'Groq API key is missing. Ensure GROQ_API_KEY is set in .env'
+    );
   }
 
   const systemPrompt = `
@@ -32,32 +34,39 @@ exports.extractTaskFromText = async (text) => {
 
     while (retryCount < maxRetries) {
       try {
-        const response = await axios.post(GROQ_URL, {
-          model: currentModel,
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: `Extract task from this text: "${text}"` }
-          ],
-          max_tokens: 300,
-        }, {
-          headers: {
-            'Authorization': `Bearer ${apiKey}`,
-            'Content-Type': 'application/json',
+        const response = await axios.post(
+          GROQ_URL,
+          {
+            model: currentModel,
+            messages: [
+              { role: 'system', content: systemPrompt },
+              {
+                role: 'user',
+                content: `Extract task from this text: "${text}"`,
+              },
+            ],
+            max_tokens: 300,
           },
-          timeout: 10000, // 10s timeout
-        });
+          {
+            headers: {
+              Authorization: `Bearer ${apiKey}`,
+              'Content-Type': 'application/json',
+            },
+            timeout: 10000, // 10s timeout
+          }
+        );
 
         const data = response.data;
 
         const resultText = data.choices[0].message.content;
 
-        // Try to parse the JSON output from the AI
+        // Extract and structure deterministic JSON bodies from unstructured LLM responses.
         const parsed = aiHelpers.extractAndParseJSON(resultText);
-        
+
         if (parsed) {
           let status = parsed.status || 'todo';
           if (!['todo', 'in_progress', 'in_review', 'done'].includes(status)) {
-              status = 'todo';
+            status = 'todo';
           }
 
           return {
@@ -68,21 +77,28 @@ exports.extractTaskFromText = async (text) => {
         } else {
           break;
         }
-
       } catch (error) {
-        // Handle "Not Supported" error - try next model in fallback list
+        // Implement seamless routing strategies over unsupported capability blocks.
         const res = error.response;
         const data = res?.data;
 
-        if (data?.error?.message && (data.error.message.includes("not supported") || data.error.message.includes("is not available"))) {
+        if (
+          data?.error?.message &&
+          (data.error.message.includes('not supported') ||
+            data.error.message.includes('is not available'))
+        ) {
           break; // Exit while loop, try next model
         }
 
-        // Handle rate limiting or model loading
-        if (res?.status === 429 || res?.status === 503 || (data?.error?.message && data.error.message.includes("loading"))) {
-          await new Promise(resolve => setTimeout(resolve, 5000));
+        // Enforce backoff protocols aggressively for capacity saturation limits.
+        if (
+          res?.status === 429 ||
+          res?.status === 503 ||
+          (data?.error?.message && data.error.message.includes('loading'))
+        ) {
+          await new Promise((resolve) => setTimeout(resolve, 5000));
           retryCount++;
-          if (retryCount >= maxRetries) break; 
+          if (retryCount >= maxRetries) break;
           continue;
         }
 
@@ -91,26 +107,31 @@ exports.extractTaskFromText = async (text) => {
     }
   }
 
-  throw new Error('All available AI models failed to process your request. Please check your GROQ_API_KEY or connection.');
+  throw new Error(
+    'All available AI models failed to process your request. Please check your GROQ_API_KEY or connection.'
+  );
 };
-
 
 exports.processPrompt = async (prompt) => {
   const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) throw new Error('GROQ_API_KEY is not set');
 
   try {
-    const response = await axios.post(GROQ_URL, {
-      model: "llama-3.3-70b-versatile",
-      messages: [{ role: "user", content: prompt }],
-      max_tokens: 800,
-    }, {
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
+    const response = await axios.post(
+      GROQ_URL,
+      {
+        model: 'llama-3.3-70b-versatile',
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 800,
       },
-      timeout: 15000,
-    });
+      {
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        timeout: 15000,
+      }
+    );
 
     return response.data.choices[0].message.content;
   } catch (error) {
@@ -118,4 +139,3 @@ exports.processPrompt = async (prompt) => {
     throw error;
   }
 };
-

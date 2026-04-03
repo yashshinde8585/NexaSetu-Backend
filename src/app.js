@@ -9,16 +9,19 @@ const rateLimit = require('express-rate-limit');
 dotenv.config();
 
 const isProduction = process.env.NODE_ENV === 'production';
-const REQUIRED_ENV = ['JWT_SECRET', 'GROQ_API_KEY', isProduction ? 'DB_ATLAS_URI' : 'DB_LOCAL_URI'];
-REQUIRED_ENV.forEach(key => {
-    if (!process.env[key]) {
-        console.error(`[FATAL] Missing environment variable: ${key}`);
-        process.exit(1);
-    }
+const REQUIRED_ENV = [
+  'JWT_SECRET',
+  'GROQ_API_KEY',
+  isProduction ? 'DB_ATLAS_URI' : 'DB_LOCAL_URI',
+];
+REQUIRED_ENV.forEach((key) => {
+  if (!process.env[key]) {
+    console.error(`[FATAL] Missing environment variable: ${key}`);
+    process.exit(1);
+  }
 });
 
 const app = express();
-
 
 const authRoutes = require('./routes/authRoutes');
 const projectRoutes = require('./routes/projectRoutes');
@@ -32,31 +35,36 @@ const magicBarRoutes = require('./routes/magicBarRoutes');
 const teamRoutes = require('./routes/teamRoutes');
 const sprintRoutes = require('./routes/sprintRoutes');
 
-app.use(cors({
-    origin: process.env.NODE_ENV === 'development' ? true : (process.env.CLIENT_URL || 'http://localhost:5173'), 
-    credentials: true
-}));
+app.use(
+  cors({
+    origin:
+      process.env.NODE_ENV === 'development'
+        ? true
+        : process.env.CLIENT_URL || 'http://localhost:5173',
+    credentials: true,
+  })
+);
 
 app.use(helmet());
 app.use(cookieParser());
 
 // Rate Limiting
 const globalLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 500, 
-    message: 'Too many requests from this IP, please try again after 15 minutes.'
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 500,
+  message: 'Too many requests from this IP, please try again after 15 minutes.',
 });
 
 const authLimiter = rateLimit({
-    windowMs: 60 * 60 * 1000, // 1 hour
-    max: 20,
-    message: 'Too many login attempts. Please try again after an hour.'
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 20,
+  message: 'Too many login attempts. Please try again after an hour.',
 });
 
 const aiLimiter = rateLimit({
-    windowMs: 60 * 60 * 1000, // 1 hour
-    max: 50,
-    message: 'AI allowance exceeded for this hour. Please try again later.'
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 50,
+  message: 'AI allowance exceeded for this hour. Please try again later.',
 });
 
 app.use('/api', globalLimiter);
@@ -77,7 +85,7 @@ app.use('/api/team', teamRoutes);
 app.use('/api/sprints', sprintRoutes);
 
 app.get('/', (req, res) => {
-    res.json({ message: 'NexaSetu API is running!' });
+  res.json({ message: 'NexaSetu API is running!' });
 });
 
 // Global Error Handler (must be the last middleware)
@@ -86,7 +94,12 @@ app.use(globalErrorHandler);
 
 // Handle 404 - If request reaches here, no route matched
 app.use((req, res, next) => {
-    res.status(404).json({ status: 'fail', message: `Route ${req.originalUrl} not found on this server` });
+  res
+    .status(404)
+    .json({
+      status: 'fail',
+      message: `Route ${req.originalUrl} not found on this server`,
+    });
 });
 
 module.exports = app;
