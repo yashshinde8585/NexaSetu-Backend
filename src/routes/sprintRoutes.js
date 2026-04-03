@@ -8,28 +8,30 @@ const router = express.Router();
 
 router.use(protect);
 
-router
-  .route('/:id/stats')
-  .get(sprintStatsController.getSprintStats);
+router.route('/:id/stats').get(sprintStatsController.getSprintStats);
 
-router
-  .route('/:id/finalize')
-  .get(sprintStatsController.finalizeSprint);
+router.route('/:id/finalize').get(sprintStatsController.finalizeSprint);
 
-router
-  .route('/:id/report')
-  .get(sprintStatsController.getSprintReportData);
+router.route('/:id/report').get(sprintStatsController.getSprintReportData);
 
 router
   .route('/')
   .get(sprintController.getAllSprints)
-  .post(requirePermission(PERMISSIONS.CREATE_PROJECT), sprintController.createSprint);
+  .post(
+    requirePermission(PERMISSIONS.CREATE_PROJECT),
+    sprintController.createSprint
+  );
 
 router
   .route('/:id')
   .get(sprintController.getSprint)
-  .patch(requirePermission(PERMISSIONS.EDIT_PROJECT), sprintController.updateSprint)
-  .delete(requirePermission(PERMISSIONS.EDIT_PROJECT), sprintController.deleteSprint);
-
+  .patch(
+    requirePermission(PERMISSIONS.EDIT_PROJECT),
+    sprintController.updateSprint
+  )
+  .delete(
+    requirePermission(PERMISSIONS.EDIT_PROJECT),
+    sprintController.deleteSprint
+  );
 
 module.exports = router;

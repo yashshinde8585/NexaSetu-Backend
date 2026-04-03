@@ -4,8 +4,9 @@ const AILog = require('../models/AILog');
 const harvesterAgent = require('./harvesterAgent');
 const schedulerAgent = require('./schedulerAgent');
 const actionExecutor = require('./actionExecutor');
-const aiService = require('./aiService'); // Add this for processCommand
+const aiService = require('./aiService');
 
+// Orchestrates cross-service event messaging and triggers specialized agent behaviors.
 class AgentOrchestrator {
   constructor() {
     this.name = 'Orchestrator';
@@ -13,8 +14,10 @@ class AgentOrchestrator {
   async handleEvent(event) {
     try {
       const { type, payload, project, user, entityId, entityType } = event;
-      
-      console.log(`[AgentOrchestrator] Handling ${type} for entity ${entityId}`);
+
+      console.log(
+        `[AgentOrchestrator] Handling ${type} for entity ${entityId}`
+      );
 
       let decision = 'monitoring';
       let actionTaken = 'logged';
@@ -22,12 +25,13 @@ class AgentOrchestrator {
       let reason = 'System standard monitoring';
       let actionsToExecute = [];
 
-      // 1. SELECT AGENT & DECIDE BASED ON EVENT TYPE
+      // Map system events dynamically to specialized domain agents.
       switch (type) {
         case 'TASK_DELAYED':
           agent = 'Scheduler';
           const sResult = await schedulerAgent.handleTaskDelay(event);
-          decision = sResult.status === 'executed' ? 'cascade shift' : 'monitoring only';
+          decision =
+            sResult.status === 'executed' ? 'cascade shift' : 'monitoring only';
           actionTaken = sResult.action || sResult.reason;
           reason = 'Task deadline passed without completion';
           actionsToExecute = sResult.actions || [];
@@ -43,7 +47,10 @@ class AgentOrchestrator {
         case 'GITHUB_ACTIVITY':
           agent = 'Harvester';
           const result = await harvesterAgent.processGithubActivity(payload);
-          decision = result.status === 'created' ? 'autonomous creation' : 'duplicate ignored';
+          decision =
+            result.status === 'created'
+              ? 'autonomous creation'
+              : 'duplicate ignored';
           actionTaken = result.action || result.reason;
           reason = 'New code activity detected in linked repository';
           break;
@@ -53,19 +60,22 @@ class AgentOrchestrator {
           agent = 'Portfolio';
           decision = 'metric updated';
           actionTaken = 're-calculated project health score';
-          reason = type === 'TASK_CREATED' ? 'New entry impact assessment' : 'Status/Assignment change impact';
+          reason =
+            type === 'TASK_CREATED'
+              ? 'New entry impact assessment'
+              : 'Status/Assignment change impact';
           break;
 
         default:
           break;
       }
 
-      // 2. TRIGGER ACTIONS IF ANY
+      // Distribute confirmed actions programmatically to the execution engine.
       for (const actionReq of actionsToExecute) {
-          await actionExecutor.processDecision(actionReq);
+        await actionExecutor.processDecision(actionReq);
       }
 
-      // 3. STORE DECISION LOG (Explainability)
+      // Persist contextual logic trees to maintain transparency and auditability.
       const log = await AILog.create({
         eventType: type,
         project: project || (payload && payload.project),
@@ -75,7 +85,7 @@ class AgentOrchestrator {
         decision,
         actionTaken,
         reason,
-        timestamp: new Date()
+        timestamp: new Date(),
       });
 
       return log;
@@ -87,48 +97,52 @@ class AgentOrchestrator {
   async scanForDelays() {
     const now = new Date();
     const tasks = await Task.find({
-        status: { $ne: 'done' },
-        dueDate: { $lt: now }
+      status: { $ne: 'done' },
+      dueDate: { $lt: now },
     });
 
     for (const task of tasks) {
-        // Only trigger once per task to avoid spam
-        const existingLog = await AILog.findOne({
-            eventType: 'TASK_DELAYED',
-            entityId: task._id,
-            timestamp: { $gt: new Date(new Date().getTime() - 24 * 60 * 60 * 1000) } // Last 24h
-        });
+      // Implement throttle locks to prevent recursive telemetry loops.
+      const existingLog = await AILog.findOne({
+        eventType: 'TASK_DELAYED',
+        entityId: task._id,
+        timestamp: {
+          $gt: new Date(new Date().getTime() - 24 * 60 * 60 * 1000),
+        }, // Last 24h
+      });
 
-        if (!existingLog) {
-            await this.handleEvent({
-                type: 'TASK_DELAYED',
-                entityId: task._id,
-                entityType: 'task',
-                project: task.project,
-                payload: task
-            });
-        }
+      if (!existingLog) {
+        await this.handleEvent({
+          type: 'TASK_DELAYED',
+          entityId: task._id,
+          entityType: 'task',
+          project: task.project,
+          payload: task,
+        });
+      }
     }
   }
 
   async processCommand(prompt, user) {
     try {
-        console.log(`[AgentOrchestrator] Processing command for user ${user._id}`);
-        
-        const response = await aiService.processPrompt(prompt);
-        
-        return {
-            status: 'success',
-            response,
-            processedAt: new Date()
-        };
+      console.log(
+        `[AgentOrchestrator] Processing command for user ${user._id}`
+      );
+
+      const response = await aiService.processPrompt(prompt);
+
+      return {
+        status: 'success',
+        response,
+        processedAt: new Date(),
+      };
     } catch (error) {
-        console.error('[AgentOrchestrator] Command routing failed:', error);
-        return {
-            status: 'error',
-            message: 'Failed to process strategic command',
-            error: error.message
-        };
+      console.error('[AgentOrchestrator] Command routing failed:', error);
+      return {
+        status: 'error',
+        message: 'Failed to process strategic command',
+        error: error.message,
+      };
     }
   }
 }
