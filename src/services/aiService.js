@@ -1,9 +1,10 @@
 const axios = require('axios');
 const aiHelpers = require('../utils/aiHelpers');
+const prompts = require('../config/prompts.json');
 
 const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
 
-// Provides accelerated AI processing pipelines for text ingestion and command routing.
+// AI processing for text extraction and routing.
 const MODEL_FALLBACK_LIST = [
   'llama-3.1-8b-instant',
   'llama-3.3-70b-versatile',
@@ -18,16 +19,12 @@ exports.extractTaskFromText = async (text) => {
     );
   }
 
-  const systemPrompt = `
-    You are a task management assistant. Your goal is to extract ONE concise and clear task from the given input text. 
-    Map the status based on keywords (e.g., "finished", "completed", "done" -> "done"; "verifying", "reviewing" -> "in_review"; "working", "ongoing" -> "in_progress"; default -> "todo").
-    
+  const systemPrompt = prompts.system.TASK_EXTRACTOR + `
     Return the result ONLY as a JSON object with these fields:
-    - title: (short, clear string)
-    - description: (brief context, optional string)
-    - status: (string, one of: "todo", "in_progress", "in_review", "done")
-    - priority: (string, one of: "low", "medium", "high", "urgent")
-    - estimatedDuration: (integer, estimated minutes to complete)
+    - title: (short, string)
+    - status: ("todo", "in_progress", "in_review", "done")
+    - priority: ("low", "medium", "high", "urgent")
+    - estimatedDuration: (integer minutes)
   `.trim();
 
   for (const currentModel of MODEL_FALLBACK_LIST) {
@@ -54,7 +51,7 @@ exports.extractTaskFromText = async (text) => {
               Authorization: `Bearer ${apiKey}`,
               'Content-Type': 'application/json',
             },
-            timeout: 10000, // 10s timeout
+            timeout: 10000,
           }
         );
 
@@ -62,7 +59,7 @@ exports.extractTaskFromText = async (text) => {
 
         const resultText = data.choices[0].message.content;
 
-        // Extract and structure deterministic JSON bodies from unstructured LLM responses.
+        // Extract JSON from LLM response.
         const parsed = aiHelpers.extractAndParseJSON(resultText);
 
         if (parsed) {
@@ -82,7 +79,7 @@ exports.extractTaskFromText = async (text) => {
           break;
         }
       } catch (error) {
-        // Implement seamless routing strategies over unsupported capability blocks.
+        // Handle unsupported capabilities.
         const res = error.response;
         const data = res?.data;
 
@@ -91,10 +88,10 @@ exports.extractTaskFromText = async (text) => {
           (data.error.message.includes('not supported') ||
             data.error.message.includes('is not available'))
         ) {
-          break; // Exit while loop, try next model
+          break;
         }
 
-        // Enforce backoff protocols aggressively for capacity saturation limits.
+        // Handle rate limits and backoff.
         if (
           res?.status === 429 ||
           res?.status === 503 ||
@@ -116,30 +113,51 @@ exports.extractTaskFromText = async (text) => {
   );
 };
 
-exports.processPrompt = async (prompt) => {
+exports.processPrompt = async (systemPrompt, userPrompt, config = {}) => {
   const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) throw new Error('GROQ_API_KEY is not set');
 
-  try {
-    const response = await axios.post(
-      GROQ_URL,
-      {
-        model: 'llama-3.3-70b-versatile',
-        messages: [{ role: 'user', content: prompt }],
-        max_tokens: 800,
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        timeout: 15000,
-      }
-    );
+  const { 
+    highReasoning = false, 
+    temperature = 0.5, 
+    max_tokens = 800,
+    timeout = 15000 
+  } = config;
 
-    return response.data.choices[0].message.content;
-  } catch (error) {
-    console.error('[AIService] Failed strategic processing:', error);
-    throw error;
+  // Strategic Model Selection
+  const primaryModel = highReasoning ? 'llama-3.3-70b-versatile' : 'llama-3.1-8b-instant';
+  const models = [primaryModel, ...MODEL_FALLBACK_LIST.filter(m => m !== primaryModel)];
+
+  for (const model of models) {
+    const start = Date.now();
+    try {
+      const response = await axios.post(
+        GROQ_URL,
+        {
+          model,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt }
+          ],
+          temperature,
+          max_tokens,
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+          },
+          timeout,
+        }
+      );
+
+      const latency = Date.now() - start;
+      console.log(`[AI-Performance] Model: ${model} | Latency: ${latency}ms | Tokens: ${response.data.usage?.total_tokens}`);
+
+      return response.data.choices[0].message.content;
+    } catch (error) {
+      console.warn(`[AI-Fallback] Routing failure on model ${model}, pivoting...`);
+      if (model === models[models.length - 1]) throw error;
+    }
   }
 };

@@ -14,9 +14,33 @@ const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
 const commentController = require('./commentController');
 
-// Manages the lifecycle, creation, and retrieval of tasks across projects and sprints.
+// Manage task lifecycle, creation, and retrieval.
 
-// Dynamically updates a task's operational status and appends a system-level audit log to the discussion.
+const updateTaskTimeTracking = (task, newStatus) => {
+  const now = new Date();
+  
+  // If moving FROM in_progress to something else, subtract elapsed time
+  if (task.status === 'in_progress' && newStatus !== 'in_progress' && task.lastStartedAt) {
+    const elapsedMinutes = Math.max(0, (now - task.lastStartedAt) / (1000 * 60));
+    task.remainingDuration = Math.max(0, (task.remainingDuration || task.estimatedDuration) - elapsedMinutes);
+    task.lastStartedAt = null;
+  }
+  
+  // If moving TO in_progress, mark start time
+  if (newStatus === 'in_progress' && task.status !== 'in_progress') {
+    task.lastStartedAt = now;
+    if (task.remainingDuration === undefined || task.remainingDuration === null) {
+      task.remainingDuration = task.estimatedDuration;
+    }
+  }
+
+  // If moving TO done, clear remaining duration (or keep if desired, but 0 is cleaner for progress)
+  if (newStatus === 'done') {
+    task.remainingDuration = 0;
+  }
+};
+
+// Update task status and log activity.
 exports.updateTaskStatus = catchAsync(async (req, res, next) => {
   const { taskId, status } = req.body;
 
@@ -26,6 +50,7 @@ exports.updateTaskStatus = catchAsync(async (req, res, next) => {
   }
 
   const oldStatus = task.status;
+  updateTaskTimeTracking(task, status);
   task.status = status;
   task.timelineHistory.push({
     status,
@@ -35,7 +60,7 @@ exports.updateTaskStatus = catchAsync(async (req, res, next) => {
 
   await task.save();
 
-  // 🗣️ Log to Discussion Feed
+  // Log to discussion feed
   await commentController.logActivity(
     taskId,
     req.user._id,
@@ -48,7 +73,7 @@ exports.updateTaskStatus = catchAsync(async (req, res, next) => {
   });
 });
 
-// Creates a new task and emits an event to the AI agent orchestrator.
+// Create a new task.
 exports.createTask = catchAsync(async (req, res, next) => {
   const {
     title,
@@ -88,12 +113,14 @@ exports.createTask = catchAsync(async (req, res, next) => {
     dueDate: dueDate || null,
     priority: priority || 'medium',
     estimatedDuration: estimatedDuration || 30,
+    remainingDuration: estimatedDuration || 30,
     createdBy: req.user._id,
   };
 
-  // Initial lifecycle timestamps
+  // Initial lifecycle timestamps + Start Countdown if created already in progress
   if (taskData.status === 'in_progress') {
     taskData.startedAt = new Date();
+    taskData.lastStartedAt = new Date();
   } else if (taskData.status === 'done') {
     taskData.startedAt = taskData.startedAt || new Date();
     taskData.completedAt = new Date();
@@ -102,7 +129,7 @@ exports.createTask = catchAsync(async (req, res, next) => {
 
   const task = await Task.create(taskData);
 
-  // 📈 Log Initial Status History
+  // Log initial status history
   await TaskStatusHistory.create({
     task: task._id,
     fromStatus: 'none',
@@ -110,7 +137,7 @@ exports.createTask = catchAsync(async (req, res, next) => {
     changedBy: req.user?._id,
   });
 
-  // 🧠 Emit Event to Agent Orchestrator
+  // Emit event to orchestrator
   await AgentOrchestrator.handleEvent({
     type: 'TASK_CREATED',
     entityId: task._id,
@@ -119,7 +146,7 @@ exports.createTask = catchAsync(async (req, res, next) => {
     payload: task,
   });
 
-  // 🔔 Create Notification if assigned to someone else
+  // Create notification for assignee
   if (task.assignedUser && task.assignedUser.toString() !== req.user._id.toString()) {
     const ticketId = `${projectDoc.key || 'NEXA'}-${task.taskNumber || 'NEW'}`;
     await Notification.create({
@@ -139,7 +166,7 @@ exports.createTask = catchAsync(async (req, res, next) => {
   });
 });
 
-// Retrieves all tasks for a specified project, optionally filtered by sprint logic.
+// Retrieve tasks for a project.
 exports.getTasks = catchAsync(async (req, res, next) => {
   const { projectId } = req.params;
   const { sprintId } = req.query;
@@ -223,7 +250,7 @@ exports.getTasks = catchAsync(async (req, res, next) => {
   });
 });
 
-// Retrieves detailed information for a specific task using its unique identifier.
+// Retrieve a task by ID.
 exports.getTaskById = catchAsync(async (req, res, next) => {
   const { id } = req.params;
 
@@ -261,7 +288,7 @@ exports.getTaskById = catchAsync(async (req, res, next) => {
   });
 });
 
-// Modifies task properties, manages lifecycle timestamps, and broadcasts updates.
+// Update task details and manage lifecycle.
 exports.updateTask = catchAsync(async (req, res, next) => {
   const { id } = req.params;
   const { title, description, status, assignedUser, dueDate, priority, estimatedDuration } = req.body;
@@ -281,7 +308,10 @@ exports.updateTask = catchAsync(async (req, res, next) => {
   const updateData = { title, description, assignedUser, dueDate, priority, estimatedDuration };
 
   if (status && status !== task.status) {
+    updateTaskTimeTracking(task, status);
     updateData.status = status;
+    updateData.remainingDuration = task.remainingDuration;
+    updateData.lastStartedAt = task.lastStartedAt;
 
     if (status === 'in_progress' && !task.startedAt) {
       updateData.startedAt = new Date();
@@ -306,7 +336,7 @@ exports.updateTask = catchAsync(async (req, res, next) => {
     runValidators: true,
   }).populate('assignedUser', 'name email');
 
-  // 🔔 Notify on assignment change
+  // Notify on assignment change
   if (assignedUser && assignedUser.toString() !== task.assignedUser?.toString()) {
     const ticketId = `${project.key || 'NEXA'}-${updatedTask.taskNumber || 'MEMO'}`;
     await Notification.create({
@@ -320,7 +350,7 @@ exports.updateTask = catchAsync(async (req, res, next) => {
     });
   }
 
-  // 📈 Log Status Change History
+  // Log status change history
   if (status && status !== task.status) {
     await TaskStatusHistory.create({
       task: updatedTask._id,
@@ -330,7 +360,7 @@ exports.updateTask = catchAsync(async (req, res, next) => {
     });
   }
 
-  // 🧠 Emit Update Event to Agent Orchestrator
+  // Emit update event to orchestrator
   await AgentOrchestrator.handleEvent({
     type: 'TASK_UPDATED',
     entityId: updatedTask._id,
@@ -345,7 +375,7 @@ exports.updateTask = catchAsync(async (req, res, next) => {
   });
 });
 
-// Retrieves tasks specifically assigned to the authenticated user or unassigned tasks requiring attention.
+// Retrieve tasks assigned to the current user.
 exports.getMyTasks = catchAsync(async (req, res, next) => {
   const { scope } = req.query; // 'personal' or 'workspace'
   const isLeadOrAdmin =

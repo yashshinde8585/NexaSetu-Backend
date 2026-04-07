@@ -53,7 +53,7 @@ const taskSchema = new mongoose.Schema(
       type: Date,
     },
     actualDuration: {
-      type: Number, // in minutes
+      type: Number,
     },
     dependencies: [
       {
@@ -72,10 +72,10 @@ const taskSchema = new mongoose.Schema(
       default: 'task',
     },
     strategicWeight: {
-      v: { type: Number, default: 0 }, // Value
-      u: { type: Number, default: 0 }, // Urgency
-      rm: { type: Number, default: 0 }, // Risk Mitigation
-      sf: { type: Number, default: 0 }, // Strategic Fit
+      v: { type: Number, default: 0 },
+      u: { type: Number, default: 0 },
+      rm: { type: Number, default: 0 },
+      sf: { type: Number, default: 0 },
     },
     sasScore: {
       type: Number,
@@ -83,11 +83,11 @@ const taskSchema = new mongoose.Schema(
     },
     embedding: {
       type: [Number],
-      select: false, // Don't return by default
+      select: false,
     },
     taskNumber: {
       type: Number,
-      required: false, // Will be auto-populated
+      required: false,
     },
     githubUrl: {
       type: String,
@@ -112,8 +112,14 @@ const taskSchema = new mongoose.Schema(
       default: 'medium',
     },
     estimatedDuration: {
-      type: Number, // in minutes
+      type: Number,
       default: 30,
+    },
+    remainingDuration: {
+      type: Number,
+    },
+    lastStartedAt: {
+      type: Date,
     },
   },
   {
@@ -121,7 +127,7 @@ const taskSchema = new mongoose.Schema(
   }
 );
 
-// Auto-increment taskNumber per project
+// Auto-increment task number per project
 taskSchema.pre('save', async function () {
   if (this.isNew) {
     const Project = mongoose.model('Project');
@@ -134,7 +140,7 @@ taskSchema.pre('save', async function () {
   }
 });
 
-// Compound unique index for GitHub harvested tasks ONLY (allows multiple manual tasks with null githubId)
+// Unique index for GitHub tasks
 taskSchema.index(
   { githubId: 1, project: 1 },
   {
@@ -143,7 +149,7 @@ taskSchema.index(
   }
 );
 
-// Performance Optimization: Compound index for dashboard aggregation ($facet)
+// Dashboard aggregation optimization
 taskSchema.index({ project: 1, status: 1, dueDate: 1 });
 
 module.exports = mongoose.model('Task', taskSchema);
