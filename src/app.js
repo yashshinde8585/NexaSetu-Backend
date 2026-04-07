@@ -37,6 +37,7 @@ const sprintRoutes = require('./routes/sprintRoutes');
 const strategicIntentRoutes = require('./routes/strategicIntentRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
 const commentRoutes = require('./routes/commentRoutes');
+const epiRoutes = require('./routes/epiRoutes');
 
 app.use(
   cors({
@@ -51,21 +52,21 @@ app.use(
 app.use(helmet());
 app.use(cookieParser());
 
-// Rate Limiting
+// Configure rate limiting
 const globalLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
+  windowMs: 15 * 60 * 1000,
   max: process.env.NODE_ENV === 'development' ? 5000 : 500,
   message: 'Too many requests from this IP, please try again after 15 minutes.',
 });
 
 const authLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000, // 1 hour
+  windowMs: 60 * 60 * 1000,
   max: 20,
   message: 'Too many login attempts. Please try again after an hour.',
 });
 
 const aiLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000, // 1 hour
+  windowMs: 60 * 60 * 1000,
   max: 50,
   message: 'AI allowance exceeded for this hour. Please try again later.',
 });
@@ -89,16 +90,17 @@ app.use('/api/sprints', sprintRoutes);
 app.use('/api/strategic', strategicIntentRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/comments', commentRoutes);
+app.use('/api/epi', epiRoutes);
 
 app.get('/', (req, res) => {
   res.json({ message: 'NexaSetu API is running!' });
 });
 
-// Global Error Handler (must be the last middleware)
+// Global error handling middleware
 const globalErrorHandler = require('./middleware/errorMiddleware');
 app.use(globalErrorHandler);
 
-// Handle 404 - If request reaches here, no route matched
+// Handle unmatched routes
 app.use((req, res, next) => {
   res
     .status(404)
