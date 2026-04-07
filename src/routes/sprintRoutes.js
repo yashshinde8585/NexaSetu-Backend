@@ -8,6 +8,7 @@ const router = express.Router();
 
 router.use(protect);
 
+router.route('/:id/sync').post(sprintController.syncSprintHealth);
 router.route('/:id/stats').get(sprintStatsController.getSprintStats);
 
 router.route('/:id/finalize').get(sprintStatsController.finalizeSprint);

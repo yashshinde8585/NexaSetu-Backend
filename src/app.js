@@ -34,6 +34,9 @@ const actionRoutes = require('./routes/actionRoutes');
 const magicBarRoutes = require('./routes/magicBarRoutes');
 const teamRoutes = require('./routes/teamRoutes');
 const sprintRoutes = require('./routes/sprintRoutes');
+const strategicIntentRoutes = require('./routes/strategicIntentRoutes');
+const notificationRoutes = require('./routes/notificationRoutes');
+const commentRoutes = require('./routes/commentRoutes');
 
 app.use(
   cors({
@@ -51,7 +54,7 @@ app.use(cookieParser());
 // Rate Limiting
 const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 500,
+  max: process.env.NODE_ENV === 'development' ? 5000 : 500,
   message: 'Too many requests from this IP, please try again after 15 minutes.',
 });
 
@@ -71,7 +74,7 @@ app.use('/api', globalLimiter);
 app.use('/api/auth/login', authLimiter);
 app.use('/api/ai', aiLimiter);
 
-app.use(express.json({ limit: '10kb' }));
+app.use(express.json({ limit: '15kb' }));
 app.use('/api/auth', authRoutes);
 app.use('/api/projects', projectRoutes);
 app.use('/api/tasks', taskRoutes);
@@ -83,6 +86,9 @@ app.use('/api/actions', actionRoutes);
 app.use('/api/magic', magicBarRoutes);
 app.use('/api/team', teamRoutes);
 app.use('/api/sprints', sprintRoutes);
+app.use('/api/strategic', strategicIntentRoutes);
+app.use('/api/notifications', notificationRoutes);
+app.use('/api/comments', commentRoutes);
 
 app.get('/', (req, res) => {
   res.json({ message: 'NexaSetu API is running!' });

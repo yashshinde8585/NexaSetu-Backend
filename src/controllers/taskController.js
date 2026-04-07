@@ -1,6 +1,8 @@
 const mongoose = require('mongoose');
 const Task = require('../models/Task');
 const Project = require('../models/Project');
+const Notification = require('../models/Notification');
+const TaskStatusHistory = require('../models/TaskStatusHistory');
 const AgentOrchestrator = require('../services/agentOrchestrator');
 const { calculateDelayStatus } = require('../utils/taskUtils');
 const { isManagerOrAdmin } = require('../utils/authHelpers');
@@ -9,8 +11,42 @@ const {
   getProjectAccessQuery,
 } = require('../utils/queryHelpers');
 const catchAsync = require('../utils/catchAsync');
+const AppError = require('../utils/appError');
+const commentController = require('./commentController');
 
 // Manages the lifecycle, creation, and retrieval of tasks across projects and sprints.
+
+// Dynamically updates a task's operational status and appends a system-level audit log to the discussion.
+exports.updateTaskStatus = catchAsync(async (req, res, next) => {
+  const { taskId, status } = req.body;
+
+  const task = await Task.findById(taskId);
+  if (!task) {
+    return next(new AppError('No mission found with that ID', 404));
+  }
+
+  const oldStatus = task.status;
+  task.status = status;
+  task.timelineHistory.push({
+    status,
+    timestamp: Date.now(),
+    reason: `System: Status transitioned from ${oldStatus} to ${status} by ${req.user.name}`,
+  });
+
+  await task.save();
+
+  // 🗣️ Log to Discussion Feed
+  await commentController.logActivity(
+    taskId,
+    req.user._id,
+    `Status transitioned from ${oldStatus} to ${status}`
+  );
+
+  res.status(200).json({
+    status: 'success',
+    data: { task },
+  });
+});
 
 // Creates a new task and emits an event to the AI agent orchestrator.
 exports.createTask = catchAsync(async (req, res, next) => {
@@ -24,6 +60,8 @@ exports.createTask = catchAsync(async (req, res, next) => {
     isAiGenerated,
     dueDate,
     sprint,
+    priority,
+    estimatedDuration,
   } = req.body;
 
   const query = getProjectAccessQuery(req.user);
@@ -48,6 +86,8 @@ exports.createTask = catchAsync(async (req, res, next) => {
     source: source || 'manual',
     isAiGenerated: isAiGenerated || false,
     dueDate: dueDate || null,
+    priority: priority || 'medium',
+    estimatedDuration: estimatedDuration || 30,
     createdBy: req.user._id,
   };
 
@@ -62,6 +102,14 @@ exports.createTask = catchAsync(async (req, res, next) => {
 
   const task = await Task.create(taskData);
 
+  // 📈 Log Initial Status History
+  await TaskStatusHistory.create({
+    task: task._id,
+    fromStatus: 'none',
+    toStatus: task.status,
+    changedBy: req.user?._id,
+  });
+
   // 🧠 Emit Event to Agent Orchestrator
   await AgentOrchestrator.handleEvent({
     type: 'TASK_CREATED',
@@ -70,6 +118,20 @@ exports.createTask = catchAsync(async (req, res, next) => {
     project: task.project,
     payload: task,
   });
+
+  // 🔔 Create Notification if assigned to someone else
+  if (task.assignedUser && task.assignedUser.toString() !== req.user._id.toString()) {
+    const ticketId = `${projectDoc.key || 'NEXA'}-${task.taskNumber || 'NEW'}`;
+    await Notification.create({
+      recipient: task.assignedUser,
+      sender: req.user._id,
+      type: 'TASK_ASSIGNED',
+      title: req.user.name,
+      message: `[${ticketId}] ${task.title}`,
+      link: `/task/${task._id}`,
+      workspaceId: req.user.workspaceId
+    });
+  }
 
   res.status(201).json({
     status: 'success',
@@ -202,7 +264,7 @@ exports.getTaskById = catchAsync(async (req, res, next) => {
 // Modifies task properties, manages lifecycle timestamps, and broadcasts updates.
 exports.updateTask = catchAsync(async (req, res, next) => {
   const { id } = req.params;
-  const { title, description, status, assignedUser, dueDate } = req.body;
+  const { title, description, status, assignedUser, dueDate, priority, estimatedDuration } = req.body;
 
   const task = await Task.findById(id);
   if (!task) {
@@ -216,7 +278,7 @@ exports.updateTask = catchAsync(async (req, res, next) => {
     return res.status(403).json({ status: 'fail', message: 'Access denied' });
   }
 
-  const updateData = { title, description, assignedUser, dueDate };
+  const updateData = { title, description, assignedUser, dueDate, priority, estimatedDuration };
 
   if (status && status !== task.status) {
     updateData.status = status;
@@ -243,6 +305,30 @@ exports.updateTask = catchAsync(async (req, res, next) => {
     returnDocument: 'after',
     runValidators: true,
   }).populate('assignedUser', 'name email');
+
+  // 🔔 Notify on assignment change
+  if (assignedUser && assignedUser.toString() !== task.assignedUser?.toString()) {
+    const ticketId = `${project.key || 'NEXA'}-${updatedTask.taskNumber || 'MEMO'}`;
+    await Notification.create({
+      recipient: assignedUser,
+      sender: req.user._id,
+      type: 'TASK_ASSIGNED',
+      title: req.user.name,
+      message: `[${ticketId}] ${updatedTask.title}`,
+      link: `/task/${updatedTask._id}`,
+      workspaceId: req.user.workspaceId
+    });
+  }
+
+  // 📈 Log Status Change History
+  if (status && status !== task.status) {
+    await TaskStatusHistory.create({
+      task: updatedTask._id,
+      fromStatus: task.status,
+      toStatus: status,
+      changedBy: req.user?._id,
+    });
+  }
 
   // 🧠 Emit Update Event to Agent Orchestrator
   await AgentOrchestrator.handleEvent({

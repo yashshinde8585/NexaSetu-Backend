@@ -1,6 +1,7 @@
 const mongoose = require('mongoose');
 const Task = require('../models/Task');
 const Sprint = require('../models/Sprint');
+const TaskStatusHistory = require('../models/TaskStatusHistory');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
 const AgentOrchestrator = require('../services/agentOrchestrator');
@@ -23,8 +24,19 @@ exports.finalizeSprint = catchAsync(async (req, res, next) => {
     sprintObjectId,
     req.user.workspaceId
   );
+  if (sprint.project && !sprintProjects.some(id => id.toString() === sprint.project.toString())) {
+    sprintProjects.push(sprint.project);
+  }
   const tasks = await Task.find({
-    $or: [{ sprint: sprintObjectId }, { project: { $in: sprintProjects } }],
+    $or: [
+      { sprint: sprintObjectId },
+      { 
+        $and: [
+          { project: { $in: sprintProjects } },
+          { $or: [{ sprint: null }, { sprint: { $exists: false } }] }
+        ]
+      }
+    ],
   }).populate('project assignedUser');
 
   const completedTasks = tasks.filter((t) => t.status === 'done');
@@ -104,6 +116,10 @@ exports.getSprintStats = catchAsync(async (req, res, next) => {
     sprintObjectId,
     req.user.workspaceId
   );
+  
+  if (sprint.project && !sprintProjects.some(id => id.toString() === sprint.project.toString())) {
+    sprintProjects.push(sprint.project);
+  }
 
   // Orchestrate raw telemetry processing using complex datastore aggregations.
   const aggregation = await Task.aggregate([
@@ -111,15 +127,13 @@ exports.getSprintStats = catchAsync(async (req, res, next) => {
       $match: {
         $or: [
           { sprint: sprintObjectId },
-          {
+          { 
             $and: [
               { project: { $in: sprintProjects } },
-              {
-                $or: [{ sprint: { $exists: false } }, { sprint: null }],
-              },
-            ],
-          },
-        ],
+              { $or: [{ sprint: null }, { sprint: { $exists: false } }] }
+            ]
+          }
+        ]
       },
     },
     {
@@ -222,6 +236,30 @@ exports.getSprintStats = catchAsync(async (req, res, next) => {
           },
           { $sort: { count: -1 } },
         ],
+        velocityHistory: [
+          {
+            $match: {
+              $or: [
+                { sprint: sprintObjectId },
+                { 
+                  $and: [
+                    { project: { $in: sprintProjects } },
+                    { $or: [{ sprint: null }, { sprint: { $exists: false } }] }
+                  ]
+                }
+              ],
+              status: 'done',
+              completedAt: { $gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) }
+            }
+          },
+          {
+            $group: {
+              _id: { $dateToString: { format: "%Y-%m-%d", date: "$completedAt" } },
+              count: { $sum: 1 }
+            }
+          },
+          { $sort: { "_id": 1 } }
+        ]
       },
     },
   ]);
@@ -258,6 +296,15 @@ exports.getSprintStats = catchAsync(async (req, res, next) => {
     debt: '-2%',
   };
 
+  // Velocity Sparkline Data
+  const velocitySpark = Array(7).fill(0).map((_, i) => {
+    const d = new Date();
+    d.setDate(d.getDate() - (6 - i));
+    const dStr = d.toISOString().split('T')[0];
+    const found = raw.velocityHistory?.find(v => v._id === dStr);
+    return found ? found.count : 0;
+  });
+
   res.status(200).json({
     status: 'success',
     data: {
@@ -278,6 +325,8 @@ exports.getSprintStats = catchAsync(async (req, res, next) => {
               ? 'Medium'
               : 'Low',
         strategicDebt: `${strategicDebt}%`,
+        velocitySpark,
+        flowEfficiency: '78%', // Mocked for now, will be calculated from TaskStatusHistory in next refinement
         raw: {
           total: summary.total,
           completed: summary.completed,
@@ -314,11 +363,22 @@ exports.getSprintReportData = catchAsync(async (req, res, next) => {
     sprintObjectId,
     req.user.workspaceId
   );
+  if (sprint.project && !sprintProjects.some(id => id.toString() === sprint.project.toString())) {
+    sprintProjects.push(sprint.project);
+  }
   const Project = mongoose.model('Project');
   const projectDocs = await Project.find({ _id: { $in: sprintProjects } });
 
   const tasks = await Task.find({
-    $or: [{ sprint: sprintObjectId }, { project: { $in: sprintProjects } }],
+    $or: [
+      { sprint: sprintObjectId },
+      { 
+        $and: [
+          { project: { $in: sprintProjects } },
+          { $or: [{ sprint: null }, { sprint: { $exists: false } }] }
+        ]
+      }
+    ],
   }).populate('project assignedUser createdBy');
 
   // Distill nested components into a flat presentable reporting structure.
