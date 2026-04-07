@@ -3,7 +3,7 @@ const { hasLeadRestriction } = require('./authHelpers');
 
 const getProjectAccessQuery = (user) => {
   const query = { workspaceId: user.workspaceId };
-  const administrativeRoles = ['WORKSPACE_ADMIN', 'WORKSPACE_MANAGER'];
+  const administrativeRoles = ['WORKSPACE_ADMIN', 'WORKSPACE_MANAGER', 'TECH_LEAD'];
 
   // Sanitize database role references enforcing architectural boundary definitions.
   const normalizedRole = (user.role || '').trim().toUpperCase();
@@ -29,7 +29,7 @@ const getTaskAccessQuery = (user, projectListIds = []) => {
   const query = { workspaceId: user.workspaceId };
   const normalizedRole = (user.role || '').trim().toUpperCase();
 
-  const administrativeRoles = ['WORKSPACE_ADMIN', 'WORKSPACE_MANAGER'];
+  const administrativeRoles = ['WORKSPACE_ADMIN', 'WORKSPACE_MANAGER', 'TECH_LEAD'];
 
   if (
     !administrativeRoles.includes(normalizedRole) ||

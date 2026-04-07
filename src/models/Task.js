@@ -61,6 +61,30 @@ const taskSchema = new mongoose.Schema(
         ref: 'Task',
       },
     ],
+    parentId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Task',
+      default: null,
+    },
+    type: {
+      type: String,
+      enum: ['intent', 'epic', 'story', 'task'],
+      default: 'task',
+    },
+    strategicWeight: {
+      v: { type: Number, default: 0 }, // Value
+      u: { type: Number, default: 0 }, // Urgency
+      rm: { type: Number, default: 0 }, // Risk Mitigation
+      sf: { type: Number, default: 0 }, // Strategic Fit
+    },
+    sasScore: {
+      type: Number,
+      default: 0,
+    },
+    embedding: {
+      type: [Number],
+      select: false, // Don't return by default
+    },
     taskNumber: {
       type: Number,
       required: false, // Will be auto-populated
@@ -82,6 +106,15 @@ const taskSchema = new mongoose.Schema(
         timestamp: { type: Date, default: Date.now },
       },
     ],
+    priority: {
+      type: String,
+      enum: ['low', 'medium', 'high', 'urgent'],
+      default: 'medium',
+    },
+    estimatedDuration: {
+      type: Number, // in minutes
+      default: 30,
+    },
   },
   {
     timestamps: true,

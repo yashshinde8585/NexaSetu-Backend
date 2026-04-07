@@ -26,6 +26,8 @@ exports.extractTaskFromText = async (text) => {
     - title: (short, clear string)
     - description: (brief context, optional string)
     - status: (string, one of: "todo", "in_progress", "in_review", "done")
+    - priority: (string, one of: "low", "medium", "high", "urgent")
+    - estimatedDuration: (integer, estimated minutes to complete)
   `.trim();
 
   for (const currentModel of MODEL_FALLBACK_LIST) {
@@ -73,6 +75,8 @@ exports.extractTaskFromText = async (text) => {
             title: (parsed.title || 'Untitled Task').substring(0, 100),
             description: (parsed.description || '').substring(0, 500),
             status: status,
+            priority: parsed.priority || 'medium',
+            estimatedDuration: parsed.estimatedDuration || 30,
           };
         } else {
           break;

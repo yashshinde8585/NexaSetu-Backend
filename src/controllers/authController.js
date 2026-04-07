@@ -6,6 +6,15 @@ const Invitation = require('../models/Invitation');
 const catchAsync = require('../utils/catchAsync');
 const { ROLE_MAPPING, mapRole } = require('../utils/authHelpers');
 
+// Helper to validate email format
+const isValidEmail = (email) => {
+  return String(email)
+    .toLowerCase()
+    .match(
+      /^(([^<>()[\]\\.,;:\s@"]+(\.[^<>()[\]\\.,;:\s@"]+)*)|(".+"))@((\[[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\])|(([a-zA-Z\-0-9]+\.)+[a-zA-Z]{2,}))$/
+    );
+};
+
 // Manages user authentication, registration, workspace provisioning, and session handling.
 const signToken = (id) => {
   return jwt.sign({ id }, process.env.JWT_SECRET, {
@@ -46,20 +55,27 @@ exports.registerUser = catchAsync(async (req, res, next) => {
     plan,
   } = req.body;
 
+  // 1. Check for missing fields
   if (!name || !email || !password)
-    return res.status(400).json({ status: 'fail', message: 'Missing fields' });
+    return res.status(400).json({ status: 'fail', message: 'Name, email, and password are required.' });
 
+  // 2. Validate email format
+  if (!isValidEmail(email))
+    return res.status(400).json({ status: 'fail', message: 'The email address provided is not in a valid format.' });
+
+  // 3. Validate password length
+  if (password.length < 8)
+    return res.status(400).json({ status: 'fail', message: 'Password must be at least 8 characters long for security.' });
+
+  // 4. Check for existing user
   const existingUser = await User.findOne({ email });
   if (existingUser)
-    return res
-      .status(400)
-      .json({ status: 'fail', message: 'Email already exists' });
+    return res.status(400).json({ status: 'fail', message: 'This email is already registered. Please try logging in.' });
 
   const userId = new mongoose.Types.ObjectId();
   let workspaceId;
   let finalRole;
   let finalJobTitle;
-  let finalAssignedProjectId;
 
   // Resolve the invitation token if the user is joining an existing workspace.
   const invitation = await Invitation.findOne({ email, status: 'pending' });
@@ -94,10 +110,7 @@ exports.registerUser = catchAsync(async (req, res, next) => {
     role: finalRole,
     jobTitle: finalJobTitle,
     workspaceId,
-    assignedProjectId:
-      finalAssignedProjectId ||
-      assignedProjectId ||
-      (invitation ? invitation.projectId : null),
+    assignedProjectId: (invitation ? invitation.projectId : null) || assignedProjectId,
   });
 
   if (invitation) {
@@ -110,16 +123,24 @@ exports.registerUser = catchAsync(async (req, res, next) => {
 
 exports.loginUser = catchAsync(async (req, res, next) => {
   const { email, password } = req.body;
+  
   if (!email || !password)
-    return res
-      .status(400)
-      .json({ status: 'fail', message: 'Please provide email and password' });
+    return res.status(400).json({ status: 'fail', message: 'Please provide both email and password.' });
+
+  // Check email format to provide specific feedback
+  if (!isValidEmail(email)) {
+    return res.status(400).json({ status: 'fail', message: 'Invalid email address format. Please use a valid email.' });
+  }
 
   const user = await User.findOne({ email }).select('+password');
-  if (!user || !(await user.comparePassword(password))) {
-    return res
-      .status(401)
-      .json({ status: 'fail', message: 'Incorrect email or password' });
+  
+  // Specific checks for wrong email vs wrong password
+  if (!user) {
+    return res.status(401).json({ status: 'fail', message: 'Account not found with this email address.' });
+  }
+
+  if (!(await user.comparePassword(password))) {
+    return res.status(401).json({ status: 'fail', message: 'Incorrect password. Please verify and try again.' });
   }
 
   createSendToken(user, 200, res);
@@ -145,31 +166,23 @@ exports.getMe = catchAsync(async (req, res, next) => {
 exports.activateInvitation = catchAsync(async (req, res, next) => {
   const { token, name, password } = req.body;
   if (!token || !name || !password)
-    return res
-      .status(400)
-      .json({ status: 'fail', message: 'Missing activation data' });
+    return res.status(400).json({ status: 'fail', message: 'Missing activation data.' });
 
   const invitation = await Invitation.findOne({
     token,
     status: 'pending',
     expiresAt: { $gt: Date.now() },
   });
+  
   if (!invitation)
-    return res
-      .status(400)
-      .json({ status: 'fail', message: 'Invalid or expired invitation' });
-
-  const finalRole = mapRole(invitation.role);
+    return res.status(400).json({ status: 'fail', message: 'Invalid or expired invitation.' });
 
   const user = await User.create({
     name,
     email: invitation.email,
     password,
-    role: finalRole,
-    jobTitle:
-      invitation.role === 'INTERN' || finalRole === 'RESTRICTED'
-        ? 'Intern'
-        : 'Software Engineer',
+    role: mapRole(invitation.role),
+    jobTitle: (invitation.role === 'INTERN' ? 'Intern' : 'Software Engineer'),
     workspaceId: invitation.workspaceId,
     assignedProjectId: invitation.projectId,
   });
