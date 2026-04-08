@@ -1,9 +1,9 @@
-// Core utility for formatting, sanitizing, and structuring generative AI responses.
+// Utility functions for AI response parsing and prompt sanitization.
 exports.extractAndParseJSON = (text) => {
   if (!text) return null;
 
   try {
-    // Isolate encapsulated JSON structures systematically from unstructured buffers.
+    // Extract JSON string from potentially unstructured LLM output.
     const firstBrace = text.indexOf('{');
     const lastBrace = text.lastIndexOf('}');
     const firstBracket = text.indexOf('[');
@@ -23,13 +23,13 @@ exports.extractAndParseJSON = (text) => {
 
     if (!jsonStr) return null;
 
-    // Strip markdown wrappers and generative formatting artifacts.
+    // Strip markdown wrappers and extra formatting artifacts.
     jsonStr = jsonStr
       .replace(/```json/g, '')
       .replace(/```/g, '')
       .trim();
 
-    // Apply regex corrections for invalid trailing JSON syntax.
+    // Fix common trailing comma issues in LLM-generated JSON.
     jsonStr = jsonStr.replace(/,\s*([\]}])/g, '$1');
 
     return JSON.parse(jsonStr);
@@ -39,4 +39,32 @@ exports.extractAndParseJSON = (text) => {
     );
     return null;
   }
+};
+
+/**
+ * Truncates text based on character estimate to avoid context window overflow.
+ * @param {string} text - The input text.
+ * @param {number} maxTokens - Maximum allowed tokens (estimated).
+ */
+exports.truncateToWindow = (text, maxTokens = 4000) => {
+  if (!text) return '';
+  const maxChars = maxTokens * 4; // Dynamic heuristic
+  if (text.length <= maxChars) return text;
+  return text.substring(0, maxChars) + '... [TRUNCATED]';
+};
+
+/**
+ * Strips control characters to prevent basic system prompt engineering or injection.
+ */
+exports.sanitizeInput = (text) => {
+  if (!text || typeof text !== 'string') return '';
+  return text.replace(/[\u0000-\u001F\u007F-\u009F]/g, '').trim();
+};
+
+/**
+ * Generates a SHA-256 hash for deterministic intent caching.
+ */
+exports.generateHash = (text) => {
+  const crypto = require('crypto');
+  return crypto.createHash('sha256').update(text).digest('hex');
 };

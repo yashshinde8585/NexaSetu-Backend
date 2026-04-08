@@ -1,6 +1,6 @@
 const AuditLog = require('../models/AuditLog');
 
-// Asynchronously persists detailed user and system actions into a traceable ledger.
+// Persists user and system activities for audit tracking.
 class AuditService {
   async log({ action, req, entityType, entityId, details }) {
     try {
