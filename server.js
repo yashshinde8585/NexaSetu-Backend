@@ -11,13 +11,13 @@ dotenv.config();
 const PORT = process.env.PORT || 5000;
 const server = http.createServer(app);
 
-// Initialize Real-Time Signal Hub
+// Setup real-time communication hub
 socketIO.init(server);
 
-// Initializing Strategic Memory Grid
+// Initialize Redis cache
 connectRedis();
 
-// Tactical Health Pulse
+// API Health Check
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'operational',
@@ -26,33 +26,33 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// Connect to Database
+// Start database connection and server
 connectDB().then(() => {
   cronService.start();
   server.listen(PORT, () => {
-    console.log(`[NEXA-SETU RECON] API Server running on http://localhost:${PORT}`);
-    console.log(`[NEXA-SETU RECON] Real-Time Signal Hub initialized`);
+    console.log(`[NEXA-SETU] API Server running on http://localhost:${PORT}`);
+    console.log(`[NEXA-SETU] Real-Time Signal Hub initialized`);
   });
 });
 
 /**
- * 📡 Mission-Safe Termination Protocol
- * Ensures all frequencies are closed cleanly to prevent data corruption or port lock-ups.
+ * Graceful Shutdown Protocol
+ * Closes connections cleanly to prevent data corruption.
  */
 const gracefulShutdown = () => {
-  console.log('[RECON] Initiating Mission-Safe Shutdown...');
+  console.log('[SHUTDOWN] Closing server and dependencies...');
   server.close(async () => {
-    console.log('[RECON] Signal Hub frequency closed.');
+    console.log('[SHUTDOWN] HTTP server closed.');
     const mongoose = require('mongoose');
     const { getRedisClient } = require('./src/config/redis');
     
     await mongoose.connection.close();
-    console.log('[RECON] Primary Database frequency closed.');
+    console.log('[SHUTDOWN] Database connection closed.');
     
     const redis = getRedisClient();
     if (redis && redis.isOpen) {
         await redis.quit();
-        console.log('[RECON] Strategic Memory Grid frequency closed.');
+        console.log('[SHUTDOWN] Redis connection closed.');
     }
     
     process.exit(0);
@@ -61,3 +61,18 @@ const gracefulShutdown = () => {
 
 process.on('SIGTERM', gracefulShutdown);
 process.on('SIGINT', gracefulShutdown);
+
+/**
+ * Global Exception and Rejection Listeners
+ * Prevents asynchronous errors from crashing the process silently.
+ */
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[FATAL] Unhandled Rejection at:', promise, 'reason:', reason);
+  gracefulShutdown();
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('[FATAL] Uncaught Exception:', err.message);
+  console.error(err.stack);
+  process.exit(1);
+});

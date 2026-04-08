@@ -2,7 +2,7 @@ const { Octokit } = require('octokit');
 const aiService = require('./aiService');
 const Task = require('../models/Task');
 
-// Facilitates direct telemetry extraction and synchronization from linked GitHub repositories.
+// Service for GitHub repository synchronization and task extraction.
 
 exports.getOctokit = (accessToken) => {
   return new Octokit({ auth: accessToken });
@@ -24,34 +24,45 @@ exports.getUserRepositories = async (accessToken) => {
   }));
 };
 
+// Retry wrapper for handling transient API errors and rate limits.
+const retry = async (fn, retries = 2, delay = 1000) => {
+  try {
+    return await fn();
+  } catch (error) {
+    if (retries <= 0 || (error.status && error.status < 500 && error.status !== 429)) throw error;
+    await new Promise((resolve) => setTimeout(resolve, delay));
+    return retry(fn, retries - 1, delay * 2);
+  }
+};
+
 exports.getRepositoryActivity = async (accessToken, owner, repo) => {
   const octokit = exports.getOctokit(accessToken);
 
   let commits = [];
   try {
-    // Extract the latest commit history chunks.
-    const { data } = await octokit.rest.repos.listCommits({
+    // Fetch latest commits with retry logic.
+    const { data } = await retry(() => octokit.rest.repos.listCommits({
       owner,
       repo,
       per_page: 20,
-    });
+    }));
     commits = data;
   } catch (err) {
-    // Suppress errors gracefully for uninitialized workspaces.
+    console.warn(`[GITHUB RECON] Commits unreachable for ${owner}/${repo}:`, err.message);
   }
 
   let prs = [];
   try {
-    // Query active and historical pull request metadata.
-    const { data } = await octokit.rest.repos.listPullRequests({
+    // Fetch pull requests with retry logic.
+    const { data } = await retry(() => octokit.rest.repos.listPullRequests({
       owner,
       repo,
       state: 'all',
       per_page: 20,
-    });
+    }));
     prs = data;
   } catch (err) {
-    // Fallback silently if PR queries fail against the repository.
+    console.warn(`[GITHUB RECON] PRs unreachable for ${owner}/${repo}:`, err.message);
   }
 
   const activity = [
@@ -80,7 +91,7 @@ exports.getRepositoryActivity = async (accessToken, owner, repo) => {
 exports.generateTaskSuggestions = async (activity, projectId) => {
   const suggestions = [];
 
-  // Implement batch lookup vectors to eliminate iterative N+1 query bottlenecks.
+  // Batch lookup existing tasks to prevent N+1 overhead.
   const existingGithubIds = await Task.find({
     githubId: { $in: activity.map((a) => a.id) },
     project: projectId,
@@ -90,8 +101,7 @@ exports.generateTaskSuggestions = async (activity, projectId) => {
   const resourceService = require('./resourceService');
 
   for (const item of activity) {
-    // Update internal systems mapping to hardcoded GitHub reference numbers.
-    // Parse commit bodies for automated resolution keywords.
+    // Parse commit messages for task resolution keywords (e.g., Fixes #123).
     const taskRefs = item.message.match(/(?:Fixes|Closes|Resolves)\s#(\d+)/gi);
     if (taskRefs) {
       for (const ref of taskRefs) {
@@ -102,7 +112,7 @@ exports.generateTaskSuggestions = async (activity, projectId) => {
         });
 
         if (task && task.status !== 'done') {
-          // Translate external closure structures directly into system statuses.
+          // Map GitHub status to internal task status.
           if (item.type === 'pull_request' && item.status === 'closed') {
             task.status = 'done';
             task.completedAt = new Date();
@@ -117,7 +127,7 @@ exports.generateTaskSuggestions = async (activity, projectId) => {
       }
     }
 
-    // Ignore deduplicated structural nodes preventing duplicate task generation.
+    // Skip if the task already exists.
     if (existingIdsSet.has(item.id)) continue;
 
     try {
@@ -132,7 +142,7 @@ exports.generateTaskSuggestions = async (activity, projectId) => {
         isAiGenerated: true,
       });
 
-      // Deploy subsequent algorithmic evaluations for intelligent routing.
+      // Automatically assign the new task using resource logic.
       await resourceService.autoAssignTask(suggestedTask._id);
 
       suggestions.push(suggestedTask);

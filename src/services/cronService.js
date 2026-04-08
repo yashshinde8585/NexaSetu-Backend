@@ -5,17 +5,16 @@ const User = require('../models/User');
 const ActionRequest = require('../models/ActionRequest');
 const actionExecutor = require('./actionExecutor');
 
-// Schedules and triggers routine system health checks and proactive mitigation tasks.
+// Scheduled background tasks for system monitoring and automated actions.
 class CronService {
   constructor() {
     this.name = 'CronService (Autonomous Sentinel)';
   }
 
   start() {
-    // Trigger recurring daily tactical health evaluations.
-    console.log(`[${this.name}] Initializing autonomous telemetry routines...`);
+    console.log(`[${this.name}] Starting scheduled tasks...`);
     cron.schedule('0 8 * * *', async () => {
-      console.log(`[${this.name}] Executing morning diagnostic...`);
+      console.log(`[${this.name}] Running morning routine...`);
       await this.runMorningDiagnostic();
     });
   }
@@ -25,59 +24,71 @@ class CronService {
       const projects = await Project.find({ status: 'active' });
       if (!projects || projects.length === 0) return;
 
-      // Interrogate the operational stability of current active portfolios.
+      // Check active projects for overdue tasks.
       for (const project of projects) {
-        if (project.healthScore < 60 || project.healthLabel === 'At Risk') {
-          // Identify critical timeframe violations endangering delivery.
-          const overdueTasks = await Task.find({
-            project: project._id,
-            status: { $ne: 'done' },
-            dueDate: { $lt: new Date() },
-          });
+        try {
+          if (project.healthScore < 60 || project.healthLabel === 'At Risk') {
+            // Find overdue tasks that are not marked as done.
+            const overdueTasks = await Task.find({
+              project: project._id,
+              status: { $ne: 'done' },
+              dueDate: { $lt: new Date() },
+            });
 
-          if (overdueTasks.length > 0) {
-            // Buffer failing timelines automatically with tactical extensions.
-            for (const task of overdueTasks) {
-              await actionExecutor.processDecision({
-                type: 'UPDATE_TASK_DEADLINE',
-                targetId: task._id,
-                targetType: 'Task',
-                payload: {
-                  newDate: new Date(Date.now() + 48 * 60 * 60 * 1000),
-                },
-                reason: `Autonomous Sentinel: Project ${project.name} is At Risk. Staging +48h mitigation buffer for delayed deliverables.`,
-                agent: 'Nexa Sentinel',
-              });
+            if (overdueTasks.length > 0) {
+              // Extend deadlines for overdue tasks in at-risk projects.
+              for (const task of overdueTasks) {
+                try {
+                   await actionExecutor.processDecision({
+                    type: 'UPDATE_TASK_DEADLINE',
+                    targetId: task._id,
+                    targetType: 'Task',
+                    payload: {
+                      newDate: new Date(Date.now() + 48 * 60 * 60 * 1000),
+                    },
+                    reason: `Autonomous Adjustment: Project ${project.name} is At Risk. Adding +48h buffer.`,
+                    agent: 'Sentinel',
+                  });
+                } catch (taskErr) {
+                  console.error(`[${this.name}] Failed to mitigate task ${task._id}:`, taskErr.message);
+                }
+              }
+              console.log(
+                `[${this.name}] Staged timeline mitigation for ${project.name}`
+              );
             }
-            console.log(
-              `[${this.name}] Staged timeline mitigation for ${project.name}`
-            );
           }
+        } catch (projErr) {
+          console.error(`[${this.name}] Diagnostic failed for project ${project.name}:`, projErr.message);
         }
       }
 
-      // Process global resource loads mapping distinct personnel limits.
+      // Check user workload for potential overload.
       const members = await User.find({});
       for (const m of members) {
-        const count = await Task.countDocuments({
-          assignedUser: m._id,
-          status: { $ne: 'done' },
-        });
-        if (count >= 5) {
-          await ActionRequest.create({
-            type: 'ANOMALY_DETECTED',
-            targetId: m._id,
-            targetType: 'User',
-            payload: { count },
-            reason: `Autonomous Sentinel: Critical Overload (${count} active tasks) detected for user ${m.name}. Executive intervention required.`,
-            agent: 'Nexa Sentinel',
-            status: 'pending', // Convert routine diagnostic detections into actionable alerts.
+        try {
+          const count = await Task.countDocuments({
+            assignedUser: m._id,
+            status: { $ne: 'done' },
           });
-          console.log(`[${this.name}] Overload alert generated for ${m.name}`);
+          if (count >= 5) {
+            await ActionRequest.create({
+              type: 'ANOMALY_DETECTED',
+              targetId: m._id,
+              targetType: 'User',
+              payload: { count },
+              reason: `Overload Detected: ${count} active tasks for user ${m.name}.`,
+              agent: 'Sentinel',
+              status: 'pending',
+            });
+            console.log(`[${this.name}] Overload alert generated for ${m.name}`);
+          }
+        } catch (userErr) {
+          console.error(`[${this.name}] Diagnostic failed for user ${m.name}:`, userErr.message);
         }
       }
     } catch (error) {
-      console.error(`[${this.name}] Telemetry failure:`, error);
+      console.error(`[${this.name}] Global telemetry failure:`, error);
     }
   }
 }
