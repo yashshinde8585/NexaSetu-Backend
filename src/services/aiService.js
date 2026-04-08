@@ -1,17 +1,20 @@
 const axios = require('axios');
 const aiHelpers = require('../utils/aiHelpers');
 const prompts = require('../config/prompts.json');
+const { getRedisClient } = require('../config/redis');
 
 const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
 
-// AI processing for text extraction and routing.
+// Models ordered by preference for fallback routing.
 const MODEL_FALLBACK_LIST = [
   'llama-3.1-8b-instant',
   'llama-3.3-70b-versatile',
+  'llama3-8b-8192',
   'mixtral-8x7b-32768',
 ];
 
 exports.extractTaskFromText = async (text) => {
+  let lastError = null;
   const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) {
     throw new Error(
@@ -19,12 +22,44 @@ exports.extractTaskFromText = async (text) => {
     );
   }
 
-  const systemPrompt = prompts.system.TASK_EXTRACTOR + `
-    Return the result ONLY as a JSON object with these fields:
-    - title: (short, string)
-    - status: ("todo", "in_progress", "in_review", "done")
-    - priority: ("low", "medium", "high", "urgent")
-    - estimatedDuration: (integer minutes)
+  // Input sanitization and context windowing.
+  const cleanInput = aiHelpers.sanitizeInput(text);
+  const chunkedInput = aiHelpers.truncateToWindow(cleanInput, 400);
+
+  // Check cache for existing results to avoid redundant LLM calls.
+  const intentHash = aiHelpers.generateHash(chunkedInput);
+  const cacheKey = `ai:extract:${intentHash}`;
+  const redis = getRedisClient();
+  
+  if (redis) {
+    try {
+      const cached = await redis.get(cacheKey);
+      if (cached) {
+        return JSON.parse(cached);
+      }
+    } catch (err) {
+      console.warn('[AI-Cache] Retrieval failed, falling back to LLM.');
+    }
+  }
+
+  // Construct system prompt with schema and few-shot examples.
+  const systemPrompt = `
+    ${prompts.system.TASK_EXTRACTOR}
+    
+    ### SCHEMA
+    Return ONLY JSON that adheres to this schema exactly:
+    ${prompts.templates.TASK_EXTRACTION_SCHEMA}
+    
+    ### EXAMPLES
+    ${prompts.templates.FEW_SHOT_TASKS}
+  `.trim();
+
+  const userPrompt = `
+    [USER_CONTEXT_START]
+    ${chunkedInput}
+    [USER_CONTEXT_END]
+    
+    Action: Analyze the context within [USER_CONTEXT] and synthesize a task JSON as per the schema.
   `.trim();
 
   for (const currentModel of MODEL_FALLBACK_LIST) {
@@ -39,19 +74,17 @@ exports.extractTaskFromText = async (text) => {
             model: currentModel,
             messages: [
               { role: 'system', content: systemPrompt },
-              {
-                role: 'user',
-                content: `Extract task from this text: "${text}"`,
-              },
+              { role: 'user', content: userPrompt },
             ],
-            max_tokens: 300,
+            max_tokens: 600,
+            temperature: 0.1, // Near-zero for deterministic extraction
           },
           {
             headers: {
               Authorization: `Bearer ${apiKey}`,
               'Content-Type': 'application/json',
             },
-            timeout: 10000,
+            timeout: 25000,
           }
         );
 
@@ -68,17 +101,29 @@ exports.extractTaskFromText = async (text) => {
             status = 'todo';
           }
 
-          return {
+          const result = {
             title: (parsed.title || 'Untitled Task').substring(0, 100),
             description: (parsed.description || '').substring(0, 500),
             status: status,
             priority: parsed.priority || 'medium',
             estimatedDuration: parsed.estimatedDuration || 30,
           };
+
+          // Cache the successful result for 24 hours.
+          if (redis) {
+            try {
+              await redis.set(cacheKey, JSON.stringify(result), 'EX', 86400);
+            } catch (e) {
+              console.warn('[AI-Cache] Failed to store result.');
+            }
+          }
+
+          return result;
         } else {
           break;
         }
       } catch (error) {
+        lastError = error;
         // Handle unsupported capabilities.
         const res = error.response;
         const data = res?.data;
@@ -97,7 +142,8 @@ exports.extractTaskFromText = async (text) => {
           res?.status === 503 ||
           (data?.error?.message && data.error.message.includes('loading'))
         ) {
-          await new Promise((resolve) => setTimeout(resolve, 5000));
+          const backoff = Math.pow(2, retryCount) * 1000 + Math.random() * 1000;
+          await new Promise((resolve) => setTimeout(resolve, backoff));
           retryCount++;
           if (retryCount >= maxRetries) break;
           continue;
@@ -109,7 +155,7 @@ exports.extractTaskFromText = async (text) => {
   }
 
   throw new Error(
-    'All available AI models failed to process your request. Please check your GROQ_API_KEY or connection.'
+    `AI Processing Error: ${lastError?.message || 'All models failed'}`
   );
 };
 
@@ -124,7 +170,7 @@ exports.processPrompt = async (systemPrompt, userPrompt, config = {}) => {
     timeout = 15000 
   } = config;
 
-  // Strategic Model Selection
+  // Model selection based on reasoning depth requirements.
   const primaryModel = highReasoning ? 'llama-3.3-70b-versatile' : 'llama-3.1-8b-instant';
   const models = [primaryModel, ...MODEL_FALLBACK_LIST.filter(m => m !== primaryModel)];
 
