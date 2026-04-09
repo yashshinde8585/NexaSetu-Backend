@@ -7,7 +7,7 @@ const auditLogSchema = new mongoose.Schema(
       required: true,
       index: true,
     },
-    perfomer: {
+    performer: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
       required: true,
@@ -22,7 +22,7 @@ const auditLogSchema = new mongoose.Schema(
     entityType: {
       type: String,
       required: true,
-      enum: ['PROJECT', 'TASK', 'USER', 'INVITATION', 'AI_ACTION'],
+      enum: ['PROJECT', 'TASK', 'USER', 'INVITATION', 'AI_ACTION', 'TEAM', 'ROLE'],
     },
     entityId: {
       type: mongoose.Schema.Types.ObjectId,

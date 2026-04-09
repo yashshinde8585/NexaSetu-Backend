@@ -5,6 +5,8 @@ const dotenv = require('dotenv');
 const config = require('./config/config');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
+const { RedisStore } = require('rate-limit-redis');
+const { getRedisClient } = require('./config/redis');
 
 dotenv.config();
 
@@ -39,6 +41,13 @@ const notificationRoutes = require('./routes/notificationRoutes');
 const commentRoutes = require('./routes/commentRoutes');
 const epiRoutes = require('./routes/epiRoutes');
 
+// New Unified Workspace Routes
+const engineeringWorkspaceRoutes = require('./routes/engineeringRoutes');
+const leadershipWorkspaceRoutes = require('./routes/leadershipRoutes');
+const operationsWorkspaceRoutes = require('./routes/operationsRoutes');
+const adminRoutes = require('./routes/adminRoutes');
+
+
 app.use(
   cors({
     origin:
@@ -52,23 +61,63 @@ app.use(
 app.use(helmet());
 app.use(cookieParser());
 
-// Configure rate limiting
+// Custom NoSQL Injection Protection for Express 5 (In-place sanitization)
+app.use((req, res, next) => {
+  const sanitize = (obj) => {
+    if (obj && typeof obj === 'object') {
+      Object.keys(obj).forEach((key) => {
+        if (key.startsWith('$')) {
+          delete obj[key];
+        } else {
+          sanitize(obj[key]);
+        }
+      });
+    }
+  };
+  sanitize(req.body);
+  sanitize(req.query);
+  sanitize(req.params);
+  next();
+});
+
+// Configure rate limiting with Redis store for distributed scalability
 const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: process.env.NODE_ENV === 'development' ? 5000 : 500,
   message: 'Too many requests from this IP, please try again after 15 minutes.',
+  store: new RedisStore({
+    sendCommand: (...args) => {
+      const client = getRedisClient();
+      return client ? client.call(...args) : Promise.reject(new Error('Redis client not available'));
+    },
+    prefix: 'rl:global:',
+  }),
 });
 
 const authLimiter = rateLimit({
   windowMs: 60 * 60 * 1000,
   max: 20,
   message: 'Too many login attempts. Please try again after an hour.',
+  store: new RedisStore({
+    sendCommand: (...args) => {
+      const client = getRedisClient();
+      return client ? client.call(...args) : Promise.reject(new Error('Redis client not available'));
+    },
+    prefix: 'rl:auth:',
+  }),
 });
 
 const aiLimiter = rateLimit({
   windowMs: 60 * 60 * 1000,
   max: 50,
   message: 'AI allowance exceeded for this hour. Please try again later.',
+  store: new RedisStore({
+    sendCommand: (...args) => {
+      const client = getRedisClient();
+      return client ? client.call(...args) : Promise.reject(new Error('Redis client not available'));
+    },
+    prefix: 'rl:ai:',
+  }),
 });
 
 app.use('/api', globalLimiter);
@@ -91,6 +140,14 @@ app.use('/api/strategic', strategicIntentRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/comments', commentRoutes);
 app.use('/api/epi', epiRoutes);
+
+// Unified Workspaces
+
+app.use('/api/v1/engineering', engineeringWorkspaceRoutes);
+app.use('/api/v1/leadership', leadershipWorkspaceRoutes);
+app.use('/api/v1/operations', operationsWorkspaceRoutes);
+app.use('/api/v1/admin', adminRoutes);
+
 
 app.get('/', (req, res) => {
   res.json({ message: 'NexaSetu API is running!' });

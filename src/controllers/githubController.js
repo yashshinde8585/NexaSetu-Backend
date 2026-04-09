@@ -3,6 +3,7 @@ const User = require('../models/User');
 const Project = require('../models/Project');
 const Task = require('../models/Task');
 const AgentOrchestrator = require('../services/agentOrchestrator');
+const { encrypt } = require('../utils/crypto');
 
 // Integrates with GitHub to sync repositories, extract activity insights, and generate task suggestions.
 // Connects a user's GitHub account and securely stores their credentials.
@@ -19,43 +20,56 @@ exports.connectGithub = async (req, res) => {
     const octokit = githubService.getOctokit(accessToken);
     const { data: githubUser } = await octokit.rest.users.getAuthenticated();
 
-    const user = await User.findByIdAndUpdate(
-      req.user._id,
+    const Workspace = require('../models/Workspace');
+    await Workspace.findByIdAndUpdate(
+      req.user.workspaceId,
       {
-        githubId: githubUser.id.toString(),
-        githubAccessToken: accessToken,
-      },
-      { returnDocument: 'after' }
+        'integrations.github.connected': true,
+        'integrations.github.accessToken': encrypt(accessToken),
+        'integrations.github.githubId': githubUser.id.toString(),
+        'integrations.github.lastSync': new Date()
+      }
     );
 
     res.status(200).json({
       status: 'success',
-      message: 'GitHub account connected successfully',
+      message: 'GitHub account connected to workspace successfully',
       data: {
-        githubId: user.githubId,
+        githubId: githubUser.id,
         githubUsername: githubUser.login,
       },
     });
   } catch (error) {
-    if (error.status === 401) {
-      return res
-        .status(401)
-        .json({
-          status: 'fail',
-          message: 'Invalid GitHub token. Please check your token and scopes.',
-        });
+    console.error('[GitHub Connection Error]:', error.message);
+    
+    // Handle specific GitHub API errors
+    const statusCode = error.status || (error.response && error.response.status);
+    
+    if (statusCode === 401) {
+      return res.status(401).json({
+        status: 'fail',
+        message: 'Invalid Personal Access Token. Please check your token and try again.'
+      });
     }
+
+    if (statusCode === 403) {
+      return res.status(403).json({
+        status: 'fail',
+        message: 'Insufficient permissions or rate limited. Ensure your token has the required scopes.'
+      });
+    }
+
     if (error.code === 11000) {
-      return res
-        .status(409)
-        .json({
-          status: 'fail',
-          message: 'This GitHub account is already linked to another user.',
-        });
+      return res.status(409).json({
+        status: 'fail',
+        message: 'This GitHub account is already linked to another workspace.'
+      });
     }
-    res
-      .status(500)
-      .json({ status: 'error', message: 'Failed to connect GitHub account' });
+
+    res.status(statusCode || 500).json({ 
+      status: 'error', 
+      message: error.message || 'Failed to connect GitHub account. Please verify your network and token.' 
+    });
   }
 };
 

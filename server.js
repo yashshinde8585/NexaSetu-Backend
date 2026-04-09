@@ -1,21 +1,24 @@
+const dotenv = require('dotenv');
+dotenv.config();
+
+const { connectRedis } = require('./src/config/redis');
+const { initOrchestratorQueue } = require('./src/queues/orchestratorQueue');
+
+// Initialize Redis cache before loading app to satisfy RedisStore script loading
+connectRedis();
+initOrchestratorQueue();
+
 const http = require('http');
 const socketIO = require('./src/socket');
 const app = require('./src/app');
-const dotenv = require('dotenv');
 const connectDB = require('./src/config/db');
-const { connectRedis } = require('./src/config/redis');
 const cronService = require('./src/services/cronService');
-
-dotenv.config();
 
 const PORT = process.env.PORT || 5000;
 const server = http.createServer(app);
 
 // Setup real-time communication hub
 socketIO.init(server);
-
-// Initialize Redis cache
-connectRedis();
 
 // API Health Check
 app.get('/api/health', (req, res) => {

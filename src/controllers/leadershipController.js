@@ -1,0 +1,44 @@
+const leadershipService = require('../services/leadershipService');
+const catchAsync = require('../utils/catchAsync');
+
+/**
+ * Leadership Workspace Controller
+ * Aggregates high-level metrics for executives and managers.
+ */
+exports.getDashboard = catchAsync(async (req, res, next) => {
+  const userId = req.user._id;
+  const workspaceId = req.user.workspaceId;
+  const role = req.user.role;
+
+  const data = await leadershipService.getLeadershipDashboard(userId, workspaceId, role);
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      ...data,
+      roleDisplay: role.replace('_', ' '),
+      viewType: 'STRATEGIC_COMMAND_CENTER'
+    }
+  });
+});
+
+/**
+ * Get breakdown by specific roles within a function
+ */
+exports.getRoleBreakdown = catchAsync(async (req, res, next) => {
+  const { category } = req.params;
+  const workspaceId = req.user.workspaceId;
+  const data = await leadershipService.getRoleBreakdown(workspaceId, category);
+  res.status(200).json({ status: 'success', data });
+});
+
+/**
+ * Get individual performance breakdown for a specific role
+ */
+exports.getIndividualBreakdown = catchAsync(async (req, res, next) => {
+  const { role } = req.params;
+  const workspaceId = req.user.workspaceId;
+  const data = await leadershipService.getIndividualBreakdown(workspaceId, role);
+  res.status(200).json({ status: 'success', data });
+});
+
