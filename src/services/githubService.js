@@ -1,11 +1,15 @@
 const { Octokit } = require('octokit');
 const aiService = require('./aiService');
 const Task = require('../models/Task');
+const { decrypt } = require('../utils/crypto');
+const logger = require('../utils/logger');
 
 // Service for GitHub repository synchronization and task extraction.
 
 exports.getOctokit = (accessToken) => {
-  return new Octokit({ auth: accessToken });
+  // Access token is stored encrypted in the database; decrypt before use.
+  const token = accessToken.includes(':') ? decrypt(accessToken) : accessToken;
+  return new Octokit({ auth: token });
 };
 
 exports.getUserRepositories = async (accessToken) => {
@@ -130,26 +134,42 @@ exports.generateTaskSuggestions = async (activity, projectId) => {
     // Skip if the task already exists.
     if (existingIdsSet.has(item.id)) continue;
 
-    try {
-      const extractedTask = await aiService.extractTaskFromText(item.message);
-
-      const suggestedTask = await Task.create({
-        ...extractedTask,
-        project: projectId,
-        githubId: item.id,
-        githubUrl: item.url,
-        source: 'github',
-        isAiGenerated: true,
-      });
-
-      // Automatically assign the new task using resource logic.
-      await resourceService.autoAssignTask(suggestedTask._id);
-
-      suggestions.push(suggestedTask);
-    } catch (error) {
-      // Tolerate generative processing failures cleanly.
-    }
+    suggestions.push(item);
   }
 
-  return suggestions;
+  // Batch process AI extractions and database creations in parallel for performance.
+  const taskCreations = await Promise.all(
+    suggestions.map(async (item) => {
+      try {
+        const extractedTask = await aiService.extractTaskFromText(item.message);
+        return {
+          ...extractedTask,
+          project: projectId,
+          githubId: item.id,
+          githubUrl: item.url,
+          source: 'github',
+          isAiGenerated: true,
+        };
+      } catch (error) {
+        logger.error(`AI Task Extraction failed for item ${item.id}: ${error.message}`);
+        return null;
+      }
+    })
+  );
+
+  const filteredTasks = taskCreations.filter((t) => t !== null);
+  
+  if (filteredTasks.length > 0) {
+    const createdTasks = await Task.insertMany(filteredTasks);
+    
+    // Automatically assign the new tasks using resource logic.
+    for (const task of createdTasks) {
+      resourceService.autoAssignTask(task._id).catch(err => 
+        logger.warn(`Auto-assignment failed for task ${task._id}: ${err.message}`)
+      );
+    }
+    return createdTasks;
+  }
+
+  return [];
 };

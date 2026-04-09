@@ -10,6 +10,7 @@ const {
   getTaskAccessQuery,
   getProjectAccessQuery,
 } = require('../utils/queryHelpers');
+const { formatDueDate } = require('../utils/dashboardHelpers');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
 const commentController = require('./commentController');
@@ -19,24 +20,32 @@ const commentController = require('./commentController');
 const updateTaskTimeTracking = (task, newStatus) => {
   const now = new Date();
   
-  // If moving FROM in_progress to something else, subtract elapsed time
-  if (task.status === 'in_progress' && newStatus !== 'in_progress' && task.lastStartedAt) {
+  // A task is actively consuming time only if in_progress AND NOT blocked
+  const isCurrentlyActive = (task.status === 'in_progress' && !task.blocked);
+  const willBeActive = (newStatus === 'in_progress');
+
+  // If moving FROM an active state to an inactive one, subtract elapsed time
+  if (isCurrentlyActive && !willBeActive && task.lastStartedAt) {
     const elapsedMinutes = Math.max(0, (now - task.lastStartedAt) / (1000 * 60));
     task.remainingDuration = Math.max(0, (task.remainingDuration || task.estimatedDuration) - elapsedMinutes);
     task.lastStartedAt = null;
   }
   
-  // If moving TO in_progress, mark start time
-  if (newStatus === 'in_progress' && task.status !== 'in_progress') {
+  // If moving TO an active state, mark start time
+  if (willBeActive && !isCurrentlyActive) {
     task.lastStartedAt = now;
     if (task.remainingDuration === undefined || task.remainingDuration === null) {
       task.remainingDuration = task.estimatedDuration;
     }
   }
 
-  // If moving TO done, clear remaining duration (or keep if desired, but 0 is cleaner for progress)
+  // Record completion timestamps
   if (newStatus === 'done') {
     task.remainingDuration = 0;
+    task.completedAt = now;
+    
+    const start = task.startedAt || task.createdAt;
+    task.actualDuration = Math.round((now - start) / (1000 * 60));
   }
 };
 
@@ -115,6 +124,7 @@ exports.createTask = catchAsync(async (req, res, next) => {
     estimatedDuration: estimatedDuration || 30,
     remainingDuration: estimatedDuration || 30,
     createdBy: req.user._id,
+    workspaceId: projectDoc.workspaceId,
   };
 
   // Initial lifecycle timestamps + Start Countdown if created already in progress
@@ -169,7 +179,10 @@ exports.createTask = catchAsync(async (req, res, next) => {
 // Retrieve tasks for a project.
 exports.getTasks = catchAsync(async (req, res, next) => {
   const { projectId } = req.params;
-  const { sprintId } = req.query;
+  const { sprintId, page = 1, limit = 50 } = req.query;
+  
+  const skip = (parseInt(page) - 1) * parseInt(limit);
+  const limitValue = parseInt(limit);
 
   const projectQuery = getProjectAccessQuery(req.user);
   projectQuery._id = projectId;
@@ -233,19 +246,35 @@ exports.getTasks = catchAsync(async (req, res, next) => {
         assignedUserData: 0,
         sprintData: 0,
       },
-    }
+    },
+    // Strategic Pagination: Preventing payload explosion on high-density projects
+    { $skip: skip },
+    { $limit: limitValue }
   );
 
   const tasks = await Task.aggregate(pipeline);
 
   const enrichedTasks = tasks.map((t) => {
     const delayStatus = calculateDelayStatus(t);
-    return { ...t, delayStatus };
+    return { 
+      ...t, 
+      delayStatus,
+      createdFormatted: formatDueDate(t.createdAt)
+    };
+
   });
+
+  const totalTasks = await Task.countDocuments({ project: projectId, ...(sprintId ? { sprint: sprintId } : {}) });
 
   res.status(200).json({
     status: 'success',
     results: enrichedTasks.length,
+    pagination: {
+      total: totalTasks,
+      page: parseInt(page),
+      limit: limitValue,
+      pages: Math.ceil(totalTasks / limitValue)
+    },
     data: { tasks: enrichedTasks },
   });
 });
@@ -281,6 +310,7 @@ exports.getTaskById = catchAsync(async (req, res, next) => {
   taskObj.delayStatus = calculateDelayStatus(taskObj);
   taskObj.projectKey = task.project.key || 'NEXA';
   taskObj.sprintInfo = taskObj.sprint; // Mapping names for frontend consistency
+  taskObj.createdFormatted = formatDueDate(taskObj.createdAt);
 
   res.status(200).json({
     status: 'success',
@@ -305,7 +335,12 @@ exports.updateTask = catchAsync(async (req, res, next) => {
     return res.status(403).json({ status: 'fail', message: 'Access denied' });
   }
 
-  const updateData = { title, description, assignedUser, dueDate, priority, estimatedDuration };
+  // Explicitly pick allowed fields to prevent injection of sensitive fields like workspaceId or taskNumber
+  const allowedFields = ['title', 'description', 'assignedUser', 'dueDate', 'priority', 'estimatedDuration'];
+  const updateData = {};
+  allowedFields.forEach(field => {
+    if (req.body[field] !== undefined) updateData[field] = req.body[field];
+  });
 
   if (status && status !== task.status) {
     updateTaskTimeTracking(task, status);
@@ -377,7 +412,9 @@ exports.updateTask = catchAsync(async (req, res, next) => {
 
 // Retrieve tasks assigned to the current user.
 exports.getMyTasks = catchAsync(async (req, res, next) => {
-  const { scope } = req.query; // 'personal' or 'workspace'
+  const { scope, page = 1, limit = 20 } = req.query; // 'personal' or 'workspace'
+  const skip = (parseInt(page) - 1) * parseInt(limit);
+  const limitValue = parseInt(limit);
   const isLeadOrAdmin =
     req.user.role === 'TECH_LEAD' ||
     req.user.role === 'WORKSPACE_ADMIN' ||
@@ -411,17 +448,68 @@ exports.getMyTasks = catchAsync(async (req, res, next) => {
 
   const tasks = await Task.find(query)
     .sort('-completedAt -updatedAt')
+    .skip(skip)
+    .limit(limitValue)
     .populate('project', 'name')
-    .populate('assignedUser', 'name email');
+    .populate('assignedUser', 'name email')
+    .lean();
 
   const enrichedTasks = tasks.map((t) => {
     const delayStatus = calculateDelayStatus(t);
-    return { ...t.toObject(), delayStatus };
+    return { 
+      ...t, 
+      delayStatus,
+      createdFormatted: formatDueDate(t.createdAt)
+    };
+
   });
+
+  const totalTasks = await Task.countDocuments(query);
 
   res.status(200).json({
     status: 'success',
     results: enrichedTasks.length,
+    pagination: {
+      total: totalTasks,
+      page: parseInt(page),
+      limit: limitValue,
+      pages: Math.ceil(totalTasks / limitValue)
+    },
     data: { tasks: enrichedTasks },
+  });
+});
+// Toggle task blockage status and log activity.
+exports.toggleTaskBlockage = catchAsync(async (req, res, next) => {
+  const { taskId, blocked, reason } = req.body;
+
+  const task = await Task.findById(taskId);
+  if (!task) {
+    return next(new AppError('No mission found with that ID', 404));
+  }
+
+  const oldBlocked = task.blocked;
+  task.blocked = blocked;
+  
+  if (blocked) {
+    task.blockedAt = new Date();
+    task.blockedReason = reason || 'Waiting on external dependency';
+  } else {
+    task.blockedAt = null;
+    task.blockedReason = null;
+  }
+
+  await task.save();
+
+  // Log to discussion feed
+  const actionText = blocked ? `MISSION BLOCKED: ${reason}` : 'MISSION UNBLOCKED';
+  await commentController.logActivity(
+    taskId,
+    req.user._id,
+    actionText
+  );
+
+  res.status(200).json({
+    status: 'success',
+    data: { task },
   });
 });

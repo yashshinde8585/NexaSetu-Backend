@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
+const Workspace = require('../models/Workspace');
 const { ROLE_PERMISSIONS } = require('../config/permissions');
 const { mapRole } = require('../utils/authHelpers');
 
@@ -30,24 +31,32 @@ const protect = async (req, res, next) => {
     // 3. Check if user still exists
     const user = await User.findById(decoded.id).select('-password');
     if (!user) {
-      return res
-        .status(401)
-        .json({
-          status: 'fail',
-          message: 'The user belonging to this token no longer exists',
-        });
+      return res.status(401).json({
+        status: 'fail',
+        message: 'The user belonging to this token no longer exists',
+      });
     }
 
-    // 4. Workspace Context Recovery (Self-Healing)
-    if (!user.workspaceId) {
-      const Workspace = require('../models/Workspace');
+    // 4. Check if password was changed after token was issued
+    if (user.passwordChangedAt) {
+      const changedTimestamp = parseInt(user.passwordChangedAt.getTime() / 1000, 10);
+      if (decoded.iat < changedTimestamp) {
+        return res.status(401).json({
+          status: 'fail',
+          message: 'User recently changed password! Please log in again.',
+        });
+      }
+    }
+
+    // 5. Workspace Context Recovery (Self-Healing) - Optimized to avoid writes on every GET
+    if (!user.workspaceId && req.method !== 'GET') {
       const workspace = await Workspace.findOne({
         $or: [{ admin: user._id }, { owner: user._id }],
-      });
+      }).select('_id');
+      
       if (workspace) {
         user.workspaceId = workspace._id;
-        // Optionally save it back to the user for future use
-        user.save({ validateBeforeSave: false });
+        await User.updateOne({ _id: user._id }, { workspaceId: workspace._id });
       }
     }
 
@@ -55,6 +64,9 @@ const protect = async (req, res, next) => {
     req.user = user;
     next();
   } catch (error) {
+    if (error.name === 'TokenExpiredError') {
+      return res.status(401).json({ status: 'fail', message: 'token_expired' });
+    }
     res
       .status(401)
       .json({ status: 'fail', message: 'Not authorized, invalid token' });
@@ -80,4 +92,26 @@ const requirePermission = (requiredPermission) => {
   };
 };
 
-module.exports = { protect, requirePermission };
+/**
+ * Restricts access to specific roles.
+ * @param  {...string} roles - Allowed roles
+ */
+const restrictTo = (...roles) => {
+  return (req, res, next) => {
+    // Check role OR if jobTitle matches a mapped role
+    const hasRole = roles.includes(req.user.role);
+    const hasJobTitle = roles.some(role => 
+      req.user.jobTitle && req.user.jobTitle.replace(' ', '_').toUpperCase() === role
+    );
+
+    if (!hasRole && !hasJobTitle) {
+      return res.status(403).json({
+        status: 'fail',
+        message: 'You do not have permission to perform this action',
+      });
+    }
+    next();
+  };
+};
+
+module.exports = { protect, requirePermission, restrictTo };

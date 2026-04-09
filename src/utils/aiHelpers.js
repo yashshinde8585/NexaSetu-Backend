@@ -54,11 +54,16 @@ exports.truncateToWindow = (text, maxTokens = 4000) => {
 };
 
 /**
- * Strips control characters to prevent basic system prompt engineering or injection.
+ * Strips control characters and escapes delimiters used in system prompt templates.
+ * Prevents basic system prompt engineering or injection.
  */
 exports.sanitizeInput = (text) => {
   if (!text || typeof text !== 'string') return '';
-  return text.replace(/[\u0000-\u001F\u007F-\u009F]/g, '').trim();
+  return text
+    .replace(/[\u0000-\u001F\u007F-\u009F]/g, '') // Remove control characters
+    .replace(/\[/g, '&#91;') // Escape prompt start delimiter
+    .replace(/\]/g, '&#93;') // Escape prompt end delimiter
+    .trim();
 };
 
 /**
