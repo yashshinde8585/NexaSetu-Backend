@@ -63,13 +63,31 @@ exports.createProject = catchAsync(async (req, res, next) => {
 
 // Retrieves all projects the current user is authorized to manage or view.
 exports.getProjects = catchAsync(async (req, res, next) => {
-  const projects = await Project.find(getProjectAccessQuery(req.user))
+  const { page = 1, limit = 20 } = req.query;
+  const skip = (parseInt(page) - 1) * parseInt(limit);
+  const limitValue = parseInt(limit);
+
+  const query = getProjectAccessQuery(req.user);
+
+  const projects = await Project.find(query)
     .populate('createdBy', 'name email role')
-    .populate('members', 'name email role');
+    .populate('members', 'name email role')
+    .skip(skip)
+    .limit(limitValue)
+    .sort('-createdAt')
+    .lean();
+
+  const total = await Project.countDocuments(query);
 
   res.status(200).json({
     status: 'success',
     results: projects.length,
+    pagination: {
+      total,
+      page: parseInt(page),
+      limit: limitValue,
+      pages: Math.ceil(total / limitValue)
+    },
     data: { projects },
   });
 });

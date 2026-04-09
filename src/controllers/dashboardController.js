@@ -14,7 +14,8 @@ exports.getDashboardStats = async (req, res) => {
     // Retrieve all projects the current user is authorized to view.
     const projects = await Project.find(getProjectAccessQuery(req.user))
       .populate('createdBy', 'name email')
-      .populate('members', 'name email');
+      .populate('members', 'name email')
+      .lean();
 
     const projectIds = projects.map((p) => p._id);
     const projectsInSprintIds = projects
@@ -322,7 +323,8 @@ exports.getDashboardStats = async (req, res) => {
     const recentActivity = await Task.find({ project: { $in: projectIds } })
       .sort({ updatedAt: -1 })
       .limit(5)
-      .populate('project', 'name');
+      .populate('project', 'name')
+      .lean();
 
     res.status(200).json({
       status: 'success',

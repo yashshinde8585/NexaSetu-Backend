@@ -63,4 +63,7 @@ projectSchema.pre('save', function () {
   }
 });
 
+// Indexing for workspace-specific project retrieval
+projectSchema.index({ workspaceId: 1, name: 1 });
+
 module.exports = mongoose.model('Project', projectSchema);

@@ -31,7 +31,31 @@ const workspaceSchema = new mongoose.Schema(
     settings: {
       logo: String,
       allowedDomains: [String],
+      timezone: { type: String, default: 'UTC+5:30' },
+      workingHours: { type: String, default: '09:00 - 18:00' },
+      notificationRules: { type: String, default: 'Email, Slack' },
+      projectDefaults: { type: String, default: 'Sprint: 14 days' }
     },
+    rolePermissions: {
+      type: Map,
+      of: [String],
+      default: {}
+    },
+    integrations: {
+      github: {
+        connected: { type: Boolean, default: false },
+        accessToken: String,
+        githubId: String,
+        repoCount: { type: Number, default: 0 },
+        lastSync: Date
+      },
+      slack: {
+        connected: { type: Boolean, default: false },
+        channel: String,
+        webhookUrl: String,
+        lastSync: Date
+      }
+    }
   },
   {
     timestamps: true,

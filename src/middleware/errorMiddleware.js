@@ -1,13 +1,16 @@
+const logger = require('../utils/logger');
+
 // Intercepts unhandled application errors and normalizes API responses for clients.
 const globalErrorHandler = (err, req, res, next) => {
   err.statusCode = err.statusCode || 500;
   err.status = err.status || 'error';
 
-  // Log critical errors for developer awareness
-  console.error(`[FATAL ERROR]: ${err.message}`, {
+  // Log critical errors via structured logging for observability
+  logger.error(`[FATAL ERROR]: ${err.message}`, {
     stack: err.stack,
     path: req.originalUrl,
     method: req.method,
+    user: req.user?._id
   });
 
   // Handle specific MongoDB/Mongoose errors

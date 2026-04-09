@@ -11,8 +11,7 @@ const invitationSchema = new mongoose.Schema(
     },
     role: {
       type: String,
-      enum: ['MANAGER', 'DEV', 'INTERN'],
-      default: 'DEV',
+      default: 'PROJECT_MEMBER',
     },
     projectId: {
       type: mongoose.Schema.Types.ObjectId,
