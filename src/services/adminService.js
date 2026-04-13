@@ -52,7 +52,7 @@ class AdminService {
           role: u.role,
           status: u.status || 'Active',
           lastActive: u.lastActive || u.updatedAt,
-          teams: realTeams.filter(t => t.members.some(m => m.toString() === u._id.toString())).map(t => t.name)
+          teams: teams.filter(t => t.members.some(m => m.toString() === u._id.toString())).map(t => t.name)
         })),
       roles: this._getRolePermissionsDefinitions(workspace?.rolePermissions || {}),
       availablePermissions: Object.values(PERMISSIONS),
@@ -68,17 +68,13 @@ class AdminService {
           status: workspace?.integrations?.slack?.connected ? 'connected' : 'disconnected' 
         }
       ],
-      teams: realTeams.map(t => ({
+      teams: teams.map(t => ({
         id: t._id,
         name: t.name,
         members: t.members?.length || 0,
         lead: t.lead?.name || 'Unassigned',
         status: t.status
       })),
-      integrations: [
-        { name: 'GitHub', status: 'connected', icon: 'github' },
-        { name: 'Slack', status: 'connected', icon: 'slack' }
-      ],
       settings: {
         timezone: workspace?.settings?.timezone || 'UTC +5:30',
         workingHours: workspace?.settings?.workingHours || '09:00 - 18:00',

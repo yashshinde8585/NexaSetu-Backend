@@ -27,7 +27,7 @@ const createSendToken = async (user, statusCode, res) => {
   const accessToken = signAccessToken(user._id);
   const refreshToken = signRefreshToken(user._id);
 
-  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+  const expiresAt = new Date(Date.now() + 15 * 24 * 60 * 60 * 1000);
   
   // Persistence: Store the refresh token in a dedicated session document.
   await Session.create({
