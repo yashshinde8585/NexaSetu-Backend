@@ -26,7 +26,7 @@ module.exports = {
     secret: process.env.JWT_SECRET,
     expiresIn: '15m',
     refreshSecret: process.env.JWT_REFRESH_SECRET,
-    refreshExpiresIn: '7d',
+    refreshExpiresIn: '15d',
   },
   db: {
     uri: isProduction ? process.env.DB_ATLAS_URI : process.env.DB_LOCAL_URI,
