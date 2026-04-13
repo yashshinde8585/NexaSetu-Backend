@@ -11,7 +11,28 @@ class AgentOrchestrator {
   constructor() {
     this.name = 'Orchestrator';
   }
+
+  /**
+   * Dispatches an event to the background queue for asynchronous processing.
+   * High-reliability entry point for system events.
+   */
   async handleEvent(event) {
+    const { getOrchestratorQueue } = require('../queues/orchestratorQueue');
+    const queue = getOrchestratorQueue();
+
+    if (queue) {
+      await queue.add(`event:${event.type}`, { event });
+      return { status: 'queued', eventType: event.type };
+    } else {
+      // Fallback to sync processing if queue is unavailable
+      return await this.processEvent(event);
+    }
+  }
+
+  /**
+   * Core logic for event processing. Now called by the background worker.
+   */
+  async processEvent(event) {
     try {
       const { type, payload, project, user, entityId, entityType } = event;
 

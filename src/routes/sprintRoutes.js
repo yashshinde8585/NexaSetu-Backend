@@ -19,7 +19,7 @@ router
   .route('/')
   .get(sprintController.getAllSprints)
   .post(
-    requirePermission(PERMISSIONS.CREATE_PROJECT),
+    requirePermission(PERMISSIONS.CREATE_SPRINT),
     sprintController.createSprint
   );
 
@@ -27,11 +27,11 @@ router
   .route('/:id')
   .get(sprintController.getSprint)
   .patch(
-    requirePermission(PERMISSIONS.EDIT_PROJECT),
+    requirePermission(PERMISSIONS.EDIT_SPRINT),
     sprintController.updateSprint
   )
   .delete(
-    requirePermission(PERMISSIONS.EDIT_PROJECT),
+    requirePermission(PERMISSIONS.EDIT_SPRINT),
     sprintController.deleteSprint
   );
 

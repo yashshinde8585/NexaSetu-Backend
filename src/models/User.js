@@ -27,16 +27,6 @@ const userSchema = new mongoose.Schema(
     },
     role: {
       type: String,
-      enum: [
-        'WORKSPACE_ADMIN',
-        'WORKSPACE_MANAGER',
-        'TECH_LEAD',
-        'SENIOR_ENGINEER',
-        'SOFTWARE_ENGINEER',
-        'PROJECT_MEMBER',
-        'INTERN',
-        'RESTRICTED',
-      ],
       default: 'PROJECT_MEMBER',
     },
     jobTitle: {
@@ -55,6 +45,12 @@ const userSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    passwordChangedAt: Date,
+    failedLoginAttempts: {
+      type: Number,
+      default: 0,
+    },
+    lockUntil: Date,
   },
   {
     timestamps: true,
@@ -71,5 +67,9 @@ userSchema.pre('save', async function () {
 userSchema.methods.comparePassword = async function (candidatePassword) {
   return await bcrypt.compare(candidatePassword, this.password);
 };
+
+// Strategic indexing for workspace isolation and role-based searching
+userSchema.index({ workspaceId: 1, role: 1 });
+userSchema.index({ workspaceId: 1, email: 1 });
 
 module.exports = mongoose.model('User', userSchema);

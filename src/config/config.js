@@ -24,7 +24,9 @@ if (missing.length > 0) {
 module.exports = {
   jwt: {
     secret: process.env.JWT_SECRET,
-    expiresIn: process.env.JWT_EXPIRES_IN || '5d',
+    expiresIn: '15m',
+    refreshSecret: process.env.JWT_REFRESH_SECRET,
+    refreshExpiresIn: '7d',
   },
   db: {
     uri: isProduction ? process.env.DB_ATLAS_URI : process.env.DB_LOCAL_URI,

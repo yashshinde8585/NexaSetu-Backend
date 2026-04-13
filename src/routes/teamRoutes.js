@@ -17,6 +17,7 @@ router.post(
   teamController.inviteMultipleUsers
 );
 router.get('/members', protect, teamController.getWorkspaceTeam);
+router.get('/roles', protect, teamController.getWorkspaceRoles);
 router.get('/invites/:token', teamController.getInviteByToken);
 
 module.exports = router;
