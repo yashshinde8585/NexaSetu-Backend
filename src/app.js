@@ -47,7 +47,6 @@ const leadershipWorkspaceRoutes = require('./routes/leadershipRoutes');
 const operationsWorkspaceRoutes = require('./routes/operationsRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 
-
 app.use(
   cors({
     origin:
@@ -61,24 +60,63 @@ app.use(
 app.use(helmet());
 app.use(cookieParser());
 
-// Custom NoSQL Injection Protection for Express 5 (In-place sanitization)
+// 🫀 Mission Critical Health Check (Above all other middleware)
+app.get('/api/health', (req, res) => {
+  res.json({
+    status: 'operational',
+    service: 'NexaSetu Central Hub',
+    timestamp: new Date().toISOString(),
+    node_env: process.env.NODE_ENV
+  });
+});
+
+app.get('/api/health/integrity', async (req, res) => {
+  const mongoose = require('mongoose');
+  const dbStatus = mongoose.connection.readyState === 1 ? 'connected' : 'disconnected';
+  const redis = getRedisClient();
+  let redisStatus = 'disconnected';
+  if (redis) {
+    try {
+      await Promise.race([
+          redis.ping(),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 1000))
+      ]);
+      redisStatus = 'connected';
+    } catch (e) {
+      redisStatus = 'error';
+    }
+  }
+
+  res.json({
+    status: dbStatus === 'connected' ? (redisStatus === 'connected' ? 'operational' : 'degraded') : 'critical',
+    dependencies: {
+      database: dbStatus,
+      cache: redisStatus,
+      systemTime: new Date().toISOString()
+    }
+  });
+});
+
+// Safer NoSQL Sanitizer for Express 5
 app.use((req, res, next) => {
   const sanitize = (obj) => {
     if (obj && typeof obj === 'object') {
-      Object.keys(obj).forEach((key) => {
-        if (key.startsWith('$')) {
-          delete obj[key];
-        } else {
-          sanitize(obj[key]);
-        }
-      });
+       const keys = Object.keys(obj);
+       for (const key of keys) {
+         if (key.startsWith('$')) {
+           delete obj[key];
+         } else if (obj[key] && typeof obj[key] === 'object') {
+           sanitize(obj[key]);
+         }
+       }
     }
   };
-  sanitize(req.body);
-  sanitize(req.query);
-  sanitize(req.params);
+  if (req.body) sanitize(req.body);
+  if (req.query) sanitize(req.query);
+  if (req.params) sanitize(req.params);
   next();
 });
+
 
 // Configure rate limiting with Redis store for distributed scalability
 const globalLimiter = rateLimit({
@@ -86,9 +124,15 @@ const globalLimiter = rateLimit({
   max: process.env.NODE_ENV === 'development' ? 5000 : 500,
   message: 'Too many requests from this IP, please try again after 15 minutes.',
   store: new RedisStore({
-    sendCommand: (...args) => {
-      const client = getRedisClient();
-      return client ? client.call(...args) : Promise.reject(new Error('Redis client not available'));
+    sendCommand: async (...args) => {
+      try {
+        const client = getRedisClient();
+        if (!client) return null;
+        return await client.call(...args);
+      } catch (err) {
+        console.warn('[RATE-LIMIT] Redis pathway failure, bypassing restriction.');
+        return null;
+      }
     },
     prefix: 'rl:global:',
   }),
@@ -99,9 +143,15 @@ const authLimiter = rateLimit({
   max: 20,
   message: 'Too many login attempts. Please try again after an hour.',
   store: new RedisStore({
-    sendCommand: (...args) => {
-      const client = getRedisClient();
-      return client ? client.call(...args) : Promise.reject(new Error('Redis client not available'));
+    sendCommand: async (...args) => {
+      try {
+        const client = getRedisClient();
+        if (!client) return null;
+        return await client.call(...args);
+      } catch (err) {
+        console.warn('[RATE-LIMIT] Redis pathway failure (auth), bypassing.');
+        return null;
+      }
     },
     prefix: 'rl:auth:',
   }),
@@ -112,9 +162,15 @@ const aiLimiter = rateLimit({
   max: 50,
   message: 'AI allowance exceeded for this hour. Please try again later.',
   store: new RedisStore({
-    sendCommand: (...args) => {
-      const client = getRedisClient();
-      return client ? client.call(...args) : Promise.reject(new Error('Redis client not available'));
+    sendCommand: async (...args) => {
+      try {
+        const client = getRedisClient();
+        if (!client) return null;
+        return await client.call(...args);
+      } catch (err) {
+        console.warn('[RATE-LIMIT] Redis pathway failure (ai), bypassing.');
+        return null;
+      }
     },
     prefix: 'rl:ai:',
   }),
@@ -125,6 +181,7 @@ app.use('/api/auth/login', authLimiter);
 app.use('/api/ai', aiLimiter);
 
 app.use(express.json({ limit: '15kb' }));
+
 app.use('/api/auth', authRoutes);
 app.use('/api/projects', projectRoutes);
 app.use('/api/tasks', taskRoutes);
@@ -142,12 +199,10 @@ app.use('/api/comments', commentRoutes);
 app.use('/api/epi', epiRoutes);
 
 // Unified Workspaces
-
 app.use('/api/v1/engineering', engineeringWorkspaceRoutes);
 app.use('/api/v1/leadership', leadershipWorkspaceRoutes);
 app.use('/api/v1/operations', operationsWorkspaceRoutes);
 app.use('/api/v1/admin', adminRoutes);
-
 
 app.get('/', (req, res) => {
   res.json({ message: 'NexaSetu API is running!' });

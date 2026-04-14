@@ -1,5 +1,5 @@
 const { Queue, Worker } = require('bullmq');
-const { getRedisClient } = require('../config/redis');
+const { getBullRedisClient } = require('../config/redis');
 const logger = require('../utils/logger');
 
 let orchestratorQueue;
@@ -10,9 +10,9 @@ let orchestratorWorker;
  * Moves long-running tasks out of the main request thread.
  */
 const initOrchestratorQueue = () => {
-  const redis = getRedisClient();
+  const redis = getBullRedisClient();
   if (!redis) {
-    logger.warn('[QUEUE] Redis not available, background orchestration disabled.');
+    logger.warn('[QUEUE] Bull Redis not available, background orchestration disabled.');
     return;
   }
 
