@@ -1,52 +1,50 @@
 const Redis = require('ioredis');
 
 let redisClient;
+let bullRedisClient;
 
 /**
  * Initializes the Redis memory hub using ioredis.
- * This acts as our primary high-speed cache for Mission Discussion and Project Intelligence.
- * Built with industrial-grade error handling and automatic database fallback.
  */
 const connectRedis = () => {
     try {
-        const redisUrl = process.env.REDIS_URL || 'redis://127.0.0.1:6380';
+        const redisUrl = process.env.REDIS_URL || 'redis://127.0.0.1:6379';
         
+        // Standard client for cache and rate limiting
         redisClient = new Redis(redisUrl, {
-            maxRetriesPerRequest: null,
-            retryStrategy: (times) => {
-                const delay = Math.min(times * 100, 3000);
-                return delay;
-            },
-            reconnectOnError: (err) => {
-                const targetError = 'READONLY';
-                if (err.message.includes(targetError)) {
-                    return true;
-                }
-                return false;
-            }
+            maxRetriesPerRequest: 5, 
+            connectTimeout: 5000,
+            retryStrategy: (times) => Math.min(times * 200, 5000)
         });
 
-        let lastErrorLog = 0;
-        const LOG_THROTTLE = 30000; // 30s tactical silence
+        // Dedicated client for BullMQ (requires maxRetriesPerRequest: null)
+        bullRedisClient = new Redis(redisUrl, {
+            maxRetriesPerRequest: null,
+            retryStrategy: (times) => Math.min(times * 100, 3000)
+        });
 
         redisClient.on('error', (err) => {
-            const now = Date.now();
-            if (now - lastErrorLog > LOG_THROTTLE) {
-                console.warn('[MEMORY HUB] Background synchronization active (Grid Offline):', err.message);
-                lastErrorLog = now;
-            }
+            console.warn('[MEMORY HUB] General connection issue:', err.message);
+        });
+
+        bullRedisClient.on('error', (err) => {
+            console.warn('[MEMORY HUB] Queue connection issue:', err.message);
         });
 
         redisClient.on('connect', () => {
             console.log('[MEMORY HUB] Strategic memory grid synchronized');
         });
+        
+        bullRedisClient.on('connect', () => {
+            console.log('[MEMORY HUB] Queue grid synchronized');
+        });
 
-        console.log(`[MEMORY HUB] Attempting bridge to memory grid at ${redisUrl}...`);
     } catch (err) {
-        console.warn('[MEMORY HUB] Fatal bridge failure. Reverting to primary database retrieval.');
+        console.warn('[MEMORY HUB] Fatal bridge failure.');
     }
 };
 
 const getRedisClient = () => redisClient;
+const getBullRedisClient = () => bullRedisClient;
 
-module.exports = { connectRedis, getRedisClient };
+module.exports = { connectRedis, getRedisClient, getBullRedisClient };

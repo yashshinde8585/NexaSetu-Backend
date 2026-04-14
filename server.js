@@ -20,15 +20,6 @@ const server = http.createServer(app);
 // Setup real-time communication hub
 socketIO.init(server);
 
-// API Health Check
-app.get('/api/health', (req, res) => {
-  res.json({
-    status: 'operational',
-    service: 'NexaSetu Central Hub',
-    timestamp: new Date().toISOString()
-  });
-});
-
 // Start database connection and server
 connectDB().then(() => {
   cronService.start();
