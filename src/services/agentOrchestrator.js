@@ -5,6 +5,7 @@ const harvesterAgent = require('./harvesterAgent');
 const schedulerAgent = require('./schedulerAgent');
 const actionExecutor = require('./actionExecutor');
 const aiService = require('./aiService');
+const logger = require('../utils/logger');
 
 // Orchestrates cross-service event messaging and triggers specialized agent behaviors.
 class AgentOrchestrator {
@@ -17,28 +18,35 @@ class AgentOrchestrator {
    * High-reliability entry point for system events.
    */
   async handleEvent(event) {
-    const { getOrchestratorQueue } = require('../queues/orchestratorQueue');
-    const queue = getOrchestratorQueue();
+    try {
+      const { getOrchestratorQueue } = require('../queues/orchestratorQueue');
+      const queue = getOrchestratorQueue();
 
-    if (queue) {
-      await queue.add(`event:${event.type}`, { event });
-      return { status: 'queued', eventType: event.type };
-    } else {
-      // Fallback to sync processing if queue is unavailable
+      if (queue) {
+        await queue.add(`event:${event.type}`, { event }, {
+          jobId: event.entityId ? `${event.type}:${event.entityId}` : undefined,
+          removeOnComplete: true
+        });
+        return { status: 'queued', eventType: event.type };
+      }
+
+      // Fallback to synchronous processing if the queue is not operational
       return await this.processEvent(event);
+    } catch (err) {
+      logger.error(`[ORCHESTRATOR] Failed to dispatch event ${event.type}: ${err.message}`);
+      // Return a partial success status to prevent caller crashes
+      return { status: 'failed', error: err.message };
     }
   }
 
   /**
-   * Core logic for event processing. Now called by the background worker.
+   * Core logic for event processing. Executed by the background worker.
    */
   async processEvent(event) {
     try {
-      const { type, payload, project, user, entityId, entityType } = event;
+      const { type, payload, project, entityId, entityType } = event;
 
-      console.log(
-        `[AgentOrchestrator] Handling ${type} for entity ${entityId}`
-      );
+      logger.info(`[ORCHESTRATOR] Processing ${type} for ${entityType}:${entityId}`);
 
       let decision = 'monitoring';
       let actionTaken = 'logged';
@@ -51,27 +59,16 @@ class AgentOrchestrator {
         case 'TASK_DELAYED':
           agent = 'Scheduler';
           const sResult = await schedulerAgent.handleTaskDelay(event);
-          decision =
-            sResult.status === 'executed' ? 'cascade shift' : 'monitoring only';
+          decision = sResult.status === 'executed' ? 'cascade shift' : 'monitoring only';
           actionTaken = sResult.action || sResult.reason;
           reason = 'Task deadline passed without completion';
           actionsToExecute = sResult.actions || [];
           break;
 
-        case 'USER_OVERLOADED':
-          agent = 'Resource';
-          decision = 'redistribution required';
-          actionTaken = 'calculated optimal re-assignment';
-          reason = 'User exceeded the 5-task active workload limit';
-          break;
-
         case 'GITHUB_ACTIVITY':
           agent = 'Harvester';
           const result = await harvesterAgent.processGithubActivity(payload);
-          decision =
-            result.status === 'created'
-              ? 'autonomous creation'
-              : 'duplicate ignored';
+          decision = result.status === 'created' ? 'autonomous creation' : 'duplicate ignored';
           actionTaken = result.action || result.reason;
           reason = 'New code activity detected in linked repository';
           break;
@@ -81,23 +78,28 @@ class AgentOrchestrator {
           agent = 'Portfolio';
           decision = 'metric updated';
           actionTaken = 're-calculated project health score';
-          reason =
-            type === 'TASK_CREATED'
-              ? 'New entry impact assessment'
-              : 'Status/Assignment change impact';
+          reason = type === 'TASK_CREATED' ? 'New entry impact assessment' : 'Status/Assignment change impact';
+          break;
+
+        case 'USER_OVERLOADED':
+          agent = 'Resource';
+          decision = 'redistribution required';
+          actionTaken = 'calculated optimal re-assignment';
+          reason = 'User exceeded the active workload threshold';
           break;
 
         default:
+          logger.warn(`[ORCHESTRATOR] Unhandled event type: ${type}`);
           break;
       }
 
-      // Distribute confirmed actions programmatically to the execution engine.
+      // Execute confirmed actions via the execution engine.
       for (const actionReq of actionsToExecute) {
         await actionExecutor.processDecision(actionReq);
       }
 
-      // Persist contextual logic trees to maintain transparency and auditability.
-      const log = await AILog.create({
+      // Persist the logic tree for transparency and audit trails.
+      return await AILog.create({
         eventType: type,
         project: project || (payload && payload.project),
         entityId,
@@ -108,48 +110,54 @@ class AgentOrchestrator {
         reason,
         timestamp: new Date(),
       });
-
-      return log;
     } catch (error) {
-      console.error('[AgentOrchestrator] Error processing event:', error);
+      logger.error(`[ORCHESTRATOR] Event processing failed for ${event.type}: ${error.message}`);
+      throw error; // Essential for worker retry logic
     }
   }
 
+  /**
+   * Scans for delayed tasks and dispatches monitoring events.
+   * Includes idempotency locks to prevent event flooding.
+   */
   async scanForDelays() {
     const now = new Date();
-    const tasks = await Task.find({
-      status: { $ne: 'done' },
-      dueDate: { $lt: now },
-    });
-
-    for (const task of tasks) {
-      // Implement throttle locks to prevent recursive telemetry loops.
-      const existingLog = await AILog.findOne({
-        eventType: 'TASK_DELAYED',
-        entityId: task._id,
-        timestamp: {
-          $gt: new Date(new Date().getTime() - 24 * 60 * 60 * 1000),
-        }, // Last 24h
+    try {
+      const tasks = await Task.find({
+        status: { $ne: 'done' },
+        dueDate: { $lt: now },
       });
 
-      if (!existingLog) {
-        await this.handleEvent({
-          type: 'TASK_DELAYED',
+      for (const task of tasks) {
+        // Enforce 24h cooldown on delay notifications per task
+        const cooldownPeriod = new Date(Date.now() - 24 * 60 * 60 * 1000);
+        const existingLog = await AILog.findOne({
+          eventType: 'TASK_DELAYED',
           entityId: task._id,
-          entityType: 'task',
-          project: task.project,
-          payload: task,
+          timestamp: { $gt: cooldownPeriod },
         });
+
+        if (!existingLog) {
+          await this.handleEvent({
+            type: 'TASK_DELAYED',
+            entityId: task._id,
+            entityType: 'task',
+            project: task.project,
+            payload: task,
+          });
+        }
       }
+    } catch (error) {
+      logger.error(`[ORCHESTRATOR] Delay scan failed: ${error.message}`);
     }
   }
 
+  /**
+   * Routes natural language commands to the AI service layer.
+   */
   async processCommand(prompt, user) {
     try {
-      console.log(
-        `[AgentOrchestrator] Processing command for user ${user._id}`
-      );
-
+      logger.info(`[ORCHESTRATOR] Processing command for user: ${user._id}`);
       const response = await aiService.processPrompt(prompt);
 
       return {
@@ -158,7 +166,7 @@ class AgentOrchestrator {
         processedAt: new Date(),
       };
     } catch (error) {
-      console.error('[AgentOrchestrator] Command routing failed:', error);
+      logger.error(`[ORCHESTRATOR] Command execution failed: ${error.message}`);
       return {
         status: 'error',
         message: 'Failed to process strategic command',

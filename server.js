@@ -1,72 +1,85 @@
-const dotenv = require('dotenv');
-dotenv.config();
-
-const { connectRedis } = require('./src/config/redis');
+const config = require('./src/config/config');
+const logger = require('./src/utils/logger');
+const { connectRedis, getRedisClient } = require('./src/config/redis');
 const { initOrchestratorQueue } = require('./src/queues/orchestratorQueue');
-
-// Initialize Redis cache before loading app to satisfy RedisStore script loading
-connectRedis();
-initOrchestratorQueue();
-
 const http = require('http');
-const socketIO = require('./src/socket');
-const app = require('./src/app');
-const connectDB = require('./src/config/db');
-const cronService = require('./src/services/cronService');
-
-const PORT = process.env.PORT || 5000;
-const server = http.createServer(app);
-
-// Setup real-time communication hub
-socketIO.init(server);
-
-// Start database connection and server
-connectDB().then(() => {
-  cronService.start();
-  server.listen(PORT, () => {
-    console.log(`[NEXA-SETU] API Server running on http://localhost:${PORT}`);
-    console.log(`[NEXA-SETU] Real-Time Signal Hub initialized`);
-  });
-});
+const mongoose = require('mongoose');
 
 /**
- * Graceful Shutdown Protocol
- * Closes connections cleanly to prevent data corruption.
+ * PRODUCTION BOOTSTRAP SEQUENCE
+ * Initializes core services in strict order to maintain operational integrity.
  */
-const gracefulShutdown = () => {
-  console.log('[SHUTDOWN] Closing server and dependencies...');
-  server.close(async () => {
-    console.log('[SHUTDOWN] HTTP server closed.');
-    const mongoose = require('mongoose');
-    const { getRedisClient } = require('./src/config/redis');
-    
-    await mongoose.connection.close();
-    console.log('[SHUTDOWN] Database connection closed.');
-    
-    const redis = getRedisClient();
-    if (redis && redis.isOpen) {
-        await redis.quit();
-        console.log('[SHUTDOWN] Redis connection closed.');
-    }
-    
-    process.exit(0);
-  });
-};
+async function bootstrap() {
+  try {
+    // 1. Core Memory Infrastructure
+    connectRedis();
+    initOrchestratorQueue();
+    logger.info('[BOOTSTRAP] Redis & Queue Services online');
 
-process.on('SIGTERM', gracefulShutdown);
-process.on('SIGINT', gracefulShutdown);
+    // 2. Persistent Storage
+    const connectDB = require('./src/config/db');
+    await connectDB();
 
-/**
- * Global Exception and Rejection Listeners
- * Prevents asynchronous errors from crashing the process silently.
- */
+    // 3. Application Assembly
+    const app = require('./src/app');
+    const socketIO = require('./src/socket');
+    const cronService = require('./src/services/cronService');
+
+    const server = http.createServer(app);
+
+    // 4. Real-time & Background Services
+    socketIO.init(server);
+    cronService.start();
+    logger.info('[BOOTSTRAP] Real-time & Scheduled services synchronized');
+
+    // 5. Network Entry Point
+    server.listen(config.port, () => {
+      logger.info(`[NEXA-SETU] API Server listening on port ${config.port} [${config.env}]`);
+    });
+
+    /**
+     * GRACEFUL SHUTDOWN HANDLER
+     */
+    const shutdown = async (signal) => {
+      logger.info(`[SHUTDOWN] Signal ${signal} detected. Purging resources...`);
+      
+      server.close(async () => {
+        try {
+          await mongoose.connection.close();
+          const redis = getRedisClient();
+          if (redis) await redis.quit();
+          
+          logger.info('[SHUTDOWN] All connections terminated. Goodbye.');
+          process.exit(0);
+        } catch (err) {
+          logger.error(`[SHUTDOWN] Cleanup failure: ${err.message}`);
+          process.exit(1);
+        }
+      });
+
+      setTimeout(() => {
+        logger.error('[SHUTDOWN] Force exit triggered after timeout.');
+        process.exit(1);
+      }, 10000);
+    };
+
+    process.on('SIGTERM', () => shutdown('SIGTERM'));
+    process.on('SIGINT', () => shutdown('SIGINT'));
+
+  } catch (err) {
+    logger.error(`[FATAL] Bootstrap failed: ${err.message}`);
+    process.exit(1);
+  }
+}
+
+// System-wide error handlers
 process.on('unhandledRejection', (reason, promise) => {
-  console.error('[FATAL] Unhandled Rejection at:', promise, 'reason:', reason);
-  gracefulShutdown();
+  logger.error('[FATAL] Unhandled Rejection', { reason, promise });
 });
 
 process.on('uncaughtException', (err) => {
-  console.error('[FATAL] Uncaught Exception:', err.message);
-  console.error(err.stack);
+  logger.error(`[FATAL] Uncaught Exception: ${err.message}`, { stack: err.stack });
   process.exit(1);
 });
+
+bootstrap();
