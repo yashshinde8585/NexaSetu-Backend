@@ -10,7 +10,7 @@ const REQUIRED_ENV_VARS = [
   'JWT_SECRET',
   'JWT_REFRESH_SECRET',
   isProduction ? 'DB_ATLAS_URI' : 'DB_LOCAL_URI',
-  'REDIS_URL',
+  isProduction ? 'REDIS_INTERNAL_URL' : 'REDIS_LOCAL_URL',
   'GROQ_API_KEY',
   'ENCRYPTION_KEY'
 ];
@@ -58,7 +58,7 @@ const config = {
 
   // Redis & Caching
   redis: {
-    url: process.env.REDIS_URL || 'redis://127.0.0.1:6379',
+    url: isProduction ? process.env.REDIS_INTERNAL_URL : process.env.REDIS_LOCAL_URL,
   },
 
   // AI & External Services
