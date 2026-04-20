@@ -7,6 +7,7 @@ class WorkspaceService {
   async provisionWorkspace(data, session = null) {
     const workspace = new Workspace({
       name: data.name,
+      adminName: data.adminName,
       subscription: {
         plan: data.plan || 'free',
         status: 'active',
