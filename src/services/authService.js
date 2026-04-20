@@ -16,7 +16,7 @@ class AuthService {
     session.startTransaction();
 
     try {
-      const { email, name, password, workspaceName, plan, assignedProjectId } = userData;
+      const { email, name, admin, password, workspaceName, plan, assignedProjectId } = userData;
 
       const existingUser = await User.findOne({ email }).session(session);
       if (existingUser) throw new AppError('This email is already registered.', 400);
@@ -34,6 +34,7 @@ class AuthService {
 
         const newWorkspace = await workspaceService.provisionWorkspace({
           name: workspaceName || `${name}'s Hub`,
+          adminName: admin,
           plan: plan || 'free'
         }, session);
         workspaceId = newWorkspace._id;
