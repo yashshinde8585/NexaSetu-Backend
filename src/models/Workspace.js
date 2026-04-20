@@ -10,8 +10,13 @@ const workspaceSchema = new mongoose.Schema(
     admin: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
-      required: true,
+      required: false,
       index: true,
+    },
+    adminName: {
+      type: String,
+      required: false,
+      trim: true,
     },
     subscription: {
       plan: {
