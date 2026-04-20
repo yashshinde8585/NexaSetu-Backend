@@ -1,21 +1,10 @@
-const ActionRequest = require('../models/ActionRequest');
-const Project = require('../models/Project');
-const actionExecutor = require('../services/actionExecutor');
+const actionService = require('../services/actionService');
 const auditService = require('../services/auditService');
-const { getProjectAccessQuery } = require('../utils/queryHelpers');
 const catchAsync = require('../utils/catchAsync');
 
 // Processes AI-driven action requests, managing administrative approvals and rejections.
 exports.getPendingActions = catchAsync(async (req, res, next) => {
-  const projects = await Project.find(getProjectAccessQuery(req.user));
-  const projectIds = projects.map((p) => p._id);
-
-  // Retrieve unresolved action items targeting the authorized portfolios.
-  const actions = await ActionRequest.find({
-    status: 'pending',
-  })
-    .sort({ createdAt: -1 })
-    .populate('targetId');
+  const actions = await actionService.getPendingActions(req.user);
 
   res.status(200).json({
     status: 'success',
@@ -25,7 +14,7 @@ exports.getPendingActions = catchAsync(async (req, res, next) => {
 
 exports.approveAction = catchAsync(async (req, res, next) => {
   const { actionId } = req.params;
-  const result = await actionExecutor.approveRequest(actionId, req.user.id);
+  const result = await actionService.approveAction(actionId, req.user.id);
 
   await auditService.log({
     action: 'APPROVE_AI',
@@ -44,11 +33,7 @@ exports.approveAction = catchAsync(async (req, res, next) => {
 
 exports.rejectAction = catchAsync(async (req, res, next) => {
   const { actionId } = req.params;
-  const action = await ActionRequest.findByIdAndUpdate(actionId, {
-    status: 'rejected',
-    executedAt: new Date(),
-    createdBy: req.user.id,
-  });
+  const action = await actionService.rejectAction(actionId, req.user.id);
 
   await auditService.log({
     action: 'REJECT_AI',

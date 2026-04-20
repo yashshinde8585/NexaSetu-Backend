@@ -6,35 +6,30 @@ const Sprint = require('../models/Sprint');
 const AuditLog = require('../models/AuditLog');
 const { calculateProgress, formatTimeAgo } = require('../utils/dashboardHelpers');
 
-/**
- * Leadership Service
- * Orchestrates high-level analytics for managers and executives.
- */
 class LeadershipService {
+  // Main orchestrator for leadership analytics based on role
   async getLeadershipDashboard(userId, workspaceId, role) {
     const today = new Date();
     
-    // Core metrics everyone in leadership needs
     const [executionStats, teamGrid, activity] = await Promise.all([
       this._getExecutionStats(workspaceId, today),
       this._getTeamPerformance(workspaceId),
       this._getActivityFeed(workspaceId)
     ]);
 
-    let roleSpecificData = {};
+    const roleSpecificData = await this._getRoleSpecificData(workspaceId, role);
 
-    // Tailor data based on role depth
-    if (role === 'CTO' || role === 'WORKSPACE_ADMIN') {
-      roleSpecificData = await this._getCTOSpecifics(workspaceId);
-    } else if (role === 'VP_ENGINEERING') {
-      roleSpecificData = await this._getVPESpecifics(workspaceId);
-    } else if (role === 'TECH_LEAD') {
-      roleSpecificData = await this._getTLSpecifics(workspaceId);
-    } else if (role === 'ENGINEERING_MANAGER') {
-      roleSpecificData = await this._getEMSpecifics(workspaceId);
-    }
+    return {
+      ...this._getTacticalBase(activity),
+      executionStats,
+      teamGrid,
+      ...roleSpecificData
+    };
+  }
 
-    const tacticalBase = {
+  // Provide baseline dashboard structure
+  _getTacticalBase(activity) {
+    return {
       sprintControl: { progress: 0, delayRisk: 'LOW', blockedTasks: 0, teamLoad: 0, tasksDueToday: 0 },
       taskBoard: [],
       blockers: [],
@@ -44,15 +39,26 @@ class LeadershipService {
       focusToday: [],
       distribution: { backend: 0, frontend: 0, qa: 0, other: 0, imbalance: null }
     };
-
-    return {
-      ...tacticalBase,
-      executionStats,
-      teamGrid,
-      ...roleSpecificData
-    };
   }
 
+  // Route to specific analytics based on management role
+  async _getRoleSpecificData(workspaceId, role) {
+    switch (role) {
+      case 'CTO':
+      case 'WORKSPACE_ADMIN':
+        return this._getCTOSpecifics(workspaceId);
+      case 'VP_ENGINEERING':
+        return this._getVPESpecifics(workspaceId);
+      case 'TECH_LEAD':
+        return this._getTLSpecifics(workspaceId);
+      case 'ENGINEERING_MANAGER':
+        return this._getEMSpecifics(workspaceId);
+      default:
+        return {};
+    }
+  }
+
+  // Calculate high-level project execution and velocity metrics
   async _getExecutionStats(workspaceId, today) {
     const [atRisk, blockedCount, projects] = await Promise.all([
       Project.countDocuments({ workspaceId, status: 'at_risk' }),
@@ -64,7 +70,7 @@ class LeadershipService {
       projectsDelayed: atRisk,
       avgSprintDelay: atRisk > 0 ? `+${atRisk * 2}d` : '0d',
       activeBlockers: blockedCount,
-      teamsOverloaded: atRisk > 0 ? 1 : 0,
+      teamsOverloaded: atRisk > 2 ? 1 : 0,
       velocityTrend: { 
         direction: (projects === 0) ? 'stable' : (atRisk > 2 ? 'down' : 'up'), 
         value: (projects === 0) ? '0%' : (atRisk > 2 ? '-5%' : '+12%') 
@@ -72,7 +78,7 @@ class LeadershipService {
     };
   }
 
-
+  // Aggregate performance and workload metrics by functional team
   async _getTeamPerformance(workspaceId) {
     const result = await User.aggregate([
       { $match: { workspaceId: new mongoose.Types.ObjectId(workspaceId) } },
@@ -125,6 +131,7 @@ class LeadershipService {
     });
   }
 
+  // Retrieve summarized feed of recent organizational activity
   async _getActivityFeed(workspaceId) {
     const logs = await AuditLog.find({ workspaceId }).sort('-timestamp').limit(8).populate('performer', 'name').lean();
     return logs.map(log => ({
@@ -133,10 +140,8 @@ class LeadershipService {
     }));
   }
 
+  // Analytics tailored for Chief Technology Officer
   async _getCTOSpecifics(workspaceId) {
-    const today = new Date();
-    
-    // Aggregation for global metrics
     const [atRiskCount, totalBlockers, totalEngineers, sprintTasks, blockedTasks] = await Promise.all([
       Project.countDocuments({ workspaceId, status: 'at_risk' }),
       Task.countDocuments({ workspaceId, blocked: true, status: { $ne: 'done' } }),
@@ -148,7 +153,6 @@ class LeadershipService {
       Task.find({ workspaceId, blocked: true, status: { $ne: 'done' } }).limit(5).populate('assignedUser', 'role').lean()
     ]);
 
-    // Format pipeline data
     const pipeline = {
       backlog: sprintTasks.find(t => t._id === 'todo')?.count || 0,
       dev: sprintTasks.find(t => t._id === 'in_progress')?.count || 0,
@@ -156,7 +160,6 @@ class LeadershipService {
       release: sprintTasks.find(t => t._id === 'done')?.count || 0
     };
 
-    // Sort blockers by functional category
     const categorizedBlockers = { engineering: [], qa: [], peopleOps: [] };
     blockedTasks.forEach(task => {
       const role = task.assignedUser?.role || 'ENGINEERING';
@@ -171,7 +174,7 @@ class LeadershipService {
         totalBlockers: totalBlockers,
         orgDeliveryDrift: atRiskCount > 0 ? atRiskCount * 1.5 : 0,
         avgUtilization: totalEngineers > 0 ? 78 : 0, 
-        teamsOverloaded: atRiskCount > 0 ? 1 : 0
+        teamsOverloaded: atRiskCount > 2 ? 1 : 0
       },
       functionalBreakdown: {
         engineeringLeadership: { activeProjects: atRiskCount, delayed: atRiskCount, avgDrift: atRiskCount, decisionsPending: 0 },
@@ -190,7 +193,7 @@ class LeadershipService {
     };
   }
 
-
+  // Analytics tailored for VP of Engineering
   async _getVPESpecifics(workspaceId) {
     const [atRiskCount, totalBlockers, totalTasks, completedTasksCount, blockedTasks, activeProjects] = await Promise.all([
       Project.countDocuments({ workspaceId, status: 'at_risk' }),
@@ -223,6 +226,7 @@ class LeadershipService {
     };
   }
 
+  // Analytics tailored for Technical Leads
   async _getTLSpecifics(workspaceId) {
     const [totalTasks, blockedTasks, bugTasks, projects] = await Promise.all([
       Task.countDocuments({ workspaceId }),
@@ -255,6 +259,7 @@ class LeadershipService {
     };
   }
 
+  // Analytics tailored for Engineering Managers
   async _getEMSpecifics(workspaceId) {
     const [users, tasks] = await Promise.all([
       User.find({ workspaceId }).limit(10).lean(),
@@ -318,9 +323,7 @@ class LeadershipService {
     };
   }
 
-  /**
-   * Drill down into specific roles within a function (Management, ICs, etc.)
-   */
+  // Drill down into specific roles within a function (Management, ICs, etc.)
   async getRoleBreakdown(workspaceId, category) {
     const rolesMap = {
       leadership: ['WORKSPACE_ADMIN', 'VP_ENGINEERING', 'ENGINEERING_MANAGER', 'TECH_LEAD'],
@@ -361,9 +364,7 @@ class LeadershipService {
     ]);
   }
 
-  /**
-   * Drill down into individuals for a specific role
-   */
+  // Drill down into individuals for a specific role
   async getIndividualBreakdown(workspaceId, role) {
     return User.aggregate([
       { $match: { 
@@ -392,6 +393,5 @@ class LeadershipService {
     ]);
   }
 }
-
 
 module.exports = new LeadershipService();

@@ -4,35 +4,23 @@ const sprintStatsController = require('../controllers/sprintStatsController');
 const { protect, requirePermission } = require('../middleware/authMiddleware');
 const { PERMISSIONS } = require('../config/permissions');
 
+const validate = require('../middleware/validateMiddleware');
+const { createSprintSchema, updateSprintSchema } = require('../validations/sprintValidation');
+
 const router = express.Router();
 
 router.use(protect);
 
-router.route('/:id/sync').post(sprintController.syncSprintHealth);
-router.route('/:id/stats').get(sprintStatsController.getSprintStats);
+router.get('/', sprintController.getAllSprints);
+router.post('/', requirePermission(PERMISSIONS.CREATE_SPRINT), validate(createSprintSchema), sprintController.createSprint);
 
-router.route('/:id/finalize').get(sprintStatsController.finalizeSprint);
+router.get('/:id', sprintController.getSprint);
+router.patch('/:id', requirePermission(PERMISSIONS.EDIT_SPRINT), validate(updateSprintSchema), sprintController.updateSprint);
+router.delete('/:id', requirePermission(PERMISSIONS.EDIT_SPRINT), sprintController.deleteSprint);
 
-router.route('/:id/report').get(sprintStatsController.getSprintReportData);
-
-router
-  .route('/')
-  .get(sprintController.getAllSprints)
-  .post(
-    requirePermission(PERMISSIONS.CREATE_SPRINT),
-    sprintController.createSprint
-  );
-
-router
-  .route('/:id')
-  .get(sprintController.getSprint)
-  .patch(
-    requirePermission(PERMISSIONS.EDIT_SPRINT),
-    sprintController.updateSprint
-  )
-  .delete(
-    requirePermission(PERMISSIONS.EDIT_SPRINT),
-    sprintController.deleteSprint
-  );
+router.post('/:id/sync', sprintController.syncSprintHealth);
+router.get('/:id/stats', sprintStatsController.getSprintStats);
+router.get('/:id/finalize', sprintStatsController.finalizeSprint);
+router.get('/:id/report', sprintStatsController.getSprintReportData);
 
 module.exports = router;

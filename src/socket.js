@@ -1,75 +1,92 @@
 const { Server } = require('socket.io');
 const { createAdapter } = require('@socket.io/redis-adapter');
 const Redis = require('ioredis');
+const config = require('./config/config');
+const logger = require('./utils/logger');
 
 let io;
 
-/**
- * Initializes the Socket.io signal hub and attaches it to the existing HTTP server.
- * Implements the Redis Pub/Sub adapter for flawlessly distributed horizontal scaling.
- */
-const init = (server) => {
-  const redisUrl = process.env.REDIS_URL || 'redis://127.0.0.1:6380';
-  
-  // 🧭 Initializing Independent Mission Frequencies
-  const pubOptions = { maxRetriesPerRequest: null };
-  const pubClient = new Redis(redisUrl, pubOptions);
-  const subClient = new Redis(redisUrl, pubOptions);
-
-  // 📡 High-Density Signal Shielding
-  let lastSignalError = 0;
-  const SIGNAL_THROTTLE = 30000;
-
-  pubClient.on('error', (err) => {
-      const now = Date.now();
-      if (now - lastSignalError > SIGNAL_THROTTLE) {
-          console.warn('[SIGNAL HUB] Hub disconnected (Retrying)...');
-          lastSignalError = now;
-      }
-  });
-  subClient.on('error', (err) => {
-      // Shared throttle with publisher to minimize log noise
-  });
-
-  io = new Server(server, {
-    cors: {
-      origin: process.env.NODE_ENV === 'development' 
-        ? true 
-        : process.env.CLIENT_URL || 'http://localhost:5173',
-      methods: ['GET', 'POST'],
-      credentials: true,
-    },
-  });
-
-  // Attach Scaling Adapter
-  io.adapter(createAdapter(pubClient, subClient));
-
-  io.on('connection', (socket) => {
-    console.log(`[REAL-TIME HUB] New strategist connected: ${socket.id}`);
-
-    // Join a specific mission (task) room for localized signaling
-    socket.on('join_task', (taskId) => {
-      socket.join(taskId);
-      console.log(`[SIGNAL ROUTING] Strategist ${socket.id} joined mission room: ${taskId}`);
-    });
-
-    // Handle strategist departure
-    socket.on('disconnect', () => {
-      console.log(`[REAL-TIME HUB] Strategist disconnected: ${socket.id}`);
-    });
-  });
-
-  return io;
+// SOCKET EVENT CONSTANTS
+const EVENTS = {
+  CONNECTION: 'connection',
+  DISCONNECT: 'disconnect',
+  JOIN_TASK: 'join_task',
+  LEAVE_TASK: 'leave_task',
+  NEW_SIGNAL: 'new_signal',
+  ERROR: 'error'
 };
 
 /**
- * Retrieves the active signal hub instance for use in controllers.
+ * Initializes the Socket.io signal hub with Redis scaling.
+ * @param {http.Server} server - HTTP server instance.
+ */
+const init = (server) => {
+  try {
+    const redisUrl = config.redis.url;
+    
+    // Redis clients for Pub/Sub horizontal scaling
+    const pubClient = new Redis(redisUrl, { maxRetriesPerRequest: null, enableReadyCheck: true });
+    const subClient = new Redis(redisUrl, { maxRetriesPerRequest: null, enableReadyCheck: true });
+
+    pubClient.on('error', (err) => logger.error(`[SOCKET-REDIS] Publisher Error: ${err.message}`));
+    subClient.on('error', (err) => logger.error(`[SOCKET-REDIS] Subscriber Error: ${err.message}`));
+
+    io = new Server(server, {
+      cors: {
+        origin: config.env === 'development' ? true : config.clientUrl,
+        methods: ['GET', 'POST'],
+        credentials: true,
+      },
+      pingTimeout: 60000,
+      pingInterval: 25000
+    });
+
+    io.adapter(createAdapter(pubClient, subClient));
+
+    io.on(EVENTS.CONNECTION, (socket) => {
+      logger.info(`[SOCKET] Client connected: ${socket.id}`);
+
+      // Join Task room for localized updates
+      socket.on(EVENTS.JOIN_TASK, (taskId) => {
+        if (!taskId) return;
+        socket.join(taskId);
+        logger.debug(`[SOCKET] Client ${socket.id} joined task room: ${taskId}`);
+      });
+
+      // Leave Task room to prevent memory leaks
+      socket.on(EVENTS.LEAVE_TASK, (taskId) => {
+        if (!taskId) return;
+        socket.leave(taskId);
+        logger.debug(`[SOCKET] Client ${socket.id} left task room: ${taskId}`);
+      });
+
+      // Lifecycle cleanup
+      socket.on(EVENTS.DISCONNECT, (reason) => {
+        logger.info(`[SOCKET] Client disconnected: ${socket.id} (${reason})`);
+      });
+
+      // Generic socket error logging
+      socket.on(EVENTS.ERROR, (err) => {
+        logger.error(`[SOCKET] Socket error for ${socket.id}: ${err.message}`);
+      });
+    });
+
+    logger.info('[SOCKET] Real-time Hub initialized and synchronized');
+    return io;
+  } catch (err) {
+    logger.error(`[SOCKET] Initialization failed: ${err.message}`);
+    throw err;
+  }
+};
+
+/**
+ * Retrieves the active Socket.io instance.
  */
 const getIO = () => {
   if (!io) {
-    throw new Error('Socket.io hub has not been initialized. Critical telemetry failure.');
+    throw new Error('Socket.io hub has not been initialized. Call init(server) first.');
   }
   return io;
 };
 
-module.exports = { init, getIO };
+module.exports = { init, getIO, EVENTS };

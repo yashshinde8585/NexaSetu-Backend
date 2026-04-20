@@ -1,72 +1,72 @@
 const logger = require('../utils/logger');
+const config = require('../config/config');
+const AppError = require('../utils/appError');
 
-// Intercepts unhandled application errors and normalizes API responses for clients.
+// Global error handling middleware to standardize application responses
 const globalErrorHandler = (err, req, res, next) => {
   err.statusCode = err.statusCode || 500;
   err.status = err.status || 'error';
 
-  // Log critical errors via structured logging for observability
-  logger.error(`[FATAL ERROR]: ${err.message}`, {
+  if (config.isProduction) {
+    let error = { ...err };
+    error.message = err.message;
+
+    // Map technical database and JWT signals to user-friendly errors
+    if (err.name === 'CastError') error = handleCastErrorDB(err);
+    if (err.code === 11000) error = handleDuplicateFieldsDB(err);
+    if (err.name === 'ValidationError') error = handleValidationErrorDB(err);
+    if (err.name === 'JsonWebTokenError') error = handleJWTError();
+    if (err.name === 'TokenExpiredError') error = handleJWTExpiredError();
+
+    sendErrorProd(error, req, res);
+  } else {
+    sendErrorDev(err, req, res);
+  }
+};
+
+// Handlers for specific database and authorization errors
+const handleCastErrorDB = (err) => {
+  return new AppError(`Invalid ${err.path}: ${err.value}`, 400);
+};
+
+const handleDuplicateFieldsDB = (err) => {
+  const value = err.errmsg.match(/(["'])(\\?.)*?\1/)[0];
+  return new AppError(`Duplicate field value: ${value}. Please use another value!`, 400);
+};
+
+const handleValidationErrorDB = (err) => {
+  const errors = Object.values(err.errors).map((el) => el.message);
+  return new AppError(`Invalid input data. ${errors.join('. ')}`, 400);
+};
+
+const handleJWTError = () => new AppError('Invalid token. Please log in again!', 401);
+
+const handleJWTExpiredError = () => new AppError('Your token has expired! Please log in again.', 401);
+
+// Send detailed error reports in development environment
+const sendErrorDev = (err, req, res) => {
+  res.status(err.statusCode).json({
+    status: err.status,
+    error: err,
+    message: err.message,
     stack: err.stack,
-    path: req.originalUrl,
-    method: req.method,
-    user: req.user?._id
   });
+};
 
-  // Handle specific MongoDB/Mongoose errors
-  if (err.name === 'CastError') {
-    return res.status(400).json({
-      status: 'fail',
-      message: `Invalid format for field ${err.path}: ${err.value}`,
-    });
-  }
-
-  if (err.name === 'ValidationError') {
-    const messages = Object.values(err.errors).map((el) => el.message);
-    return res.status(400).json({
-      status: 'fail',
-      message: `Invalid input data: ${messages.join('. ')}`,
-    });
-  }
-
-  if (err.code === 11000) {
-    const value = err.message.match(/(["'])(\\?.)*?\1/)[0];
-    return res.status(400).json({
-      status: 'fail',
-      message: `Duplicate field value: ${value}. Please use another value!`,
-    });
-  }
-
-  if (err.name === 'JsonWebTokenError') {
-    return res.status(401).json({
-      status: 'fail',
-      message: 'Invalid token. Please log in again.',
-    });
-  }
-
-  if (err.name === 'TokenExpiredError') {
-    return res.status(401).json({
-      status: 'fail',
-      message: 'Your token has expired. Please log in again.',
-    });
-  }
-
-  // Specific details for development
-  if (process.env.NODE_ENV !== 'production') {
+// Send sanitized, user-friendly error messages in production
+const sendErrorProd = (err, req, res) => {
+  if (err.isOperational) {
     return res.status(err.statusCode).json({
       status: err.status,
       message: err.message,
-      stack: err.stack,
-      error: err,
     });
   }
 
-  // Generic production response
-  res.status(err.statusCode).json({
-    status: err.status,
-    message: err.isOperational
-      ? err.message
-      : 'Something went wrong on our end. Our engineers are investigating.',
+  // Log unknown critical errors and send generic message
+  logger.error('ERROR 💥', err);
+  res.status(500).json({
+    status: 'error',
+    message: 'Something went very wrong!',
   });
 };
 

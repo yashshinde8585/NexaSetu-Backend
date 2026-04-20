@@ -1,7 +1,8 @@
 const crypto = require('crypto');
+const config = require('../config/config');
 
 const ALGORITHM = 'aes-256-cbc';
-const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || 'place_a_32_char_key_here_for_dev_'; // Must be 32 chars
+const ENCRYPTION_KEY = config.security.encryptionKey;
 const IV_LENGTH = 16;
 
 /**

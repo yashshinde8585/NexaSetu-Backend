@@ -11,26 +11,29 @@ const workspaceSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
       required: true,
+      index: true,
     },
     subscription: {
       plan: {
         type: String,
         enum: ['free', 'pro', 'enterprise'],
         default: 'free',
+        index: true,
       },
       status: {
         type: String,
         enum: ['active', 'trialing', 'past_due', 'canceled'],
         default: 'trialing',
+        index: true,
       },
       trialEndsAt: {
         type: Date,
-        default: () => new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days trial
+        default: () => new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
       },
     },
     settings: {
       logo: String,
-      allowedDomains: [String],
+      allowedDomains: [{ type: String, trim: true }],
       timezone: { type: String, default: 'UTC+5:30' },
       workingHours: { type: String, default: '09:00 - 18:00' },
       notificationRules: { type: String, default: 'Email, Slack' },
@@ -45,7 +48,7 @@ const workspaceSchema = new mongoose.Schema(
       github: {
         connected: { type: Boolean, default: false },
         accessToken: String,
-        githubId: String,
+        githubId: { type: String, index: true, sparse: true },
         repoCount: { type: Number, default: 0 },
         lastSync: Date
       },

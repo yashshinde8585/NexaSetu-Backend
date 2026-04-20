@@ -8,10 +8,6 @@ const router = express.Router();
 router.use(protect);
 router.use(performanceTracker);
 
-// Operations metrics (QA/HR)
-router.get('/dashboard', 
-  restrictTo('QA_LEAD', 'QA', 'SQA', 'PEOPLE_OPS'), 
-  getDashboard
-);
+router.get('/dashboard', restrictTo('QA_LEAD', 'QA', 'SQA', 'PEOPLE_OPS'), getDashboard);
 
 module.exports = router;
