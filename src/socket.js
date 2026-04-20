@@ -25,8 +25,15 @@ const init = (server) => {
     const redisUrl = config.redis.url;
     
     // Redis clients for Pub/Sub horizontal scaling
-    const pubClient = new Redis(redisUrl, { maxRetriesPerRequest: null, enableReadyCheck: true });
-    const subClient = new Redis(redisUrl, { maxRetriesPerRequest: null, enableReadyCheck: true });
+    const redisOptions = {
+      maxRetriesPerRequest: null,
+      enableReadyCheck: true,
+      connectTimeout: 15000,
+      retryStrategy: (times) => Math.min(times * 100, 3000)
+    };
+
+    const pubClient = new Redis(redisUrl, redisOptions);
+    const subClient = new Redis(redisUrl, redisOptions);
 
     pubClient.on('error', (err) => logger.error(`[SOCKET-REDIS] Publisher Error: ${err.message}`));
     subClient.on('error', (err) => logger.error(`[SOCKET-REDIS] Subscriber Error: ${err.message}`));
