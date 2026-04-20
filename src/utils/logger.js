@@ -1,4 +1,5 @@
 const winston = require('winston');
+const config = require('../config/config');
 
 const logFormat = winston.format.combine(
   winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
@@ -8,7 +9,7 @@ const logFormat = winston.format.combine(
 );
 
 const logger = winston.createLogger({
-  level: process.env.NODE_ENV === 'development' ? 'debug' : 'info',
+  level: config.isProduction ? 'info' : 'debug',
   format: logFormat,
   defaultMeta: { service: 'nexasetu-backend' },
   transports: [
@@ -21,12 +22,14 @@ const logger = winston.createLogger({
       ),
     }),
   ],
+  exitOnError: false,
 });
 
 // Add file logging in production for persistence
-if (process.env.NODE_ENV === 'production') {
+if (config.isProduction) {
   logger.add(new winston.transports.File({ filename: 'logs/error.log', level: 'error' }));
   logger.add(new winston.transports.File({ filename: 'logs/combined.log' }));
 }
 
 module.exports = logger;
+

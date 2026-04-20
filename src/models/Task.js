@@ -6,6 +6,7 @@ const taskSchema = new mongoose.Schema(
       type: String,
       required: [true, 'Task title is required'],
       trim: true,
+      index: true,
     },
     description: {
       type: String,
@@ -15,6 +16,7 @@ const taskSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Project',
       required: true,
+      index: true,
     },
     workspaceId: {
       type: mongoose.Schema.Types.ObjectId,
@@ -26,14 +28,17 @@ const taskSchema = new mongoose.Schema(
       type: String,
       enum: ['todo', 'in_progress', 'in_review', 'done'],
       default: 'todo',
+      index: true,
     },
     assignedUser: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
+      index: true,
     },
     sprint: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Sprint',
+      index: true,
     },
     source: {
       type: String,
@@ -47,10 +52,12 @@ const taskSchema = new mongoose.Schema(
     githubId: {
       type: String,
       sparse: true,
+      index: true,
     },
     dueDate: {
       type: Date,
       required: false,
+      index: true,
     },
     startedAt: {
       type: Date,
@@ -65,17 +72,20 @@ const taskSchema = new mongoose.Schema(
       {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'Task',
+        index: true, // Multikey index for dependency chains
       },
     ],
     parentId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Task',
       default: null,
+      index: true,
     },
     type: {
       type: String,
       enum: ['intent', 'epic', 'story', 'task', 'bug'],
       default: 'task',
+      index: true,
     },
     strategicWeight: {
       v: { type: Number, default: 0 },
@@ -86,6 +96,7 @@ const taskSchema = new mongoose.Schema(
     sasScore: {
       type: Number,
       default: 0,
+      index: true,
     },
     embedding: {
       type: [Number],
@@ -94,6 +105,7 @@ const taskSchema = new mongoose.Schema(
     taskNumber: {
       type: Number,
       required: false,
+      index: true,
     },
     githubUrl: {
       type: String,
@@ -103,6 +115,7 @@ const taskSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
       required: false,
+      index: true,
     },
     timelineHistory: [
       {
@@ -116,6 +129,7 @@ const taskSchema = new mongoose.Schema(
       type: String,
       enum: ['low', 'medium', 'high', 'urgent'],
       default: 'medium',
+      index: true,
     },
     estimatedDuration: {
       type: Number,
@@ -130,6 +144,7 @@ const taskSchema = new mongoose.Schema(
     blocked: {
       type: Boolean,
       default: false,
+      index: true,
     },
     blockedReason: {
       type: String,
@@ -149,10 +164,12 @@ const taskSchema = new mongoose.Schema(
   }
 );
 
-// Dashboard aggregation optimization with workspace isolation
-taskSchema.index({ workspaceId: 1, project: 1, status: 1, type: 1, dueDate: 1 });
-taskSchema.index({ workspaceId: 1, assignedUser: 1, status: 1, type: 1 });
-taskSchema.index({ project: 1, status: 1 }); // Frequent filter for project views
+// Strategic ESR Optimized Indexes
+taskSchema.index({ workspaceId: 1, project: 1, status: 1, type: 1 });
+taskSchema.index({ workspaceId: 1, assignedUser: 1, status: 1 });
+taskSchema.index({ workspaceId: 1, status: 1, dueDate: 1 }); // For overdue tracking
+taskSchema.index({ workspaceId: 1, type: 1, status: 1 });
+taskSchema.index({ project: 1, taskNumber: 1 }, { unique: true }); // Fast lookup by project task number
 
 // Auto-increment task number per project (Distributed & Parallel ready)
 taskSchema.pre('save', async function () {

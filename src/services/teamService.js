@@ -2,6 +2,8 @@ const User = require('../models/User');
 const Invitation = require('../models/Invitation');
 const Project = require('../models/Project');
 const crypto = require('crypto');
+const { getProjectAccessQuery } = require('../utils/queryHelpers');
+const AppError = require('../utils/appError');
 
 // Centralizes workspace administrative flows for provisioning and organizing organizational personnel.
 class TeamService {
@@ -95,6 +97,70 @@ class TeamService {
     }
 
     return { provisionedUsers, failedInvites };
+  }
+
+  async getInviteByToken(token) {
+    const invitation = await Invitation.findOne({
+      token,
+      status: 'pending',
+      expiresAt: { $gt: Date.now() },
+    });
+
+    if (!invitation) {
+      throw new AppError('Invalid or expired invitation', 404);
+    }
+
+    return invitation;
+  }
+
+  async getWorkspaceTeam(user, isStrategicLead, page = 1, limit = 20) {
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const limitValue = parseInt(limit);
+    const workspaceId = user.workspaceId;
+
+    let memberQuery = { workspaceId };
+    let invitationQuery = {
+      workspaceId,
+      status: 'pending',
+      expiresAt: { $gt: Date.now() },
+    };
+
+    if (!isStrategicLead) {
+      const authorizedProjects = await Project.find(
+        getProjectAccessQuery(user)
+      ).select('_id');
+      const authorizedProjectIds = authorizedProjects.map((p) => p._id);
+
+      memberQuery.assignedProjectId = { $in: authorizedProjectIds };
+      invitationQuery.projectId = { $in: authorizedProjectIds };
+    }
+
+    const [members, totalMembers, invitations, totalInvitations] = await Promise.all([
+      User.find(memberQuery)
+        .select('name email role jobTitle createdAt assignedProjectId')
+        .populate('assignedProjectId', 'name')
+        .skip(skip)
+        .limit(limitValue)
+        .sort('name')
+        .lean(),
+      User.countDocuments(memberQuery),
+      Invitation.find(invitationQuery)
+        .select('email role expiresAt projectId')
+        .populate('projectId', 'name')
+        .skip(skip)
+        .limit(limitValue)
+        .lean(),
+      Invitation.countDocuments(invitationQuery),
+    ]);
+
+    return {
+      members,
+      totalMembers,
+      invitations,
+      totalInvitations,
+      page: parseInt(page),
+      limit: limitValue
+    };
   }
 }
 

@@ -19,6 +19,7 @@ router.post('/login', validate(loginSchema), loginUser);
 router.get('/refresh', refreshAccessToken);
 router.post('/activate', activateInvitation);
 router.get('/logout', logoutUser);
+
 router.get('/me', protect, getMe);
 router.patch('/complete-tour', protect, completeTour);
 

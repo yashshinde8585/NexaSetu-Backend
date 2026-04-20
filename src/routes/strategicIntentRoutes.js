@@ -1,9 +1,9 @@
 const express = require('express');
-const router = express.Router();
 const strategicIntentController = require('../controllers/strategicIntentController');
-const { protect } = require('../middleware/authMiddleware'); // Corrected path
+const { protect } = require('../middleware/authMiddleware');
 
-// All routes require authentication
+const router = express.Router();
+
 router.use(protect);
 
 router.get('/hub/:projectId', strategicIntentController.getStrategicHub);

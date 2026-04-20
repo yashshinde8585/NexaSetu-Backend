@@ -1,43 +1,87 @@
-// Validates environment variables and exports centralized configuration settings for the backend application.
 const dotenv = require('dotenv');
+const path = require('path');
+
 dotenv.config();
 
-const isProduction = process.env.NODE_ENV === 'production';
+const env = process.env.NODE_ENV || 'development';
+const isProduction = env === 'production';
 
-const REQUIRED_VARS = [
+const REQUIRED_ENV_VARS = [
   'JWT_SECRET',
+  'JWT_REFRESH_SECRET',
   isProduction ? 'DB_ATLAS_URI' : 'DB_LOCAL_URI',
+  'REDIS_URL',
   'GROQ_API_KEY',
+  'ENCRYPTION_KEY'
 ];
 
-const missing = REQUIRED_VARS.filter((v) => !process.env[v]);
+const missingVars = REQUIRED_ENV_VARS.filter(key => !process.env[key]);
 
-if (missing.length > 0) {
-  console.error(
-    '\x1b[31m[CRITICAL CONFIG ERROR]: The following environment variables are missing:\x1b[0m'
-  );
-  missing.forEach((v) => console.error(`  - ${v}`));
-  console.error('\x1b[31mx--- ABORTING STARTUP ---x\x1b[0m');
+if (missingVars.length > 0) {
+  console.error('\x1b[31m[CRITICAL] Configuration Error: Missing Environment Variables\x1b[0m');
+  console.error('\x1b[31m---------------------------------------------------------\x1b[0m');
+  missingVars.forEach(v => console.error(`  \x1b[33m- ${v}\x1b[0m`));
+  console.error('\x1b[31m---------------------------------------------------------\x1b[0m');
+  console.error('\x1b[31mApplication startup aborted. Please check your .env file.\x1b[0m');
   process.exit(1);
 }
 
-module.exports = {
+const config = {
+  // Application Info
+  env,
+  isProduction,
+  isDevelopment: env === 'development',
+  isTest: env === 'test',
+  port: parseInt(process.env.PORT, 10) || 5000,
+  
+  // Security & Authentication
+  clientUrl: process.env.CLIENT_URL || 'http://localhost:5173',
   jwt: {
     secret: process.env.JWT_SECRET,
-    expiresIn: '15m',
     refreshSecret: process.env.JWT_REFRESH_SECRET,
-    refreshExpiresIn: '15d',
+    expiresIn: process.env.JWT_ACCESS_EXPIRATION || '15m',
+    refreshExpiresIn: process.env.JWT_REFRESH_EXPIRATION || '15d',
+    cookieOptions: {
+      httpOnly: true,
+      secure: isProduction,
+      sameSite: isProduction ? 'none' : 'lax',
+    }
   },
+
+  // Database
   db: {
     uri: isProduction ? process.env.DB_ATLAS_URI : process.env.DB_LOCAL_URI,
+    options: {
+      // Add any specific mongoose options here if needed
+    }
   },
+
+  // Redis & Caching
+  redis: {
+    url: process.env.REDIS_URL || 'redis://127.0.0.1:6379',
+  },
+
+  // AI & External Services
   ai: {
     hfKey: process.env.HUGGINGFACE_API_KEY,
     groqKey: process.env.GROQ_API_KEY,
   },
-  app: {
-    port: process.env.PORT || 5000,
-    clientUrl: process.env.CLIENT_URL || 'http://localhost:5173',
-    nodeEnv: process.env.NODE_ENV || 'development',
+
+  // Logging Configuration
+  logging: {
+    level: process.env.LOG_LEVEL || (isProduction ? 'info' : 'debug'),
   },
+
+  // Security Policy
+  security: {
+    encryptionKey: process.env.ENCRYPTION_KEY,
+    failedLoginLimit: parseInt(process.env.FAILED_LOGIN_LIMIT, 10) || 5,
+    lockoutDuration: parseInt(process.env.LOCKOUT_DURATION_MINS, 10) || 30, // in minutes
+    sessionLimit: parseInt(process.env.SESSION_LIMIT, 10) || 5,
+    sessionDurationMs: 15 * 24 * 60 * 60 * 1000, // 15 days
+  }
 };
+
+module.exports = config;
+
+

@@ -6,22 +6,25 @@ const projectSchema = new mongoose.Schema(
       type: String,
       required: [true, 'Project name is required'],
       trim: true,
+      index: true,
     },
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
       required: true,
+      index: true,
     },
     members: [
       {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'User',
+        index: true, // Multikey index for member-based lookup
       },
     ],
     githubRepo: {
       owner: String,
       repo: String,
-      fullName: String,
+      fullName: { type: String, index: true, sparse: true },
     },
     sprint: {
       type: mongoose.Schema.Types.ObjectId,
@@ -35,11 +38,13 @@ const projectSchema = new mongoose.Schema(
       type: String,
       uppercase: true,
       trim: true,
+      required: true,
     },
     workspaceId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Workspace',
       required: true,
+      index: true,
     },
   },
   {
@@ -47,23 +52,22 @@ const projectSchema = new mongoose.Schema(
   }
 );
 
-// Auto-generate project key if not provided
 projectSchema.pre('save', function () {
   if (!this.key && this.name) {
-    // Take first 3-4 letters of name, remove spaces, uppercase
     this.key = this.name
       .replace(/[^a-zA-Z]/g, '')
       .substring(0, 3)
       .toUpperCase();
 
-    // If name is too short, pad with X
     while (this.key.length < 3) {
       this.key += 'X';
     }
   }
 });
 
-// Indexing for workspace-specific project retrieval
+// Strategic Compound Indexes
+projectSchema.index({ workspaceId: 1, key: 1 }, { unique: true });
 projectSchema.index({ workspaceId: 1, name: 1 });
+projectSchema.index({ workspaceId: 1, members: 1 });
 
 module.exports = mongoose.model('Project', projectSchema);

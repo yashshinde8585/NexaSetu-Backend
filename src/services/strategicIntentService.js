@@ -1,6 +1,7 @@
 const Task = require('../models/Task');
 const aiService = require('./aiService');
 const aiHelpers = require('../utils/aiHelpers');
+const AppError = require('../utils/appError');
 
 /**
  * Service to handle Strategic Intent logic, SAS scoring, and AI story generation.
@@ -79,6 +80,77 @@ class StrategicIntentService {
     // For now, we fetch items from the same project and do a basic fuzzy check or return empty
     // Placeholder for Vector Search implementation.
     return [];
+  }
+
+  async getStrategicHub(projectId) {
+    // Fetch Intents and Epics as the core hierarchy
+    const intents = await Task.find({ 
+      project: projectId, 
+      type: 'intent' 
+    }).sort({ sasScore: -1 });
+
+    const epics = await Task.find({ 
+      project: projectId, 
+      type: 'epic' 
+    });
+
+    const stories = await Task.find({ 
+      project: projectId, 
+      type: 'story' 
+    });
+
+    return { intents, epics, stories };
+  }
+
+  async updateStrategicAlignment(taskId, strategicWeight, storyPoints) {
+    const task = await Task.findById(taskId);
+    if (!task) throw new AppError('Task not found', 404);
+
+    if (strategicWeight) task.strategicWeight = strategicWeight;
+    if (storyPoints) task.storyPoints = storyPoints;
+
+    // Recalculate SAS Score
+    task.sasScore = this.calculateSAS(task.strategicWeight, task.storyPoints);
+    await task.save();
+
+    return task;
+  }
+
+  async getDependencyGraph(projectId) {
+    const tasks = await Task.find({ project: projectId }).select('title type status parentId dependencies sasScore');
+    
+    // Formatting for React Flow / D3 nodes and edges
+    const nodes = tasks.map(t => ({
+      id: t._id.toString(),
+      data: { label: t.title, type: t.type, status: t.status, sas: t.sasScore },
+      position: { x: 0, y: 0 } // Layout to be handled on frontend
+    }));
+
+    const edges = [];
+    tasks.forEach(t => {
+      // Parent -> Child relationship
+      if (t.parentId) {
+        edges.push({
+          id: `e-parent-${t.parentId}-${t._id}`,
+          source: t.parentId.toString(),
+          target: t._id.toString(),
+          label: 'parent-of'
+        });
+      }
+      // Explicit dependencies
+      if (t.dependencies && t.dependencies.length > 0) {
+        t.dependencies.forEach(depId => {
+          edges.push({
+            id: `e-dep-${depId}-${t._id}`,
+            source: depId.toString(),
+            target: t._id.toString(),
+            label: 'blocks'
+          });
+        });
+      }
+    });
+
+    return { nodes, edges };
   }
 }
 

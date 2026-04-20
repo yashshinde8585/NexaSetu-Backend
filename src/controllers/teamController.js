@@ -1,10 +1,7 @@
-const User = require('../models/User');
-const Project = require('../models/Project');
-const Invitation = require('../models/Invitation');
 const teamService = require('../services/teamService');
 const auditService = require('../services/auditService');
+const adminService = require('../services/adminService');
 const catchAsync = require('../utils/catchAsync');
-const { getProjectAccessQuery } = require('../utils/queryHelpers');
 const { isStrategicLead } = require('../utils/authHelpers');
 
 // Handles workspace personnel provisioning, team invitations, and role-based access management.
@@ -63,17 +60,7 @@ exports.inviteUser = catchAsync(async (req, res, next) => {
 
 // Validates and extracts invitation details using an active provisioning token.
 exports.getInviteByToken = catchAsync(async (req, res, next) => {
-  const { token } = req.params;
-  const invitation = await Invitation.findOne({
-    token,
-    status: 'pending',
-    expiresAt: { $gt: Date.now() },
-  });
-
-  if (!invitation)
-    return res
-      .status(404)
-      .json({ status: 'fail', message: 'Invalid or expired invitation' });
+  const invitation = await teamService.getInviteByToken(req.params.token);
 
   res.status(200).json({
     status: 'success',
@@ -124,64 +111,25 @@ exports.inviteMultipleUsers = catchAsync(async (req, res, next) => {
 // Retrieves active workspace personnel and pending invitations with access control filtering.
 exports.getWorkspaceTeam = catchAsync(async (req, res, next) => {
   const { page = 1, limit = 20 } = req.query;
-  const skip = (parseInt(page) - 1) * parseInt(limit);
-  const limitValue = parseInt(limit);
-
-  const workspaceId = req.user.workspaceId;
-
-  let memberQuery = { workspaceId };
-  let invitationQuery = {
-    workspaceId,
-    status: 'pending',
-    expiresAt: { $gt: Date.now() },
-  };
-
-  if (!isStrategicLead(req.user)) {
-    // Restricted Visibility: Only see personnel in projects you are a member of
-    const authorizedProjects = await Project.find(
-      getProjectAccessQuery(req.user)
-    ).select('_id');
-    const authorizedProjectIds = authorizedProjects.map((p) => p._id);
-
-    memberQuery.assignedProjectId = { $in: authorizedProjectIds };
-    invitationQuery.projectId = { $in: authorizedProjectIds };
-  }
-
-  const [members, totalMembers, invitations, totalInvitations] = await Promise.all([
-    User.find(memberQuery)
-      .select('name email role jobTitle createdAt assignedProjectId')
-      .populate('assignedProjectId', 'name')
-      .skip(skip)
-      .limit(limitValue)
-      .sort('name')
-      .lean(),
-    User.countDocuments(memberQuery),
-    Invitation.find(invitationQuery)
-      .select('email role expiresAt projectId')
-      .populate('projectId', 'name')
-      .skip(skip)
-      .limit(limitValue)
-      .lean(),
-    Invitation.countDocuments(invitationQuery),
-  ]);
+  const result = await teamService.getWorkspaceTeam(req.user, isStrategicLead(req.user), page, limit);
 
   res.status(200).json({
     status: 'success',
     pagination: {
       members: {
-        total: totalMembers,
-        page: parseInt(page),
-        limit: limitValue,
-        pages: Math.ceil(totalMembers / limitValue),
+        total: result.totalMembers,
+        page: result.page,
+        limit: result.limit,
+        pages: Math.ceil(result.totalMembers / result.limit),
       },
       invitations: {
-        total: totalInvitations,
-        page: parseInt(page),
-        limit: limitValue,
-        pages: Math.ceil(totalInvitations / limitValue),
+        total: result.totalInvitations,
+        page: result.page,
+        limit: result.limit,
+        pages: Math.ceil(result.totalInvitations / result.limit),
       },
     },
-    data: { members, invitations },
+    data: { members: result.members, invitations: result.invitations },
   });
 });
 
@@ -189,7 +137,6 @@ exports.getWorkspaceTeam = catchAsync(async (req, res, next) => {
  * Retrieves dynamic organizational role definitions for current workspace
  */
 exports.getWorkspaceRoles = catchAsync(async (req, res, next) => {
-  const adminService = require('../services/adminService');
   const roleDefinitions = await adminService.getRoleDefinitions(req.user.workspaceId);
 
   res.status(200).json({

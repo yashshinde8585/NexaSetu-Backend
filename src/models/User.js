@@ -6,12 +6,14 @@ const userSchema = new mongoose.Schema(
     name: {
       type: String,
       required: true,
+      trim: true,
     },
     email: {
       type: String,
       required: true,
       unique: true,
       lowercase: true,
+      trim: true,
     },
     password: {
       type: String,
@@ -21,6 +23,7 @@ const userSchema = new mongoose.Schema(
       type: String,
       unique: true,
       sparse: true,
+      index: true,
     },
     githubAccessToken: {
       type: String,
@@ -28,6 +31,7 @@ const userSchema = new mongoose.Schema(
     role: {
       type: String,
       default: 'PROJECT_MEMBER',
+      index: true,
     },
     jobTitle: {
       type: String,
@@ -36,10 +40,12 @@ const userSchema = new mongoose.Schema(
     assignedProjectId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Project',
+      index: true,
     },
     workspaceId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Workspace',
+      index: true,
     },
     hasSeenTour: {
       type: Boolean,
@@ -57,19 +63,18 @@ const userSchema = new mongoose.Schema(
   }
 );
 
-// Hash password before saving
 userSchema.pre('save', async function () {
   if (!this.isModified('password')) return;
   this.password = await bcrypt.hash(this.password, 10);
 });
 
-// Compare password method
 userSchema.methods.comparePassword = async function (candidatePassword) {
   return await bcrypt.compare(candidatePassword, this.password);
 };
 
-// Strategic indexing for workspace isolation and role-based searching
+// ESR Optimization: workspaceId (Equality) -> role/email (Sort/Equality)
 userSchema.index({ workspaceId: 1, role: 1 });
 userSchema.index({ workspaceId: 1, email: 1 });
+userSchema.index({ workspaceId: 1, githubId: 1 }, { sparse: true });
 
 module.exports = mongoose.model('User', userSchema);
