@@ -164,27 +164,27 @@ const taskSchema = new mongoose.Schema(
   }
 );
 
-// Strategic ESR Optimized Indexes
+// Optimized indexes for Efficient Search & Retrieval (ESR) patterns
 taskSchema.index({ workspaceId: 1, project: 1, status: 1, type: 1 });
 taskSchema.index({ workspaceId: 1, assignedUser: 1, status: 1 });
 taskSchema.index({ workspaceId: 1, status: 1, dueDate: 1 }); // For overdue tracking
 taskSchema.index({ workspaceId: 1, type: 1, status: 1 });
 taskSchema.index({ project: 1, taskNumber: 1 }, { unique: true }); // Fast lookup by project task number
 
-// Auto-increment task number per project (Distributed & Parallel ready)
+// Distributed auto-increment for project-specific task numbering.
+// Utilizes Redis for atomic speed with MongoDB as a durable secondary store.
 taskSchema.pre('save', async function () {
   if (this.isNew) {
-    const { getRedisClient } = require('../config/redis');
+    const { getRedisClient, isRedisConnected } = require('../config/redis');
     const redis = getRedisClient();
     const projectKey = `project:${this.project}:lastTaskNumber`;
 
     try {
-      if (redis && redis.status === 'ready') {
+      if (isRedisConnected()) {
         const nextNumber = await redis.incr(projectKey);
         this.taskNumber = nextNumber;
         
-        // Sync back to MongoDB periodically or in the background for durability
-        // For now, we update it in the background
+        // Persist the sequence to MongoDB in the background to ensure eventual durability
         const Project = mongoose.model('Project');
         Project.updateOne({ _id: this.project }, { lastTaskNumber: nextNumber }).catch(() => {});
       } else {

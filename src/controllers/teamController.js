@@ -29,7 +29,7 @@ exports.inviteUser = catchAsync(async (req, res, next) => {
     { email, role, projectId },
     req.user.workspaceId,
     req.user._id,
-    'INVITE'
+    'BIRTH'
   );
 
   if (result.status === 'EXISTING') {

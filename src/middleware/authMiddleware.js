@@ -6,6 +6,7 @@ const { ROLE_PERMISSIONS } = require('../config/permissions');
 const { mapRole } = require('../utils/authHelpers');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
+const logger = require('../utils/logger');
 
 // Middleware to protect routes and ensure user is authenticated
 exports.protect = catchAsync(async (req, res, next) => {
@@ -66,9 +67,11 @@ exports.requirePermission = (requiredPermission) => (req, res, next) => {
   const permissions = ROLE_PERMISSIONS[effectiveRole] || [];
 
   if (permissions.includes('*') || permissions.includes(requiredPermission)) {
+    logger.info(`[AUTH] Permission granted: user=${req.user._id} role=${req.user.role} permission=${requiredPermission}`);
     return next();
   }
 
+  logger.warn(`[AUTH] Permission denied: user=${req.user._id} role=${req.user.role} required=${requiredPermission}`);
   next(new AppError('You lack the required permissions for this action.', 403));
 };
 
@@ -80,8 +83,10 @@ exports.restrictTo = (...roles) => (req, res, next) => {
   );
 
   if (!hasRole && !hasJobTitle) {
+    logger.warn(`[AUTH] Role denied: user=${req.user._id} role=${req.user.role} jobTitle=${req.user.jobTitle} allowed=${roles.join(',')}`);
     return next(new AppError('You do not have permission to perform this action', 403));
   }
   
+  logger.info(`[AUTH] Role granted: user=${req.user._id} role=${req.user.role} endpoint=${req.originalUrl}`);
   next();
 };

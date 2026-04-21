@@ -1,6 +1,7 @@
 const authService = require('../services/authService');
 const catchAsync = require('../utils/catchAsync');
 const config = require('../config/config');
+const { monitorClientStatus } = require('../utils/requestGuard');
 
 const cookieOptions = config.jwt.cookieOptions;
 
@@ -14,12 +15,12 @@ const sendAuthResponse = async (user, statusCode, req, res) => {
 
   res.cookie('jwt', accessToken, {
     ...cookieOptions,
-    expires: new Date(Date.now() + 15 * 60 * 1000 + 60000), // 16 min
+    expires: new Date(Date.now() + 8 * 60 * 60 * 1000), // 8 hours
   });
 
   res.cookie('refreshToken', refreshToken, {
     ...cookieOptions,
-    expires: new Date(Date.now() + 15 * 24 * 60 * 60 * 1000), // 15 days
+    expires: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days
   });
 
   user.password = undefined;
@@ -31,20 +32,29 @@ const sendAuthResponse = async (user, statusCode, req, res) => {
   });
 };
 
-// Register a new user and return auth tokens
+// Initialize auth state by verifying credentials and establishing a persistent session
 exports.registerUser = catchAsync(async (req, res, next) => {
+  // Monitor if client disconnects to prevent expensive database operations for abandoned requests
+  const guard = monitorClientStatus(req);
+  
   const user = await authService.registerUser(req.body);
+  
+  guard.throwIfAborted();
   await sendAuthResponse(user, 201, req, res);
 });
 
-// Authenticate user credentials and return auth tokens
+// Verify identity and establish a secure, versioned session link
 exports.loginUser = catchAsync(async (req, res, next) => {
+  const guard = monitorClientStatus(req);
   const { email, password } = req.body;
+  
   const user = await authService.loginUser(email, password);
+  
+  guard.throwIfAborted();
   await sendAuthResponse(user, 200, req, res);
 });
 
-// Log out user by clearing cookies and revoking session
+// Terminate session and invalidate client-side authentication tokens immediately
 exports.logoutUser = catchAsync(async (req, res, next) => {
   const { refreshToken } = req.cookies;
   if (refreshToken) await authService.revokeSession(refreshToken);
@@ -56,7 +66,7 @@ exports.logoutUser = catchAsync(async (req, res, next) => {
   res.status(200).json({ status: 'success', message: 'Logged out successfully' });
 });
 
-// Refresh access token using a valid refresh token
+// Rotate access tokens to maintain session continuity without requiring re-login
 exports.refreshAccessToken = catchAsync(async (req, res, next) => {
   const { refreshToken } = req.cookies;
   if (!refreshToken) return res.status(401).json({ status: 'fail', message: 'Session expired' });
@@ -66,7 +76,7 @@ exports.refreshAccessToken = catchAsync(async (req, res, next) => {
     
     res.cookie('jwt', accessToken, {
       ...cookieOptions,
-      expires: new Date(Date.now() + 15 * 60 * 1000),
+      expires: new Date(Date.now() + 8 * 60 * 60 * 1000),
     });
 
     res.status(200).json({ status: 'success', token: accessToken });

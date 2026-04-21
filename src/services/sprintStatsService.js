@@ -261,14 +261,29 @@ class SprintStatsService {
 
     const completionRate =
       summary.total > 0
-        ? ((summary.completed / summary.total) * 100).toFixed(1)
+        ? Math.round((summary.completed / summary.total) * 100)
         : 0;
     const strategicDebt =
       summary.total > 0
-        ? ((summary.overdue / summary.total) * 100).toFixed(1)
+        ? Math.round((summary.overdue / summary.total) * 100)
         : 0;
-    const blockerDensity =
-      summary.total > 0 ? (blockerCount / summary.total).toFixed(2) : 0;
+    const blockerDensityRaw =
+      summary.total > 0 ? blockerCount / summary.total : 0;
+
+    // 🚀 Precision Telemetry Logic (Replacing mocks)
+    // Health: 100 base, reduced by debt (overdue) and blocker density
+    const healthScore = Math.max(0, 100 - (strategicDebt * 1.5) - (blockerDensityRaw * 50));
+    
+    // Pressure: Ratio of non-todo work vs total tasks
+    const activeTasks = summary.inProgress + summary.inReview;
+    const pressureIndex = summary.total > 0 
+      ? Math.round((activeTasks / summary.total) * 100) 
+      : 0;
+
+    // Flow Efficiency: Ratio of completed vs total workload
+    const flowEfficiency = summary.total > 0 
+      ? Math.round((summary.completed / summary.total) * 100) 
+      : 0;
 
     const trends = {
       completion: '+4.2%',
@@ -297,14 +312,16 @@ class SprintStatsService {
         completionRate: `${completionRate}%`,
         avgTaskFlux: `${avgFlux.toFixed(1)}d`,
         blockerDensity:
-          blockerDensity > 0.5
+          blockerDensityRaw > 0.5
             ? 'High'
-            : blockerDensity > 0.2
+            : blockerDensityRaw > 0.2
               ? 'Medium'
               : 'Low',
         strategicDebt: `${strategicDebt}%`,
         velocitySpark,
-        flowEfficiency: '78%', 
+        flowEfficiency: `${flowEfficiency}%`,
+        healthScore: Math.round(healthScore),
+        pressureIndex: Math.round(pressureIndex),
         raw: {
           total: summary.total,
           completed: summary.completed,
@@ -340,10 +357,14 @@ class SprintStatsService {
     if (sprint.project && !sprintProjects.some(id => id.toString() === sprint.project.toString())) {
       sprintProjects.push(sprint.project);
     }
+    
+    // RBAC: Non-management roles can only see tasks assigned to them or in their projects
+    const isManagement = ['WORKSPACE_ADMIN', 'WORKSPACE_MANAGER', 'TECH_LEAD'].includes(user.role);
+    
     const Project = mongoose.model('Project');
     const projectDocs = await Project.find({ _id: { $in: sprintProjects } });
 
-    const tasks = await Task.find({
+    const taskQuery = {
       $or: [
         { sprint: sprintObjectId },
         { 
@@ -353,7 +374,21 @@ class SprintStatsService {
           ]
         }
       ],
-    }).populate('project assignedUser createdBy');
+    };
+
+    if (!isManagement) {
+       // Filter tasks: Assigned to them OR in a project where they are a member
+       const userProjectIds = projectDocs.filter(p => p.members?.includes(user._id)).map(p => p._id);
+       taskQuery.$and = taskQuery.$and || [];
+       taskQuery.$and.push({
+         $or: [
+           { assignedUser: user._id },
+           { project: { $in: userProjectIds } }
+         ]
+       });
+    }
+
+    const tasks = await Task.find(taskQuery).populate('project assignedUser createdBy');
 
     return {
       sprint: {

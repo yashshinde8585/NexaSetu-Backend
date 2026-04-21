@@ -2,6 +2,9 @@ const AppError = require('../utils/appError');
 
 // Middleware to validate request body against a defined Zod schema
 const validate = (schema) => (req, res, next) => {
+  if (!req.body || Object.keys(req.body).length === 0) {
+    return next(new AppError('Request body is missing or empty.', 400));
+  }
   try {
     schema.parse(req.body);
     next();

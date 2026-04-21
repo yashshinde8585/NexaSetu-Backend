@@ -63,14 +63,11 @@ class ActionExecutor {
     let oldValue = null;
     let newValue = null;
 
-    const session = await mongoose.startSession();
     try {
-      session.startTransaction();
-
       // Execute the requested action type.
       switch (type) {
         case 'UPDATE_TASK_DEADLINE':
-          oldValue = await Task.findById(targetId, 'dueDate').session(session);
+          oldValue = await Task.findById(targetId, 'dueDate');
           if (!oldValue) throw new Error('Task not found');
           
           result = await Task.findByIdAndUpdate(
@@ -85,31 +82,31 @@ class ActionExecutor {
                 },
               },
             },
-            { returnDocument: 'after', session }
+            { returnDocument: 'after' }
           );
           newValue = result.dueDate;
           break;
 
         case 'STATUS_CHANGE':
-          oldValue = await Task.findById(targetId, 'status').session(session);
+          oldValue = await Task.findById(targetId, 'status');
           if (!oldValue) throw new Error('Task not found');
           
           result = await Task.findByIdAndUpdate(
             targetId,
             { status: payload.status },
-            { returnDocument: 'after', session }
+            { returnDocument: 'after' }
           );
           newValue = result.status;
           break;
 
         case 'REASSIGN_TASK':
-          oldValue = await Task.findById(targetId, 'assignedUser').session(session);
+          oldValue = await Task.findById(targetId, 'assignedUser');
           if (!oldValue) throw new Error('Task not found');
           
           result = await Task.findByIdAndUpdate(
             targetId,
             { assignedUser: payload.newUserId },
-            { returnDocument: 'after', session }
+            { returnDocument: 'after' }
           );
           newValue = result.assignedUser;
           break;
@@ -119,63 +116,51 @@ class ActionExecutor {
       }
 
       // Persist the executed action to the audit log.
-      await ActionRequest.create(
-        [{
-          type,
-          targetId,
-          targetType,
-          payload,
-          reason,
-          agent,
-          status: 'executed',
-          executedAt: new Date(),
-          oldValue,
-          newValue,
-        }],
-        { session }
-      );
+      await ActionRequest.create({
+        type,
+        targetId,
+        targetType,
+        payload,
+        reason,
+        agent,
+        status: 'executed',
+        executedAt: new Date(),
+        oldValue,
+        newValue,
+      });
 
-      await session.commitTransaction();
       return { result, oldValue, newValue };
     } catch (error) {
-      await session.abortTransaction();
-      console.error('[ActionExecutor] Transaction aborted:', error.message);
+      console.error('[ActionExecutor] Execution failed:', error.message);
       throw error;
-    } finally {
-      session.endSession();
     }
   }
 
   async approveRequest(requestId, userId) {
-    const session = await mongoose.startSession();
     try {
-      await session.withTransaction(async () => {
-        const request = await ActionRequest.findById(requestId).session(session);
-        if (!request || request.status !== 'pending') {
-          throw new Error('Request not found or already processed');
-        }
+      const request = await ActionRequest.findById(requestId);
+      if (!request || request.status !== 'pending') {
+        throw new Error('Request not found or already processed');
+      }
 
-        const result = await this.executeImmediately(
-          request.type,
-          request.targetId,
-          request.targetType,
-          request.payload,
-          request.reason,
-          request.agent
-        );
+      const result = await this.executeImmediately(
+        request.type,
+        request.targetId,
+        request.targetType,
+        request.payload,
+        request.reason,
+        request.agent
+      );
 
-        request.status = 'approved';
-        request.executedAt = new Date();
-        request.createdBy = userId;
-        await request.save({ session });
-        
-        return result;
-      });
+      request.status = 'approved';
+      request.executedAt = new Date();
+      request.createdBy = userId;
+      await request.save();
+      
+      return result;
     } catch (error) {
-      console.error('[ActionExecutor] Approval transaction failed:', error.message);
+      console.error('[ActionExecutor] Approval failed:', error.message);
       throw error;
-    } finally {
-      session.endSession();
     }
   }
 }

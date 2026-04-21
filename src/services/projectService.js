@@ -23,9 +23,27 @@ class ProjectService {
       throw new AppError('Tactical Workspace context is missing. Please re-authenticate.', 400);
     }
 
+    const sprintId = sprint && sprint.trim() && mongoose.Types.ObjectId.isValid(sprint) ? sprint : undefined;
+
+    // Generate a unique project key
+    let key = name.replace(/[^a-zA-Z]/g, '').substring(0, 3).toUpperCase();
+    if (key.length < 3) key = (key + 'XXX').substring(0, 3);
+    
+    let uniqueKey = key;
+    let counter = 1;
+    while (await Project.findOne({ workspaceId: user.workspaceId, key: uniqueKey })) {
+      uniqueKey = `${key}${counter}`;
+      counter++;
+    }
+
     const project = await Project.create({
       name,
-      sprint: sprint && sprint.trim() ? sprint : undefined,
+      key: uniqueKey,
+      description: data.description,
+      type: data.type,
+      priority: data.priority,
+      status: data.status,
+      sprint: sprintId,
       createdBy: user._id,
       members: [user._id],
       workspaceId: user.workspaceId,

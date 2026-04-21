@@ -39,12 +39,13 @@ const config = {
   jwt: {
     secret: process.env.JWT_SECRET,
     refreshSecret: process.env.JWT_REFRESH_SECRET,
-    expiresIn: process.env.JWT_ACCESS_EXPIRATION || '15m',
-    refreshExpiresIn: process.env.JWT_REFRESH_EXPIRATION || '15d',
+    expiresIn: process.env.JWT_ACCESS_EXPIRATION || '8h',
+    refreshExpiresIn: process.env.JWT_REFRESH_EXPIRATION || '30d',
     cookieOptions: {
       httpOnly: true,
       secure: isProduction,
       sameSite: isProduction ? 'none' : 'lax',
+      maxAge: 8 * 60 * 60 * 1000 // 8 hours
     }
   },
 
@@ -78,10 +79,8 @@ const config = {
     failedLoginLimit: parseInt(process.env.FAILED_LOGIN_LIMIT, 10) || 5,
     lockoutDuration: parseInt(process.env.LOCKOUT_DURATION_MINS, 10) || 30, // in minutes
     sessionLimit: parseInt(process.env.SESSION_LIMIT, 10) || 5,
-    sessionDurationMs: 15 * 24 * 60 * 60 * 1000, // 15 days
+    sessionDurationMs: 30 * 24 * 60 * 60 * 1000, // 30 days
   }
 };
 
 module.exports = config;
-
-

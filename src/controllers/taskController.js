@@ -3,7 +3,8 @@ const catchAsync = require('../utils/catchAsync');
 
 // Update task status and log activity.
 exports.updateTaskStatus = catchAsync(async (req, res, next) => {
-  const { taskId, status } = req.body;
+  const taskId = req.params.id || req.body.taskId;
+  const { status } = req.body;
   const task = await taskService.updateTaskStatus(req.user, taskId, status);
   res.status(200).json({ status: 'success', data: { task } });
 });
@@ -65,7 +66,8 @@ exports.getMyTasks = catchAsync(async (req, res, next) => {
 
 // Toggle task blockage status and log activity.
 exports.toggleTaskBlockage = catchAsync(async (req, res, next) => {
-  const { taskId, blocked, reason } = req.body;
+  const taskId = req.params.id || req.body.taskId;
+  const { blocked, reason } = req.body;
   const task = await taskService.toggleTaskBlockage(req.user, taskId, blocked, reason);
   res.status(200).json({ status: 'success', data: { task } });
 });

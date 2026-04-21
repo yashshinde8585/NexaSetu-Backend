@@ -5,6 +5,7 @@ const logger = require('../utils/logger');
 let redisClient;
 let bullRedisClient;
 
+// Connect to Redis and configure connection behavior
 const connectRedis = async () => {
     try {
         const redisUrl = config.redis.url;
@@ -23,13 +24,13 @@ const connectRedis = async () => {
             }
         };
 
-        // Standard client for cache and rate limiting
+        // Primary client for caching, sessions, and rate limiting
         redisClient = new Redis(redisUrl, {
             ...commonOptions,
             enableReadyCheck: true
         });
 
-        // Dedicated client for BullMQ (requires maxRetriesPerRequest: null)
+        // Specialized client for BullMQ to handle blocking operations and reliable queue polling
         bullRedisClient = new Redis(redisUrl, {
             ...commonOptions,
             maxRetriesPerRequest: null
@@ -44,9 +45,10 @@ const connectRedis = async () => {
                 
                 logger.info(`[REDIS] Server version detected: ${version}`);
                 
+                // BullMQ requires Redis 6.2+ for certain atomic features
                 const [major, minor] = version.split('.').map(Number);
                 if (major < 6 || (major === 6 && minor < 2)) {
-                    logger.warn(`[REDIS] COMPATIBILITY WARNING: BullMQ requires Redis 6.2+. Detected version ${version} may cause runtime failures.`);
+                    logger.warn(`[REDIS] COMPATIBILITY WARNING: Redis 6.2+ required for stable job processing. Detected: ${version}`);
                 }
             } catch (err) {
                 logger.warn(`[REDIS] Could not verify server version: ${err.message}`);
@@ -55,10 +57,12 @@ const connectRedis = async () => {
 
         redisClient.on('error', (err) => {
             logger.error(`[REDIS] Cache client error: ${err.message}`);
+            logger.info('[REDIS] Running in degraded mode (Cache/Rate Limiting disabled)');
         });
 
         bullRedisClient.on('error', (err) => {
             logger.error(`[REDIS] Queue client error: ${err.message}`);
+            logger.info('[REDIS] Running in degraded mode (Background Jobs disabled)');
         });
 
         redisClient.on('connect', () => logger.info('[REDIS] Cache client link established'));
@@ -75,5 +79,26 @@ const connectRedis = async () => {
 const getRedisClient = () => redisClient;
 const getBullRedisClient = () => bullRedisClient;
 
-module.exports = { connectRedis, getRedisClient, getBullRedisClient };
+/**
+ * Safeguard to prevent application errors when Redis is temporarily unreachable.
+ */
+const isRedisConnected = () => {
+    return redisClient && redisClient.status === 'ready';
+};
+
+/**
+ * Connection Guard: Returns true only if the queue client is ready.
+ */
+const isQueueConnected = () => {
+    return bullRedisClient && bullRedisClient.status === 'ready';
+};
+
+module.exports = { 
+    connectRedis, 
+    getRedisClient, 
+    getBullRedisClient,
+    isRedisConnected,
+    isQueueConnected
+};
+
 

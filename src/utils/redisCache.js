@@ -1,20 +1,11 @@
-const { getRedisClient } = require('../config/redis');
+const { getRedisClient, isRedisConnected } = require('../config/redis');
 
 /**
- * Returns true only when the Redis client exists and is fully connected.
- * Centralises the guard that was previously duplicated in every controller.
- */
-const isReady = () => {
-  const client = getRedisClient();
-  return !!(client && client.status === 'ready');
-};
-
-/**
- * Reads a JSON value from Redis cache.
- * Returns null on miss, disconnection, or read error (safe fallback).
+ * Retrieves a cached value.
+ * Fails gracefully by returning null on miss or connection issues to ensure system availability.
  */
 const cacheGet = async (key) => {
-  if (!isReady()) return null;
+  if (!isRedisConnected()) return null;
   try {
     const data = await getRedisClient().get(key);
     return data ? JSON.parse(data) : null;
@@ -29,7 +20,7 @@ const cacheGet = async (key) => {
  * Silently skips if Redis is offline.
  */
 const cacheSet = async (key, value, ttl = 3600) => {
-  if (!isReady()) return;
+  if (!isRedisConnected()) return;
   try {
     await getRedisClient().set(key, JSON.stringify(value), 'EX', ttl);
   } catch {
@@ -42,7 +33,7 @@ const cacheSet = async (key, value, ttl = 3600) => {
  * Silently skips if Redis is offline.
  */
 const cacheDel = async (key) => {
-  if (!isReady()) return;
+  if (!isRedisConnected()) return;
   try {
     await getRedisClient().del(key);
     console.log(`[MEMORY GRID] Cache invalidated: ${key}`);

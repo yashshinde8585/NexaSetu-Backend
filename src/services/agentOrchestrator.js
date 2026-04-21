@@ -7,22 +7,23 @@ const actionExecutor = require('./actionExecutor');
 const aiService = require('./aiService');
 const logger = require('../utils/logger');
 
-// Orchestrates cross-service event messaging and triggers specialized agent behaviors.
+// Manages autonomous cross-service events and triggers specialized agent behaviors.
 class AgentOrchestrator {
   constructor() {
     this.name = 'Orchestrator';
   }
 
   /**
-   * Dispatches an event to the background queue for asynchronous processing.
    * High-reliability entry point for system events.
+   * Dispatches to a durable background queue for asynchronous processing.
    */
   async handleEvent(event) {
     try {
       const { getOrchestratorQueue } = require('../queues/orchestratorQueue');
+      const { isQueueConnected } = require('../config/redis');
       const queue = getOrchestratorQueue();
 
-      if (queue) {
+      if (queue && isQueueConnected()) {
         await queue.add(`event:${event.type}`, { event }, {
           jobId: event.entityId ? `${event.type}:${event.entityId}` : undefined,
           removeOnComplete: true
@@ -117,8 +118,8 @@ class AgentOrchestrator {
   }
 
   /**
-   * Scans for delayed tasks and dispatches monitoring events.
-   * Includes idempotency locks to prevent event flooding.
+   * Detects overdue tasks and triggers cascading monitoring events.
+   * Includes 24h throttling to prevent notification fatigue.
    */
   async scanForDelays() {
     const now = new Date();

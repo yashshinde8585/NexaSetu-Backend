@@ -18,15 +18,15 @@ const ROLE_MAPPING = {
 
 // Check if user has manager or admin privileges
 const isManagerOrAdmin = (user) => {
-  const role = normalizeRole(user.role);
-  return ['WORKSPACE_ADMIN', 'WORKSPACE_MANAGER'].includes(role);
+  const effectiveRole = mapRole(user.role);
+  return ['WORKSPACE_ADMIN', 'WORKSPACE_MANAGER'].includes(effectiveRole);
 };
 
 // Check if user is a strategic lead (Admin, Manager, or Lead job title)
 const isStrategicLead = (user) => {
-  const role = normalizeRole(user.role);
+  const effectiveRole = mapRole(user.role);
   const isLead = normalizeJobTitle(user.jobTitle).includes('LEAD');
-  return ['WORKSPACE_ADMIN', 'WORKSPACE_MANAGER'].includes(role) || isLead;
+  return ['WORKSPACE_ADMIN', 'WORKSPACE_MANAGER'].includes(effectiveRole) || isLead;
 };
 
 // Check if user has a lead job title restriction
