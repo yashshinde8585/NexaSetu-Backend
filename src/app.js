@@ -18,7 +18,8 @@ app.use(cors({
   origin: config.env === 'development' ? 'http://localhost:5173' : config.clientUrl,
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Idempotency-Key', 'X-Idempotency-Key', 'x-idempotency-key']
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Idempotency-Key', 'X-Idempotency-Key', 'x-idempotency-key'],
+  maxAge: 86400, // Cache preflight results for 24 hours (reduces latency on subsequent requests)
 }));
 
 // SECURITY MIDDLEWARE
@@ -37,9 +38,9 @@ app.use(helmet({
   },
 }));
 
-// Limit payload size to prevent memory-exhaustion attacks
+
 app.use(express.json({ limit: '15kb' }));
-// 🛡️ API Integrity: Catch malformed JSON before it reaches business logic
+// API Integrity: Catch malformed JSON before it reaches business logic
 app.use((err, req, res, next) => {
   if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
     return res.status(400).json({
@@ -104,7 +105,6 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// API ROUTE DEFINITIONS
 const v1Router = express.Router();
 
 // Routes are logically grouped by domain and mounted on versioned paths.
