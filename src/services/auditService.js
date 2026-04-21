@@ -6,7 +6,7 @@ class AuditService {
     try {
       const entry = {
         action,
-        perfomer: req.user._id,
+        performer: req.user._id,
         workspaceId: req.user.workspaceId,
         entityType,
         entityId,

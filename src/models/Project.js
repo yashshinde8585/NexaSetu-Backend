@@ -8,6 +8,24 @@ const projectSchema = new mongoose.Schema(
       trim: true,
       index: true,
     },
+    description: {
+      type: String,
+      trim: true,
+    },
+    type: {
+      type: String,
+      default: 'Product Development',
+    },
+    priority: {
+      type: String,
+      enum: ['Low', 'Medium', 'High', 'Critical'],
+      default: 'Medium',
+    },
+    status: {
+      type: String,
+      enum: ['active', 'draft', 'archived'],
+      default: 'active',
+    },
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',

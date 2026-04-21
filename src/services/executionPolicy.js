@@ -39,15 +39,6 @@ class ExecutionPolicy {
         return this.HIGH_RISK;
     }
   }
-
-  isSensitive(actionType) {
-    const highRiskActions = [
-      'REASSIGN_TASK',
-      'PROJECT_TIMELINE_SHIFT',
-      'DELETE_TASK',
-    ];
-    return highRiskActions.includes(actionType);
-  }
 }
 
 module.exports = new ExecutionPolicy();

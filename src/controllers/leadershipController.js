@@ -9,8 +9,9 @@ exports.getDashboard = catchAsync(async (req, res, next) => {
   const userId = req.user._id;
   const workspaceId = req.user.workspaceId;
   const role = req.user.role;
+  const requestedView = req.query.view || role;
 
-  const data = await leadershipService.getLeadershipDashboard(userId, workspaceId, role);
+  const data = await leadershipService.getLeadershipDashboard(userId, workspaceId, requestedView);
 
   res.status(200).json({
     status: 'success',

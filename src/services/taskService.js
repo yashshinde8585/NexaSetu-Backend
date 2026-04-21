@@ -10,23 +10,23 @@ const { getTaskAccessQuery, getProjectAccessQuery } = require('../utils/queryHel
 const { formatDueDate } = require('../utils/dashboardHelpers');
 const AppError = require('../utils/appError');
 const commentController = require('../controllers/commentController'); // Note: should ideally be a service
+const { sanitizeHTML } = require('../utils/sanitizer');
 
 class TaskService {
+  // Calculates and persists active work time when mission state changes.
   _updateTaskTimeTracking(task, newStatus) {
     const now = new Date();
-    
-    // A task is actively consuming time only if in_progress AND NOT blocked
     const isCurrentlyActive = (task.status === 'in_progress' && !task.blocked);
     const willBeActive = (newStatus === 'in_progress');
 
-    // If moving FROM an active state to an inactive one, subtract elapsed time
+    // Deduct elapsed time only when transitioning away from an active state
     if (isCurrentlyActive && !willBeActive && task.lastStartedAt) {
       const elapsedMinutes = Math.max(0, (now - task.lastStartedAt) / (1000 * 60));
       task.remainingDuration = Math.max(0, (task.remainingDuration || task.estimatedDuration) - elapsedMinutes);
       task.lastStartedAt = null;
     }
     
-    // If moving TO an active state, mark start time
+    // Mark session start for active work tracking
     if (willBeActive && !isCurrentlyActive) {
       task.lastStartedAt = now;
       if (task.remainingDuration === undefined || task.remainingDuration === null) {
@@ -34,7 +34,6 @@ class TaskService {
       }
     }
 
-    // Record completion timestamps
     if (newStatus === 'done') {
       task.remainingDuration = 0;
       task.completedAt = now;
@@ -45,98 +44,133 @@ class TaskService {
   }
 
   async updateTaskStatus(user, taskId, status) {
-    const task = await Task.findById(taskId);
-    if (!task) {
-      throw new AppError('No mission found with that ID', 404);
+    try {
+      const task = await Task.findById(taskId);
+      if (!task) {
+        throw new AppError('No mission found with that ID', 404);
+      }
+
+      const oldStatus = task.status;
+      if (oldStatus === status) return task;
+
+      // Prevent non-privileged users from reversing terminal states (Done/Archived)
+      const terminalStates = ['done', 'archived'];
+      if (terminalStates.includes(oldStatus) && !['todo', 'in_progress'].includes(status) && !isManagerOrAdmin(user)) {
+        throw new AppError(`Action Denied: Cannot move a mission from ${oldStatus} to ${status} without manager approval.`, 403);
+      }
+
+      this._updateTaskTimeTracking(task, status);
+      task.status = status;
+      task.timelineHistory.push({
+        status,
+        timestamp: Date.now(),
+        reason: `System: Status transitioned from ${oldStatus || 'unknown'} to ${status} by ${user?.name || 'Authorized Performer'}`,
+      });
+
+      await task.save();
+
+      await commentController.logActivity(
+        taskId,
+        user._id,
+        `Status transitioned from ${oldStatus} to ${status}`
+      );
+
+      return task;
+    } catch (error) {
+      throw error;
     }
-
-    const oldStatus = task.status;
-    this._updateTaskTimeTracking(task, status);
-    task.status = status;
-    task.timelineHistory.push({
-      status,
-      timestamp: Date.now(),
-      reason: `System: Status transitioned from ${oldStatus} to ${status} by ${user.name}`,
-    });
-
-    await task.save();
-
-    await commentController.logActivity(
-      taskId,
-      user._id,
-      `Status transitioned from ${oldStatus} to ${status}`
-    );
-
-    return task;
   }
 
   async createTask(user, data) {
-    const {
-      title, description, project, assignedUser, status, source,
-      isAiGenerated, dueDate, sprint, priority, estimatedDuration,
-    } = data;
+    try {
+      const {
+        title, description, project, assignedUser, status, source,
+        isAiGenerated, dueDate, sprint, priority, estimatedDuration,
+      } = data;
 
-    const query = getProjectAccessQuery(user);
-    query._id = project;
-    const projectDoc = await Project.findOne(query);
-    if (!projectDoc) {
-      throw new AppError('Project not found or you are not a member', 404);
-    }
+      const query = getProjectAccessQuery(user);
+      query._id = project;
+      const projectDoc = await Project.findOne(query);
+      if (!projectDoc) {
+        throw new AppError('Project not found or you are not a member', 404);
+      }
 
-    const taskData = {
-      title, description, project, sprint,
-      assignedUser: assignedUser || null,
-      status: status || 'todo',
-      source: source || 'manual',
-      isAiGenerated: isAiGenerated || false,
-      dueDate: dueDate || null,
-      priority: priority || 'medium',
-      estimatedDuration: estimatedDuration || 30,
-      remainingDuration: estimatedDuration || 30,
-      createdBy: user._id,
-      workspaceId: projectDoc.workspaceId,
-    };
+      const taskData = {
+        title: sanitizeHTML(title),
+        description: sanitizeHTML(description),
+        project,
+        sprint,
+        assignedUser: assignedUser || null,
+        status: status || 'todo',
+        source: source || 'manual',
+        isAiGenerated: isAiGenerated || false,
+        dueDate: dueDate || null,
+        priority: priority || 'medium',
+        estimatedDuration: estimatedDuration || 30,
+        remainingDuration: estimatedDuration || 30,
+        createdBy: user._id,
+        workspaceId: projectDoc.workspaceId,
+      };
 
-    if (taskData.status === 'in_progress') {
-      taskData.startedAt = new Date();
-      taskData.lastStartedAt = new Date();
-    } else if (taskData.status === 'done') {
-      taskData.startedAt = taskData.startedAt || new Date();
-      taskData.completedAt = new Date();
-      taskData.actualDuration = 0;
-    }
+      // Cross-tenant data protection: Verify assignee belongs to the same workspace
+      if (assignedUser) {
+        const User = require('../models/User');
+        const assignee = await User.findById(assignedUser);
+        if (!assignee) {
+          throw new AppError('Integrity Error: The assigned performer does not exist.', 400);
+        }
+        if (assignee.workspaceId.toString() !== projectDoc.workspaceId.toString()) {
+          throw new AppError('Integrity Violation: Performer must belong to the same workspace as the mission.', 400);
+        }
+      }
 
-    const task = await Task.create(taskData);
+      if (taskData.status === 'in_progress') {
+        taskData.startedAt = new Date();
+        taskData.lastStartedAt = new Date();
+      } else if (taskData.status === 'done') {
+        taskData.startedAt = taskData.startedAt || new Date();
+        taskData.completedAt = new Date();
+        taskData.actualDuration = 0;
+      }
 
-    await TaskStatusHistory.create({
-      task: task._id,
-      fromStatus: 'none',
-      toStatus: task.status,
-      changedBy: user?._id,
-    });
+      const task = await Task.create(taskData);
 
-    await AgentOrchestrator.handleEvent({
-      type: 'TASK_CREATED',
-      entityId: task._id,
-      entityType: 'task',
-      project: task.project,
-      payload: task,
-    });
-
-    if (task.assignedUser && task.assignedUser.toString() !== user._id.toString()) {
-      const ticketId = `${projectDoc.key || 'NEXA'}-${task.taskNumber || 'NEW'}`;
-      await Notification.create({
-        recipient: task.assignedUser,
-        sender: user._id,
-        type: 'TASK_ASSIGNED',
-        title: user.name,
-        message: `[${ticketId}] ${task.title}`,
-        link: `/task/${task._id}`,
-        workspaceId: user.workspaceId
+      // Audit trail for initial task state
+      await TaskStatusHistory.create({
+        task: task._id,
+        fromStatus: 'none',
+        toStatus: task.status,
+        changedBy: user?._id,
       });
-    }
 
-    return task;
+      // Signal autonomous agents to evaluate the new task context for dependencies or automation
+      await AgentOrchestrator.handleEvent({
+        type: 'TASK_CREATED',
+        entityId: task._id,
+        entityType: 'task',
+        project: task.project,
+        payload: task,
+      });
+
+      // Notify the performer only if they didn't create the task themselves
+      if (task.assignedUser && task.assignedUser.toString() !== user._id.toString()) {
+        const ticketId = `${projectDoc.key || 'NEXA'}-${task.taskNumber || 'NEW'}`;
+        await Notification.create({
+          recipient: task.assignedUser,
+          sender: user._id,
+          type: 'TASK_ASSIGNED',
+          title: user.name,
+          message: `[${ticketId}] ${task.title}`,
+          link: `/task/${task._id}`,
+          workspaceId: task.workspaceId
+        });
+      }
+
+      return task;
+    } catch (error) {
+      console.error('[TASK-SERVICE] Create Task Error:', error);
+      throw error;
+    }
   }
 
   async getTasks(user, projectId, sprintId, page = 1, limit = 50) {
@@ -261,8 +295,19 @@ class TaskService {
     const allowedFields = ['title', 'description', 'assignedUser', 'dueDate', 'priority', 'estimatedDuration'];
     const updateData = {};
     allowedFields.forEach(field => {
-      if (data[field] !== undefined) updateData[field] = data[field];
+      if (data[field] !== undefined) {
+        updateData[field] = ['title', 'description'].includes(field) 
+          ? sanitizeHTML(data[field]) 
+          : data[field];
+      }
     });
+
+    // Optimistic Concurrency Control (OCC): Prevents 'lost updates' in collaborative environments
+    const clientVersion = data.version !== undefined ? data.version : data.__v;
+    
+    if (clientVersion === undefined) {
+      throw new AppError('Conflict Prevention: Version number is required for updates.', 400);
+    }
 
     if (status && status !== task.status) {
       this._updateTaskTimeTracking(task, status);
@@ -286,10 +331,19 @@ class TaskService {
       }
     }
 
-    const updatedTask = await Task.findByIdAndUpdate(id, updateData, {
-      returnDocument: 'after',
-      runValidators: true,
-    }).populate('assignedUser', 'name email');
+    // Atomic update with version check
+    const updatedTask = await Task.findOneAndUpdate(
+      { _id: id, __v: clientVersion },
+      { $set: updateData, $inc: { __v: 1 } },
+      {
+        returnDocument: 'after',
+        runValidators: true,
+      }
+    ).populate('assignedUser', 'name email');
+
+    if (!updatedTask) {
+      throw new AppError('Conflict Detected: This task has been modified by another session. Please refresh and try again.', 409);
+    }
 
     if (assignedUser && assignedUser.toString() !== task.assignedUser?.toString()) {
       const ticketId = `${project.key || 'NEXA'}-${updatedTask.taskNumber || 'MEMO'}`;
@@ -387,7 +441,7 @@ class TaskService {
     
     if (blocked) {
       task.blockedAt = new Date();
-      task.blockedReason = reason || 'Waiting on external dependency';
+      task.blockedReason = sanitizeHTML(reason) || 'Waiting on external dependency';
     } else {
       task.blockedAt = null;
       task.blockedReason = null;

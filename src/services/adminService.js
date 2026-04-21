@@ -4,6 +4,7 @@ const Workspace = require('../models/Workspace');
 const AuditLog = require('../models/AuditLog');
 const Project = require('../models/Project');
 const Team = require('../models/Team');
+const teamService = require('./teamService');
 const AppError = require('../utils/appError');
 
 class AdminService {
@@ -233,26 +234,13 @@ class AdminService {
 
   // Invite a new user to the workspace
   async inviteUser(workspaceId, performerId, email, role, projectId) {
-    const Invitation = require('../models/Invitation');
-    const crypto = require('crypto');
-
-    const existingUser = await User.findOne({ email });
-    if (existingUser) throw new AppError('User already exists in system', 400);
-
-    const token = crypto.randomBytes(32).toString('hex');
-    const invitation = await Invitation.findOneAndUpdate(
-      { email, workspaceId },
-      { 
-        role, 
-        projectId, 
-        token, 
-        invitedBy: performerId,
-        status: 'pending',
-        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
-      },
-      { upsert: true, new: true }
+    const result = await teamService.provisionUser(
+      { email, role, projectId },
+      workspaceId,
+      performerId,
+      'BIRTH'
     );
-    return invitation;
+    return result.user || result.invitation;
   }
 
   // Deactivate or activate a user account

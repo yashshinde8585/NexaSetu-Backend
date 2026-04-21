@@ -1,4 +1,8 @@
 const express = require('express');
+/**
+ * Project Orchestration Routes
+ * Governs project lifecycle, analytics, and access-controlled modifications.
+ */
 const {
   createProject,
   getProjects,
@@ -11,10 +15,12 @@ const { PERMISSIONS } = require('../config/permissions');
 
 const validate = require('../middleware/validateMiddleware');
 const { createProjectSchema, updateProjectSchema } = require('../validations/projectValidation');
+const { validateWorkflow } = require('../middleware/workflowMiddleware');
 
 const router = express.Router();
 
 router.use(protect);
+router.use(validateWorkflow(['workspace']));
 
 router.post('/', requirePermission(PERMISSIONS.CREATE_PROJECT), validate(createProjectSchema), createProject);
 router.get('/', getProjects);

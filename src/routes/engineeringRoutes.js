@@ -8,6 +8,6 @@ const router = express.Router();
 router.use(protect);
 router.use(performanceTracker);
 
-router.get('/workspace', restrictTo('SENIOR_ENGINEER', 'SOFTWARE_ENGINEER', 'JUNIOR_ENGINEER', 'INTERN'), getWorkspace);
+router.get('/workspace', restrictTo('WORKSPACE_ADMIN', 'WORKSPACE_MANAGER', 'VP_ENGINEERING', 'ENGINEERING_MANAGER', 'TECH_LEAD', 'SENIOR_ENGINEER', 'SOFTWARE_ENGINEER', 'JUNIOR_ENGINEER', 'INTERN', 'PROJECT_MEMBER'), getWorkspace);
 
 module.exports = router;

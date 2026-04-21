@@ -7,34 +7,67 @@ const { RedisStore } = require('rate-limit-redis');
 
 // CORE CONFIGURATION
 const config = require('./config/config');
-const { getRedisClient } = require('./config/redis');
+const { getRedisClient, isRedisConnected } = require('./config/redis');
 const logger = require('./utils/logger');
 
 const app = express();
 
-// SECURITY & UTILITY MIDDLEWARE
-app.use(helmet());
-
+// SECURITY & INFRASTRUCTURE LAYER
+// CORS must be first to handle preflight OPTIONS requests across all endpoints
 app.use(cors({
-  origin: config.env === 'development' ? true : config.clientUrl,
+  origin: config.env === 'development' ? 'http://localhost:5173' : config.clientUrl,
   credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Idempotency-Key', 'X-Idempotency-Key', 'x-idempotency-key']
 }));
 
-// Request Body Parsing (DOS Protection)
+// SECURITY MIDDLEWARE
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'"],
+      styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+      imgSrc: ["'self'", "data:", "https:", "http:"],
+      connectSrc: ["'self'", "https:", "http:", "ws:", "wss:"],
+      fontSrc: ["'self'", "https://fonts.gstatic.com"],
+      objectSrc: ["'none'"],
+      upgradeInsecureRequests: [],
+    },
+  },
+}));
+
+// Limit payload size to prevent memory-exhaustion attacks
 app.use(express.json({ limit: '15kb' }));
+// 🛡️ API Integrity: Catch malformed JSON before it reaches business logic
+app.use((err, req, res, next) => {
+  if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
+    return res.status(400).json({
+      status: 'fail',
+      code: 'MALFORMED_JSON',
+      message: 'The request body contains malformed JSON. Please check your syntax.'
+    });
+  }
+  next(err);
+});
 app.use(express.urlencoded({ extended: true, limit: '15kb' }));
 app.use(cookieParser());
 
 const telemetry = require('./middleware/telemetryMiddleware');
-app.use(telemetry);
+const idempotency = require('./middleware/idempotencyMiddleware');
+const normalizeUnicode = require('./middleware/normalizationMiddleware');
 
-// Debug Logging
+app.use(telemetry);
+app.use(normalizeUnicode);
+app.use(idempotency());
+
+// Standard request logging (Disabled in production for performance)
 app.use((req, res, next) => {
   logger.info(`[DEBUG] ${req.method} ${req.url}`);
   next();
 });
 
-// Rate Limiting Factory (Redis State)
+// Centralized rate-limiting factory powered by Redis for distributed state
 const createLimiter = (prefix, max, windowMs = 60 * 60 * 1000) => rateLimit({
   windowMs,
   max,
@@ -43,8 +76,11 @@ const createLimiter = (prefix, max, windowMs = 60 * 60 * 1000) => rateLimit({
   legacyHeaders: false,
   store: new RedisStore({
     sendCommand: async (...args) => {
+      if (!isRedisConnected()) {
+        logger.warn(`[RATE-LIMIT] Redis not connected → skipping cache for ${prefix}`);
+        return null;
+      }
       const client = getRedisClient();
-      if (!client) return null;
       try {
         return await client.call(...args);
       } catch (err) {
@@ -56,7 +92,7 @@ const createLimiter = (prefix, max, windowMs = 60 * 60 * 1000) => rateLimit({
   }),
 });
 
-// Apply DDoS Protection
+// Global protection against automated brute-force and DDoS patterns
 app.use('/api', createLimiter('global', 1000, 15 * 60 * 1000));
 app.use('/api/auth/login', createLimiter('auth-login', 10, 5 * 60 * 1000));
 
@@ -70,6 +106,8 @@ app.get('/api/health', (req, res) => {
 
 // API ROUTE DEFINITIONS
 const v1Router = express.Router();
+
+// Routes are logically grouped by domain and mounted on versioned paths.
 
 const authRoutes = require('./routes/authRoutes');
 const projectRoutes = require('./routes/projectRoutes');
@@ -117,7 +155,7 @@ v1Router.use('/admin', adminRoutes);
 // Mount API versions (Supports both versioned and non-versioned legacy requests)
 app.use(['/api/v1', '/api'], v1Router);
 
-// ERROR & EXCEPTION HANDLING
+// Catch-all for unhandled routes to prevent stack trace leaks
 app.use((req, res, next) => {
   res.status(404).json({
     status: 'fail',

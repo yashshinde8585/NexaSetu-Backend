@@ -6,17 +6,17 @@ const http = require('http');
 const mongoose = require('mongoose');
 
 /**
- * PRODUCTION BOOTSTRAP SEQUENCE
- * Initializes core services in strict order to maintain operational integrity.
+ * Production-grade bootstrap sequence.
+ * Services are initialized in a specific order to ensure data integrity and connectivity.
  */
 async function bootstrap() {
   try {
-    // 1. Core Memory Infrastructure
+    // Initialize memory-store first for rate-limiting and queues
     connectRedis();
     initOrchestratorQueue();
     logger.info('[BOOTSTRAP] Redis & Queue Services online');
 
-    // 2. Persistent Storage
+    // Connect to database before starting application logic
     const connectDB = require('./src/config/db');
     await connectDB();
 
@@ -26,19 +26,25 @@ async function bootstrap() {
     const cronService = require('./src/services/cronService');
 
     const server = http.createServer(app);
+    
+    // Network safeguards to prevent resource exhaustion during slow attacks
+    server.timeout = 30000;
+    server.headersTimeout = 31000;
+    server.keepAliveTimeout = 5000;
+    logger.info('[BOOTSTRAP] Network timeouts enforced');
 
-    // 4. Real-time & Background Services
+    // Synchronize real-time communications and automated background tasks
     socketIO.init(server);
     cronService.start();
     logger.info('[BOOTSTRAP] Real-time & Scheduled services synchronized');
 
-    // 5. Network Entry Point
+    // Start listening only after all critical services are healthy
     server.listen(config.port, () => {
       logger.info(`[NEXA-SETU] API Server listening on port ${config.port} [${config.env}]`);
     });
 
     /**
-     * GRACEFUL SHUTDOWN HANDLER
+     * Graceful termination to prevent data corruption and ensure connection cleanup.
      */
     const shutdown = async (signal) => {
       logger.info(`[SHUTDOWN] Signal ${signal} detected. Purging resources...`);
