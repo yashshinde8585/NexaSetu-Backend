@@ -12,22 +12,28 @@ const workspaceService = require('./workspaceService');
 class AuthService {
   // Register user and provision workspace or join via invitation (Atomic)
   async registerUser(userData) {
-    const session = await mongoose.startSession();
-    session.startTransaction();
-
     try {
       const { email, name, admin, password, workspaceName, plan, assignedProjectId } = userData;
 
-      const existingUser = await User.findOne({ email }).session(session);
+      const existingUser = await User.findOne({ email });
       if (existingUser) throw new AppError('This email is already registered.', 400);
 
-      const invitation = await Invitation.findOne({ email, status: 'pending' }).session(session);
+      const invitation = await Invitation.findOne({ email, status: 'pending' });
       let workspaceId, role, jobTitle;
 
       if (invitation) {
         workspaceId = invitation.workspaceId;
         role = mapRole(invitation.role) || 'PROJECT_MEMBER';
-        jobTitle = (invitation.role === 'INTERN' ? 'Intern' : 'Software Engineer');
+        
+        // Map roles to appropriate professional job titles
+        jobTitle = 'Software Engineer';
+        const normalizedRole = invitation.role.toUpperCase();
+        if (normalizedRole.includes('MANAGER')) jobTitle = 'Engineering Manager';
+        else if (normalizedRole.includes('ADMIN')) jobTitle = 'Workspace Administrator';
+        else if (normalizedRole.includes('VP')) jobTitle = 'VP Engineering';
+        else if (normalizedRole.includes('LEAD')) jobTitle = 'Tech Lead';
+        else if (normalizedRole.includes('INTERN')) jobTitle = 'Intern';
+        else if (normalizedRole.includes('QA')) jobTitle = 'QA Engineer';
       } else {
         role = 'WORKSPACE_ADMIN';
         jobTitle = userData.jobTitle || (plan?.includes('executive') ? 'Chief Technology Officer' : 'Workspace Administrator');
@@ -36,7 +42,7 @@ class AuthService {
           name: workspaceName || `${name}'s Hub`,
           adminName: admin,
           plan: plan || 'free'
-        }, session);
+        });
         workspaceId = newWorkspace._id;
       }
 
@@ -44,29 +50,25 @@ class AuthService {
         name,
         email,
         password,
-        role,
+        role: (invitation ? invitation.role : role), // Use specific role if invited
         jobTitle,
         workspaceId,
         assignedProjectId: (invitation ? invitation.projectId : null) || assignedProjectId,
         passwordChangedAt: Date.now(),
-      }], { session });
+      }]);
 
       const createdUser = user[0];
 
       if (invitation) {
         invitation.status = 'accepted';
-        await invitation.save({ session });
+        await invitation.save();
       } else {
-        await workspaceService.transferOwnership(workspaceId, createdUser._id, session);
+        await workspaceService.transferOwnership(workspaceId, createdUser._id);
       }
 
-      await session.commitTransaction();
       return createdUser;
     } catch (error) {
-      await session.abortTransaction();
       throw error;
-    } finally {
-      session.endSession();
     }
   }
 
@@ -158,12 +160,23 @@ class AuthService {
     
     if (!invitation) throw new AppError('Invalid or expired invitation.', 400);
 
+    // Map roles to appropriate professional job titles
+    let jobTitle = 'Software Engineer';
+    const normalizedRole = invitation.role.toUpperCase();
+    
+    if (normalizedRole.includes('MANAGER')) jobTitle = 'Engineering Manager';
+    else if (normalizedRole.includes('ADMIN')) jobTitle = 'Workspace Administrator';
+    else if (normalizedRole.includes('VP')) jobTitle = 'VP Engineering';
+    else if (normalizedRole.includes('LEAD')) jobTitle = 'Tech Lead';
+    else if (normalizedRole.includes('INTERN')) jobTitle = 'Intern';
+    else if (normalizedRole.includes('QA')) jobTitle = 'QA Engineer';
+
     const user = await User.create({
       name,
       email: invitation.email,
       password,
-      role: mapRole(invitation.role),
-      jobTitle: (invitation.role === 'INTERN' ? 'Intern' : 'Software Engineer'),
+      role: invitation.role, // Preserve specific role for frontend routing
+      jobTitle,
       workspaceId: invitation.workspaceId,
       assignedProjectId: invitation.projectId,
     });

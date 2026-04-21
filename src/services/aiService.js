@@ -1,11 +1,11 @@
 const axios = require('axios');
 const aiHelpers = require('../utils/aiHelpers');
 const prompts = require('../config/prompts.json');
-const { getRedisClient } = require('../config/redis');
+const { getRedisClient, isRedisConnected } = require('../config/redis');
 
 const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
 
-// Models ordered by preference for fallback routing.
+// Tiered fallback models to ensure service availability during upstream outages.
 const MODEL_FALLBACK_LIST = [
   'llama-3.1-8b-instant',
   'llama-3.3-70b-versatile',
@@ -26,12 +26,12 @@ exports.extractTaskFromText = async (text) => {
   const cleanInput = aiHelpers.sanitizeInput(text);
   const chunkedInput = aiHelpers.truncateToWindow(cleanInput, 400);
 
-  // Check cache for existing results to avoid redundant LLM calls.
+  // Hash-based caching to prevent redundant LLM execution and reduce latency.
   const intentHash = aiHelpers.generateHash(chunkedInput);
   const cacheKey = `ai:extract:${intentHash}`;
   const redis = getRedisClient();
   
-  if (redis) {
+  if (isRedisConnected()) {
     try {
       const cached = await redis.get(cacheKey);
       if (cached) {
@@ -77,7 +77,7 @@ exports.extractTaskFromText = async (text) => {
               { role: 'user', content: userPrompt },
             ],
             max_tokens: 600,
-            temperature: 0.1, // Near-zero for deterministic extraction
+            temperature: 0.1, // Near-zero for deterministic extraction and strict schema adherence
           },
           {
             headers: {
@@ -110,7 +110,7 @@ exports.extractTaskFromText = async (text) => {
           };
 
           // Cache the successful result for 24 hours.
-          if (redis) {
+          if (isRedisConnected()) {
             try {
               await redis.set(cacheKey, JSON.stringify(result), 'EX', 86400);
             } catch (e) {

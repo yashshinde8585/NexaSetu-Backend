@@ -17,8 +17,8 @@ const EVENTS = {
 };
 
 /**
- * Initializes the Socket.io signal hub with Redis scaling.
- * @param {http.Server} server - HTTP server instance.
+ * Signal hub powered by Socket.io.
+ * Scaled horizontally using Redis Pub/Sub for cross-server event synchronization.
  */
 const init = (server) => {
   try {
@@ -35,8 +35,15 @@ const init = (server) => {
     const pubClient = new Redis(redisUrl, redisOptions);
     const subClient = new Redis(redisUrl, redisOptions);
 
-    pubClient.on('error', (err) => logger.error(`[SOCKET-REDIS] Publisher Error: ${err.message}`));
-    subClient.on('error', (err) => logger.error(`[SOCKET-REDIS] Subscriber Error: ${err.message}`));
+    pubClient.on('error', (err) => {
+        logger.error(`[SOCKET-REDIS] Publisher Error: ${err.message}`);
+        logger.info('[SOCKET] Redis connection lost → Hub running in standalone mode (No cross-server sync)');
+    });
+
+    subClient.on('error', (err) => {
+        logger.error(`[SOCKET-REDIS] Subscriber Error: ${err.message}`);
+        logger.info('[SOCKET] Redis connection lost → Hub running in standalone mode (No cross-server sync)');
+    });
 
     io = new Server(server, {
       cors: {
@@ -53,7 +60,7 @@ const init = (server) => {
     io.on(EVENTS.CONNECTION, (socket) => {
       logger.info(`[SOCKET] Client connected: ${socket.id}`);
 
-      // Join Task room for localized updates
+      // Isolate client updates to specific task rooms to reduce network overhead
       socket.on(EVENTS.JOIN_TASK, (taskId) => {
         if (!taskId) return;
         socket.join(taskId);

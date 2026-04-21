@@ -43,19 +43,29 @@ class LeadershipService {
 
   // Route to specific analytics based on management role
   async _getRoleSpecificData(workspaceId, role) {
-    switch (role) {
-      case 'CTO':
-      case 'WORKSPACE_ADMIN':
-        return this._getCTOSpecifics(workspaceId);
-      case 'VP_ENGINEERING':
-        return this._getVPESpecifics(workspaceId);
-      case 'TECH_LEAD':
-        return this._getTLSpecifics(workspaceId);
-      case 'ENGINEERING_MANAGER':
-        return this._getEMSpecifics(workspaceId);
-      default:
-        return {};
+    const r = (role || '').toUpperCase().replace(' ', '_');
+
+    // CTO / Admin view
+    if (['CTO', 'WORKSPACE_ADMIN'].includes(r)) {
+      return this._getCTOSpecifics(workspaceId);
     }
+    
+    // VPE view
+    if (['VPE', 'VP_ENGINEERING'].includes(r)) {
+      return this._getVPESpecifics(workspaceId);
+    }
+    
+    // TL view
+    if (['TL', 'TECH_LEAD'].includes(r)) {
+      return this._getTLSpecifics(workspaceId);
+    }
+    
+    // EM view
+    if (['EM', 'ENGINEERING_MANAGER'].includes(r)) {
+      return this._getEMSpecifics(workspaceId);
+    }
+
+    return {};
   }
 
   // Calculate high-level project execution and velocity metrics
@@ -261,9 +271,10 @@ class LeadershipService {
 
   // Analytics tailored for Engineering Managers
   async _getEMSpecifics(workspaceId) {
-    const [users, tasks] = await Promise.all([
+    const [users, tasks, activeSprint] = await Promise.all([
       User.find({ workspaceId }).limit(10).lean(),
-      Task.find({ workspaceId, status: { $ne: 'done' } }).sort('-priority -dueDate').limit(15).populate('assignedUser', 'name').lean()
+      Task.find({ workspaceId, status: { $ne: 'done' } }).sort('-priority -dueDate').limit(15).populate('assignedUser', 'name').lean(),
+      Sprint.findOne({ workspaceId, status: 'active' }).lean()
     ]);
 
     const teamWorkload = users.map(user => {
@@ -277,23 +288,50 @@ class LeadershipService {
       };
     });
 
-    const taskBoard = tasks.map(t => ({
-      title: t.title,
-      owner: t.assignedUser?.name || 'Unassigned',
-      status: t.status,
-      due: t.dueDate ? (new Date(t.dueDate) < new Date() ? 'Overdue' : 'Active') : 'No Date',
-      blocked: t.blocked,
-      priority: t.priority
-    }));
+    const now = new Date();
+    const todayStr = now.toISOString().split('T')[0];
+    const tomorrow = new Date(now);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const tomorrowStr = tomorrow.toISOString().split('T')[0];
+
+    const taskBoard = tasks.map(t => {
+      let dueLabel = 'Active';
+      if (t.dueDate) {
+        const dDate = new Date(t.dueDate);
+        const dStr = dDate.toISOString().split('T')[0];
+        if (dStr === todayStr) dueLabel = 'Today';
+        else if (dStr === tomorrowStr) dueLabel = 'Tomorrow';
+        else if (dDate < now) dueLabel = 'Overdue';
+      } else {
+        dueLabel = 'No Date';
+      }
+
+      return {
+        id: t._id,
+        title: t.title,
+        owner: t.assignedUser?.name || 'Unassigned',
+        status: t.status,
+        due: dueLabel,
+        blocked: t.blocked,
+        priority: t.priority
+      };
+    });
 
     const blockers = tasks.filter(t => t.blocked).map(t => ({
+      id: t._id,
       title: t.title,
       since: formatTimeAgo(t.updatedAt),
-      reason: 'Environment / Dependency mismatch'
+      reason: t.blockedReason || 'Environment / Dependency mismatch'
     }));
 
     const totalTasks = await Task.countDocuments({ workspaceId });
     const doneTasks = await Task.countDocuments({ workspaceId, status: 'done' });
+
+    let daysLeft = 0;
+    if (activeSprint && activeSprint.endDate) {
+      const diffTime = new Date(activeSprint.endDate) - now;
+      daysLeft = Math.max(0, Math.ceil(diffTime / (1000 * 60 * 60 * 24)));
+    }
 
     return {
       sprintControl: { 
@@ -301,7 +339,10 @@ class LeadershipService {
         delayRisk: blockers.length > 2 ? 'HIGH' : blockers.length > 0 ? 'MEDIUM' : 'LOW', 
         blockedTasks: blockers.length, 
         teamLoad: Math.round(teamWorkload.reduce((acc, m) => acc + m.load, 0) / (teamWorkload.length || 1)), 
-        tasksDueToday: tasks.filter(t => t.priority === 'high').length 
+        tasksDueToday: tasks.filter(t => {
+          if (!t.dueDate) return false;
+          return new Date(t.dueDate).toISOString().split('T')[0] === todayStr;
+        }).length 
       },
       taskBoard,
       teamWorkload,
@@ -310,7 +351,7 @@ class LeadershipService {
         planned: totalTasks,
         completed: doneTasks,
         remaining: totalTasks - doneTasks,
-        daysLeft: 0
+        daysLeft
       },
       distribution: {
         backend: tasks.filter(t => t.title.toLowerCase().includes('api') || t.title.toLowerCase().includes('db')).length,
@@ -319,7 +360,7 @@ class LeadershipService {
         other: 0,
         imbalance: blockers.length > 3 ? 'Heavy focus on Backend causing QA starvation' : null
       },
-      focusToday: taskBoard.filter(t => t.priority === 'high').map(t => t.title).slice(0, 3)
+      focusToday: taskBoard.filter(t => t.due === 'Today' || t.priority === 'urgent').map(t => t.title).slice(0, 3)
     };
   }
 

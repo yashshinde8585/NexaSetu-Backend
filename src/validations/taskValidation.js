@@ -1,9 +1,9 @@
 const { z } = require('zod');
 
-// Schema for creating a new task
+// Enforces data integrity for new task creation across the ecosystem
 const createTaskSchema = z.object({
   title: z.string().min(1, 'Task title is required').max(200, 'Title is too long'),
-  description: z.string().optional(),
+  description: z.string().max(5000, 'Description is too long').optional(),
   project: z.string().min(24, 'Invalid project ID format'),
   status: z.enum(['todo', 'in_progress', 'in_review', 'done']).optional(),
   assignedUser: z.string().optional(),
@@ -14,12 +14,12 @@ const createTaskSchema = z.object({
   priority: z.enum(['low', 'medium', 'high', 'urgent']).optional(),
   type: z.enum(['intent', 'epic', 'story', 'task', 'bug']).optional(),
   estimatedDuration: z.number().min(0).optional(),
-});
+}).strict();
 
 // Schema for updating an existing task
 const updateTaskSchema = z.object({
   title: z.string().min(1).max(200).optional(),
-  description: z.string().optional(),
+  description: z.string().max(5000, 'Description is too long').optional(),
   status: z.enum(['todo', 'in_progress', 'in_review', 'done']).optional(),
   assignedUser: z.string().optional(),
   sprint: z.string().optional(),
@@ -29,8 +29,10 @@ const updateTaskSchema = z.object({
   priority: z.enum(['low', 'medium', 'high', 'urgent']).optional(),
   estimatedDuration: z.number().min(0).optional(),
   blocked: z.boolean().optional(),
-  blockedReason: z.string().optional(),
-});
+  blockedReason: z.string().max(1000, 'Reason is too long').optional(),
+  version: z.number().optional(), // Required for Optimistic Concurrency Control
+  __v: z.number().optional(),     // Mongoose internal version for state synchronization
+}).strict();
 
 module.exports = {
   createTaskSchema,
