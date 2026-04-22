@@ -35,6 +35,15 @@ const workspaceSchema = new mongoose.Schema(
         type: Date,
         default: () => new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
       },
+      storageUsed: {
+        type: Number,
+        default: 0,
+        index: true,
+      },
+      storageQuota: {
+        type: Number,
+        default: 104857600, // 100MB Default
+      }
     },
     settings: {
       logo: String,

@@ -14,6 +14,13 @@ const createTaskSchema = z.object({
   priority: z.enum(['low', 'medium', 'high', 'urgent']).optional(),
   type: z.enum(['intent', 'epic', 'story', 'task', 'bug']).optional(),
   estimatedDuration: z.number().min(0).optional(),
+  attachments: z.array(z.object({
+    name: z.string(),
+    url: z.string().optional(),
+    storagePath: z.string(),
+    size: z.number(),
+    type: z.string()
+  })).optional(),
 }).strict();
 
 // Schema for updating an existing task
@@ -30,6 +37,13 @@ const updateTaskSchema = z.object({
   estimatedDuration: z.number().min(0).optional(),
   blocked: z.boolean().optional(),
   blockedReason: z.string().max(1000, 'Reason is too long').optional(),
+  attachments: z.array(z.object({
+    name: z.string(),
+    url: z.string().optional(),
+    storagePath: z.string(),
+    size: z.number(),
+    type: z.string()
+  })).optional(),
   version: z.number().optional(), // Required for Optimistic Concurrency Control
   __v: z.number().optional(),     // Mongoose internal version for state synchronization
 }).strict();

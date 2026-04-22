@@ -11,6 +11,8 @@ const {
   getTaskById,
   updateTaskStatus,
   toggleTaskBlockage,
+  deleteTask,
+  getSignedUploadUrl,
 } = require('../controllers/taskController');
 const { protect, requirePermission } = require('../middleware/authMiddleware');
 const { PERMISSIONS } = require('../config/permissions');
@@ -20,6 +22,14 @@ const { createTaskSchema, updateTaskSchema } = require('../validations/taskValid
 const { verifyOwnership } = require('../middleware/ownershipMiddleware');
 const { validateWorkflow } = require('../middleware/workflowMiddleware');
 const Task = require('../models/Task');
+const rateLimit = require('express-rate-limit');
+
+// Rate limit: 10 uploads per minute per user
+const uploadLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000,
+  max: 10,
+  message: { status: 'fail', message: 'Too many upload requests. Please try again later.' }
+});
 
 const router = express.Router();
 
@@ -29,10 +39,14 @@ router.use(validateWorkflow(['workspace']));
 router.get('/my-tasks', getMyTasks);
 router.get('/project/:projectId', getTasks);
 
+// Secure Signed URL Generation
+router.post('/attachments/upload-url', uploadLimiter, getSignedUploadUrl);
+
 router.get('/:id', verifyOwnership(Task), getTaskById);
 router.post('/', requirePermission(PERMISSIONS.CREATE_TASKS), validate(createTaskSchema), createTask);
 router.patch('/:id', verifyOwnership(Task), validate(updateTaskSchema), updateTask);
 router.patch('/:id/status', verifyOwnership(Task), updateTaskStatus);
 router.patch('/:id/block', verifyOwnership(Task), toggleTaskBlockage);
+router.delete('/:id', verifyOwnership(Task), deleteTask);
 
 module.exports = router;
