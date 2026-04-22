@@ -5,22 +5,22 @@ const { initOrchestratorQueue } = require('./src/queues/orchestratorQueue');
 const http = require('http');
 const mongoose = require('mongoose');
 
-/**
- * Production-grade bootstrap sequence.
- * Services are initialized in a specific order to ensure data integrity and connectivity.
- */
 async function bootstrap() {
   try {
-    // Initialize memory-store first for rate-limiting and queues
-    connectRedis();
-    initOrchestratorQueue();
-    logger.info('[BOOTSTRAP] Redis & Queue Services online');
-
-    // Connect to database before starting application logic
+    logger.info(`[BOOTSTRAP] Initializing services in ${config.env} mode...`);
+    // Connecting to Redis and DB concurrently to minimize serialized latency
     const connectDB = require('./src/config/db');
-    await connectDB();
+    const infraPromise = Promise.all([
+      connectRedis(),
+      connectDB(),
+    ]);
 
-    // 3. Application Assembly
+    initOrchestratorQueue();
+    logger.info('[BOOTSTRAP] Redis & Queue Services initialized');
+
+    await infraPromise;
+    logger.info('[BOOTSTRAP] Database & Cache Connectivity established');
+
     const app = require('./src/app');
     const socketIO = require('./src/socket');
     const cronService = require('./src/services/cronService');
