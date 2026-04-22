@@ -1,4 +1,5 @@
 const taskService = require('../services/taskService');
+const storageService = require('../services/storageService');
 const catchAsync = require('../utils/catchAsync');
 
 // Update task status and log activity.
@@ -70,4 +71,31 @@ exports.toggleTaskBlockage = catchAsync(async (req, res, next) => {
   const { blocked, reason } = req.body;
   const task = await taskService.toggleTaskBlockage(req.user, taskId, blocked, reason);
   res.status(200).json({ status: 'success', data: { task } });
+});
+
+// Delete a task and cleanup resources.
+exports.deleteTask = catchAsync(async (req, res, next) => {
+  await taskService.deleteTask(req.user, req.params.id);
+  res.status(204).json({ status: 'success', data: null });
+});
+
+// Generate a signed upload URL for attachments.
+exports.getSignedUploadUrl = catchAsync(async (req, res, next) => {
+  const { workspaceId, projectId, taskId, fileName, fileType } = req.body;
+  
+  // Hardened validation: user must belong to workspace
+  if (req.user.workspaceId.toString() !== workspaceId.toString()) {
+    return res.status(403).json({ status: 'fail', message: 'Unauthorized workspace access' });
+  }
+
+  const data = await storageService.getSignedUploadUrl(
+    workspaceId, 
+    projectId, 
+    taskId || 'new', 
+    fileName, 
+    fileType,
+    req.body.fileSize || 0
+  );
+  
+  res.status(200).json({ status: 'success', data });
 });
