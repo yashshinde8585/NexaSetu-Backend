@@ -158,6 +158,34 @@ const taskSchema = new mongoose.Schema(
         completed: { type: Boolean, default: false },
       },
     ],
+    attachments: [
+      {
+        name: {
+          type: String,
+          required: [true, 'Attachment name is required'],
+        },
+        url: {
+          type: String,
+          required: false,
+        },
+        storagePath: {
+          type: String,
+          required: [true, 'Storage path is required'],
+        },
+        size: {
+          type: Number,
+          required: [true, 'File size is required'],
+        },
+        type: {
+          type: String,
+          required: [true, 'MIME type is required'],
+        },
+        uploadedAt: {
+          type: Date,
+          default: Date.now,
+        },
+      },
+    ],
   },
   {
     timestamps: true,
