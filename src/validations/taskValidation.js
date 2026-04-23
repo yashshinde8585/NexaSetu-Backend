@@ -11,8 +11,12 @@ const createTaskSchema = z.object({
   dueDate: z.string().optional().refine((val) => !val || !isNaN(Date.parse(val)), {
     message: 'Invalid date format',
   }),
+  startDate: z.string().optional().refine((val) => !val || !isNaN(Date.parse(val)), {
+    message: 'Invalid date format',
+  }),
+  durationUnit: z.enum(['minutes', 'hours', 'days']).optional(),
   priority: z.enum(['low', 'medium', 'high', 'urgent']).optional(),
-  type: z.enum(['intent', 'epic', 'story', 'task', 'bug']).optional(),
+  type: z.enum(['intent', 'epic', 'story', 'task', 'bug', 'spike', 'tech_debt']).optional(),
   estimatedDuration: z.number().min(0).optional(),
   attachments: z.array(z.object({
     name: z.string(),
@@ -33,7 +37,12 @@ const updateTaskSchema = z.object({
   dueDate: z.string().optional().refine((val) => !val || !isNaN(Date.parse(val)), {
     message: 'Invalid date format',
   }),
+  startDate: z.string().optional().refine((val) => !val || !isNaN(Date.parse(val)), {
+    message: 'Invalid date format',
+  }),
+  durationUnit: z.enum(['minutes', 'hours', 'days']).optional(),
   priority: z.enum(['low', 'medium', 'high', 'urgent']).optional(),
+  type: z.enum(['intent', 'epic', 'story', 'task', 'bug', 'spike', 'tech_debt']).optional(),
   estimatedDuration: z.number().min(0).optional(),
   blocked: z.boolean().optional(),
   blockedReason: z.string().max(1000, 'Reason is too long').optional(),

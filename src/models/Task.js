@@ -59,6 +59,16 @@ const taskSchema = new mongoose.Schema(
       required: false,
       index: true,
     },
+    startDate: {
+      type: Date,
+      required: false,
+      index: true,
+    },
+    durationUnit: {
+      type: String,
+      enum: ['minutes', 'hours', 'days'],
+      default: 'minutes',
+    },
     startedAt: {
       type: Date,
     },
@@ -83,7 +93,7 @@ const taskSchema = new mongoose.Schema(
     },
     type: {
       type: String,
-      enum: ['intent', 'epic', 'story', 'task', 'bug'],
+      enum: ['intent', 'epic', 'story', 'task', 'bug', 'spike', 'tech_debt'],
       default: 'task',
       index: true,
     },

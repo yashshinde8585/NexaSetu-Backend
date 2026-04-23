@@ -88,7 +88,7 @@ class TaskService {
     try {
       const {
         title, description, project, assignedUser, status, source,
-        isAiGenerated, dueDate, sprint, priority, estimatedDuration, attachments
+        isAiGenerated, dueDate, startDate, durationUnit, sprint, priority, type, estimatedDuration, attachments
       } = data;
 
       const query = getProjectAccessQuery(user);
@@ -108,7 +108,10 @@ class TaskService {
         source: source || 'manual',
         isAiGenerated: isAiGenerated || false,
         dueDate: dueDate || null,
+        startDate: startDate || null,
+        durationUnit: durationUnit || 'minutes',
         priority: priority || 'medium',
+        type: type || 'task',
         estimatedDuration: estimatedDuration || 30,
         remainingDuration: estimatedDuration || 30,
         createdBy: user._id,
@@ -332,7 +335,7 @@ class TaskService {
       throw new AppError('Access denied', 403);
     }
 
-    const allowedFields = ['title', 'description', 'assignedUser', 'dueDate', 'priority', 'estimatedDuration', 'attachments'];
+    const allowedFields = ['title', 'description', 'assignedUser', 'dueDate', 'startDate', 'durationUnit', 'priority', 'type', 'estimatedDuration', 'attachments'];
     const updateData = {};
     allowedFields.forEach(field => {
       if (data[field] !== undefined) {
