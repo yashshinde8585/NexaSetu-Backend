@@ -34,154 +34,161 @@ class DashboardService {
       ];
     }
 
-    const aggregationResult = await Task.aggregate([
-      { $match: baseMatch },
-      {
-        $facet: {
-          overallStats: [{ $group: { _id: '$status', count: { $sum: 1 } } }],
-          personalStats: [
-            {
-              $match: {
-                assignedUser: new mongoose.Types.ObjectId(user._id),
-              },
-            },
-            { $group: { _id: '$status', count: { $sum: 1 } } },
-          ],
-          workloadStats: [
-            {
-              $match: { status: { $ne: 'done' }, assignedUser: { $ne: null } },
-            },
-            { $group: { _id: '$assignedUser', tasks: { $sum: 1 } } },
-            { $sort: { tasks: -1 } },
-            { $limit: 5 },
-            {
-              $lookup: {
-                from: 'users',
-                localField: '_id',
-                foreignField: '_id',
-                as: 'userData',
-              },
-            },
-            { $unwind: '$userData' },
-            {
-              $project: {
-                _id: 0,
-                name: '$userData.name',
-                tasks: 1,
-              },
-            },
-          ],
-          aiImpact: [{ $group: { _id: '$isAiGenerated', count: { $sum: 1 } } }],
-          projectWiseStats: [
-            {
-              $group: {
-                _id: '$project',
-                total: { $sum: 1 },
-                done: { $sum: { $cond: [{ $eq: ['$status', 'done'] }, 1, 0] } },
-                todo: { $sum: { $cond: [{ $eq: ['$status', 'todo'] }, 1, 0] } },
-                inProgress: {
-                  $sum: { $cond: [{ $eq: ['$status', 'in_progress'] }, 1, 0] },
-                },
-                inReview: {
-                  $sum: { $cond: [{ $eq: ['$status', 'in_review'] }, 1, 0] },
-                },
-                aiGenerated: {
-                  $sum: { $cond: [{ $eq: ['$isAiGenerated', true] }, 1, 0] },
-                },
-                delayed: {
-                  $sum: {
-                    $cond: [
-                      {
-                        $and: [
-                          { $ne: ['$status', 'done'] },
-                          { $lt: ['$dueDate', new Date()] },
-                        ],
-                      },
-                      1,
-                      0,
-                    ],
-                  },
-                },
-                atRisk: {
-                  $sum: {
-                    $cond: [
-                      {
-                        $and: [
-                          { $ne: ['$status', 'done'] },
-                          { $gte: ['$dueDate', new Date()] },
-                          {
-                            $lt: [
-                              '$dueDate',
-                              new Date(
-                                new Date().getTime() + 24 * 60 * 60 * 1000
-                              ),
-                            ],
-                          },
-                        ],
-                      },
-                      1,
-                      0,
-                    ],
-                  },
-                },
-                myTotal: {
-                  $sum: {
-                    $cond: [
-                      {
-                        $eq: [
-                          '$assignedUser',
-                          new mongoose.Types.ObjectId(user._id),
-                        ],
-                      },
-                      1,
-                      0,
-                    ],
-                  },
-                },
-                myDone: {
-                  $sum: {
-                    $cond: [
-                      {
-                        $and: [
-                          {
-                            $eq: [
-                              '$assignedUser',
-                              new mongoose.Types.ObjectId(user._id),
-                            ],
-                          },
-                          { $eq: ['$status', 'done'] },
-                        ],
-                      },
-                      1,
-                      0,
-                    ],
-                  },
-                },
-                myDelayed: {
-                  $sum: {
-                    $cond: [
-                      {
-                        $and: [
-                          {
-                            $eq: [
-                              '$assignedUser',
-                              new mongoose.Types.ObjectId(user._id),
-                            ],
-                          },
-                          { $ne: ['$status', 'done'] },
-                          { $lt: ['$dueDate', new Date()] },
-                        ],
-                      },
-                      1,
-                      0,
-                    ],
-                  },
+    const [aggregationResult, recentActivity] = await Promise.all([
+      Task.aggregate([
+        { $match: baseMatch },
+        {
+          $facet: {
+            overallStats: [{ $group: { _id: '$status', count: { $sum: 1 } } }],
+            personalStats: [
+              {
+                $match: {
+                  assignedUser: new mongoose.Types.ObjectId(user._id),
                 },
               },
-            },
-          ],
+              { $group: { _id: '$status', count: { $sum: 1 } } },
+            ],
+            workloadStats: [
+              {
+                $match: { status: { $ne: 'done' }, assignedUser: { $ne: null } },
+              },
+              { $group: { _id: '$assignedUser', tasks: { $sum: 1 } } },
+              { $sort: { tasks: -1 } },
+              { $limit: 5 },
+              {
+                $lookup: {
+                  from: 'users',
+                  localField: '_id',
+                  foreignField: '_id',
+                  as: 'userData',
+                },
+              },
+              { $unwind: '$userData' },
+              {
+                $project: {
+                  _id: 0,
+                  name: '$userData.name',
+                  tasks: 1,
+                },
+              },
+            ],
+            aiImpact: [{ $group: { _id: '$isAiGenerated', count: { $sum: 1 } } }],
+            projectWiseStats: [
+              {
+                $group: {
+                  _id: '$project',
+                  total: { $sum: 1 },
+                  done: { $sum: { $cond: [{ $eq: ['$status', 'done'] }, 1, 0] } },
+                  todo: { $sum: { $cond: [{ $eq: ['$status', 'todo'] }, 1, 0] } },
+                  inProgress: {
+                    $sum: { $cond: [{ $eq: ['$status', 'in_progress'] }, 1, 0] },
+                  },
+                  inReview: {
+                    $sum: { $cond: [{ $eq: ['$status', 'in_review'] }, 1, 0] },
+                  },
+                  aiGenerated: {
+                    $sum: { $cond: [{ $eq: ['$isAiGenerated', true] }, 1, 0] },
+                  },
+                  delayed: {
+                    $sum: {
+                      $cond: [
+                        {
+                          $and: [
+                            { $ne: ['$status', 'done'] },
+                            { $lt: ['$dueDate', new Date()] },
+                          ],
+                        },
+                        1,
+                        0,
+                      ],
+                    },
+                  },
+                  atRisk: {
+                    $sum: {
+                      $cond: [
+                        {
+                          $and: [
+                            { $ne: ['$status', 'done'] },
+                            { $gte: ['$dueDate', new Date()] },
+                            {
+                              $lt: [
+                                '$dueDate',
+                                new Date(
+                                  new Date().getTime() + 24 * 60 * 60 * 1000
+                                ),
+                              ],
+                            },
+                          ],
+                        },
+                        1,
+                        0,
+                      ],
+                    },
+                  },
+                  myTotal: {
+                    $sum: {
+                      $cond: [
+                        {
+                          $eq: [
+                            '$assignedUser',
+                            new mongoose.Types.ObjectId(user._id),
+                          ],
+                        },
+                        1,
+                        0,
+                      ],
+                    },
+                  },
+                  myDone: {
+                    $sum: {
+                      $cond: [
+                        {
+                          $and: [
+                            {
+                              $eq: [
+                                '$assignedUser',
+                                new mongoose.Types.ObjectId(user._id),
+                              ],
+                            },
+                            { $eq: ['$status', 'done'] },
+                          ],
+                        },
+                        1,
+                        0,
+                      ],
+                    },
+                  },
+                  myDelayed: {
+                    $sum: {
+                      $cond: [
+                        {
+                          $and: [
+                            {
+                              $eq: [
+                                '$assignedUser',
+                                new mongoose.Types.ObjectId(user._id),
+                              ],
+                            },
+                            { $ne: ['$status', 'done'] },
+                            { $lt: ['$dueDate', new Date()] },
+                          ],
+                        },
+                        1,
+                        0,
+                      ],
+                    },
+                  },
+                },
+              },
+            ],
+          },
         },
-      },
+      ]),
+      Task.find({ project: { $in: projectIds } })
+        .sort({ updatedAt: -1 })
+        .limit(5)
+        .populate('project', 'name')
+        .lean(),
     ]);
 
     const raw = aggregationResult[0] || {
@@ -309,11 +316,6 @@ class DashboardService {
       };
     });
 
-    const recentActivity = await Task.find({ project: { $in: projectIds } })
-      .sort({ updatedAt: -1 })
-      .limit(5)
-      .populate('project', 'name')
-      .lean();
 
     return {
       summary: stats,

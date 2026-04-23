@@ -1,4 +1,5 @@
 const express = require('express');
+const compression = require('compression');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const helmet = require('helmet');
@@ -11,6 +12,8 @@ const { getRedisClient, isRedisConnected } = require('./config/redis');
 const logger = require('./utils/logger');
 
 const app = express();
+
+app.use(compression());
 
 // SECURITY & INFRASTRUCTURE LAYER
 // CORS must be first to handle preflight OPTIONS requests across all endpoints

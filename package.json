@@ -20,6 +20,7 @@
     "axios": "^1.13.6",
     "bcryptjs": "^3.0.3",
     "bullmq": "^5.73.2",
+    "compression": "^1.8.1",
     "cookie": "^1.1.1",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",
