@@ -235,6 +235,9 @@ class TaskService {
     }
 
     pipeline.push(
+      { $sort: { createdAt: -1 } },
+      { $skip: skip },
+      { $limit: limitValue },
       {
         $lookup: {
           from: 'users',
@@ -251,7 +254,6 @@ class TaskService {
           as: 'sprintData',
         },
       },
-      { $sort: { createdAt: -1 } },
       {
         $addFields: {
           assignedUser: { $arrayElemAt: ['$assignedUserData', 0] },
@@ -259,9 +261,7 @@ class TaskService {
           sprintInfo: { $arrayElemAt: ['$sprintData', 0] },
         },
       },
-      { $project: { assignedUserData: 0, sprintData: 0 } },
-      { $skip: skip },
-      { $limit: limitValue }
+      { $project: { assignedUserData: 0, sprintData: 0 } }
     );
 
     const tasks = await Task.aggregate(pipeline);
