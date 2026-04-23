@@ -3,10 +3,11 @@ const { createAdapter } = require('@socket.io/redis-adapter');
 const Redis = require('ioredis');
 const config = require('./config/config');
 const logger = require('./utils/logger');
+const { createClient } = require('./config/redis');
 
 let io;
 
-// SOCKET EVENT CONSTANTS
+// Events objects for real-time communication
 const EVENTS = {
   CONNECTION: 'connection',
   DISCONNECT: 'disconnect',
@@ -16,34 +17,11 @@ const EVENTS = {
   ERROR: 'error'
 };
 
-/**
- * Signal hub powered by Socket.io.
- * Scaled horizontally using Redis Pub/Sub for cross-server event synchronization.
- */
+// Initialize socket.io connections to Redis for pub/sub messaging
 const init = (server) => {
   try {
-    const redisUrl = config.redis.url;
-    
-    // Redis clients for Pub/Sub horizontal scaling
-    const redisOptions = {
-      maxRetriesPerRequest: null,
-      enableReadyCheck: true,
-      connectTimeout: 15000,
-      retryStrategy: (times) => Math.min(times * 100, 3000)
-    };
-
-    const pubClient = new Redis(redisUrl, redisOptions);
-    const subClient = new Redis(redisUrl, redisOptions);
-
-    pubClient.on('error', (err) => {
-        logger.error(`[SOCKET-REDIS] Publisher Error: ${err.message}`);
-        logger.info('[SOCKET] Redis connection lost → Hub running in standalone mode (No cross-server sync)');
-    });
-
-    subClient.on('error', (err) => {
-        logger.error(`[SOCKET-REDIS] Subscriber Error: ${err.message}`);
-        logger.info('[SOCKET] Redis connection lost → Hub running in standalone mode (No cross-server sync)');
-    });
+    const pubClient = createClient('SocketPub', { maxRetriesPerRequest: null, enableReadyCheck: true });
+    const subClient = createClient('SocketSub', { maxRetriesPerRequest: null, enableReadyCheck: true });
 
     io = new Server(server, {
       cors: {
@@ -60,26 +38,22 @@ const init = (server) => {
     io.on(EVENTS.CONNECTION, (socket) => {
       logger.info(`[SOCKET] Client connected: ${socket.id}`);
 
-      // Isolate client updates to specific task rooms to reduce network overhead
       socket.on(EVENTS.JOIN_TASK, (taskId) => {
         if (!taskId) return;
         socket.join(taskId);
         logger.debug(`[SOCKET] Client ${socket.id} joined task room: ${taskId}`);
       });
 
-      // Leave Task room to prevent memory leaks
       socket.on(EVENTS.LEAVE_TASK, (taskId) => {
         if (!taskId) return;
         socket.leave(taskId);
         logger.debug(`[SOCKET] Client ${socket.id} left task room: ${taskId}`);
       });
 
-      // Lifecycle cleanup
       socket.on(EVENTS.DISCONNECT, (reason) => {
         logger.info(`[SOCKET] Client disconnected: ${socket.id} (${reason})`);
       });
 
-      // Generic socket error logging
       socket.on(EVENTS.ERROR, (err) => {
         logger.error(`[SOCKET] Socket error for ${socket.id}: ${err.message}`);
       });
@@ -93,9 +67,6 @@ const init = (server) => {
   }
 };
 
-/**
- * Retrieves the active Socket.io instance.
- */
 const getIO = () => {
   if (!io) {
     throw new Error('Socket.io hub has not been initialized. Call init(server) first.');

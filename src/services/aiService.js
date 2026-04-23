@@ -106,6 +106,7 @@ exports.extractTaskFromText = async (text) => {
             description: (parsed.description || '').substring(0, 500),
             status: status,
             priority: parsed.priority || 'medium',
+            type: parsed.type || 'task',
             estimatedDuration: parsed.estimatedDuration || 30,
           };
 
