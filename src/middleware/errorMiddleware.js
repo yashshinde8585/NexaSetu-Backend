@@ -9,15 +9,14 @@ const globalErrorHandler = (err, req, res, next) => {
   err.status = err.status || 'error';
 
   if (config.isProduction) {
-    let error = { ...err };
-    error.message = err.message;
+    let error = err;
 
     // Map technical DB/JWT signals to user-friendly messages.
     if (err.name === 'CastError') error = handleCastErrorDB(err);
-    if (err.code === 11000) error = handleDuplicateFieldsDB(err);
-    if (err.name === 'ValidationError') error = handleValidationErrorDB(err);
-    if (err.name === 'JsonWebTokenError') error = handleJWTError();
-    if (err.name === 'TokenExpiredError') error = handleJWTExpiredError();
+    else if (err.code === 11000) error = handleDuplicateFieldsDB(err);
+    else if (err.name === 'ValidationError') error = handleValidationErrorDB(err);
+    else if (err.name === 'JsonWebTokenError') error = handleJWTError();
+    else if (err.name === 'TokenExpiredError') error = handleJWTExpiredError();
 
     sendErrorProd(error, req, res);
   } else {

@@ -176,6 +176,7 @@ const createTask = async (user, data) => {
       entityId: task._id,
       entityType: 'task',
       project: task.project,
+      workspaceId: task.workspaceId,
       payload: task,
     });
 
@@ -429,6 +430,7 @@ const updateTask = async (user, id, data) => {
     entityId: updatedTask._id,
     entityType: 'task',
     project: updatedTask.project,
+    workspaceId: updatedTask.workspaceId,
     payload: updatedTask,
   });
 

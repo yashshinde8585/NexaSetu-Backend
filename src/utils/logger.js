@@ -27,6 +27,14 @@ const logger = winston.createLogger({
 
 // Add file logging in production for persistence
 if (config.isProduction) {
+  const fs = require('fs');
+  const path = require('path');
+  const logDir = path.join(process.cwd(), 'logs');
+  
+  if (!fs.existsSync(logDir)) {
+    fs.mkdirSync(logDir, { recursive: true });
+  }
+
   logger.add(new winston.transports.File({ filename: 'logs/error.log', level: 'error' }));
   logger.add(new winston.transports.File({ filename: 'logs/combined.log' }));
 }
