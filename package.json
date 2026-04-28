@@ -34,11 +34,13 @@
     "jsdom": "^29.0.2",
     "jsonwebtoken": "^9.0.3",
     "mongoose": "^9.3.1",
+    "multer": "^2.1.1",
     "node-cron": "^4.2.1",
     "octokit": "^5.0.5",
     "rate-limit-redis": "^4.3.1",
     "redis": "^5.11.0",
     "socket.io": "^4.8.3",
+    "uuid": "^14.0.0",
     "winston": "^3.19.0",
     "zod": "^4.3.6"
   },

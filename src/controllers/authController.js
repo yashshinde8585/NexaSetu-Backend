@@ -1,4 +1,6 @@
 const authService = require('../services/authService');
+const storageService = require('../services/storageService');
+const User = require('../models/User');
 const catchAsync = require('../utils/catchAsync');
 const config = require('../config/config');
 const logger = require('../utils/logger');
@@ -118,4 +120,29 @@ exports.resetPassword = catchAsync(async (req, res, next) => {
 exports.completeTour = catchAsync(async (req, res, next) => {
   const user = await authService.completeTour(req.user._id);
   return ResponseBuilder.success(res, { user });
+});
+
+exports.updateAvatar = catchAsync(async (req, res, next) => {
+  if (!req.file) {
+    return ResponseBuilder.error(res, 'No image file provided.', 'MISSING_FILE', 400);
+  }
+
+  const publicUrl = await storageService.uploadFile(
+    req.file.buffer,
+    req.file.originalname
+  );
+
+  if (req.user.profilePicture) {
+    await storageService.deleteFile(req.user.profilePicture).catch(err => {
+      logger.error(`[AVATAR_CLEANUP_ERROR]: ${err.message}`);
+    });
+  }
+
+  const updatedUser = await User.findByIdAndUpdate(
+    req.user._id,
+    { profilePicture: publicUrl },
+    { new: true, runValidators: true }
+  ).select('-password');
+
+  return ResponseBuilder.success(res, { user: updatedUser }, 200, 'Profile picture updated successfully');
 });

@@ -16,6 +16,13 @@ exports.getHealth = async (req, res, next) => {
   } catch (err) { next(err); }
 };
 
+exports.getIntegrity = async (req, res, next) => {
+  try {
+    const integrity = await HealthService.getSystemIntegrity();
+    res.status(200).json(integrity);
+  } catch (err) { next(err); }
+};
+
 exports.getReports = async (req, res, next) => {
   try {
     const report = await ReportingService.generateDashboardReport(req.query.workspaceId, req.query.teamId);

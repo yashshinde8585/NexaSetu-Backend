@@ -1,7 +1,6 @@
 const mongoose = require('mongoose');
 const logger = require('../utils/logger');
 
-// Event Schema for tracking user interactions and system milestones
 const eventSchema = new mongoose.Schema({
   userId: {
     type: mongoose.Schema.Types.ObjectId,
@@ -32,33 +31,33 @@ const eventSchema = new mongoose.Schema({
 
 const Event = mongoose.model('Event', eventSchema);
 
-class MetricsService {
-  async trackEvent(user, eventType, payload = {}, meta = {}) {
-    try {
-      await Event.create({
-        userId: user?._id,
-        workspaceId: user?.workspaceId,
-        eventType,
-        payload,
-        metadata: {
-          ip: meta.ip,
-          userAgent: meta.userAgent
-        }
-      });
-      
-      logger.info(`[METRICS] Event tracked: ${eventType} for user ${user?._id || 'ANONYMOUS'}`);
-    } catch (err) {
-      logger.error(`[METRICS] Tracking failed: ${err.message}`);
-    }
+const trackEvent = async (user, eventType, payload = {}, meta = {}) => {
+  try {
+    await Event.create({
+      userId: user?._id,
+      workspaceId: user?.workspaceId,
+      eventType,
+      payload,
+      metadata: {
+        ip: meta.ip,
+        userAgent: meta.userAgent
+      }
+    });
+    
+    logger.info(`[METRICS] Event tracked: ${eventType} for user ${user?._id || 'ANONYMOUS'}`);
+  } catch (err) {
+    logger.error(`[METRICS] Tracking failed: ${err.message}`);
   }
+};
 
-  async getDashboardMetrics(workspaceId) {
-    // Aggregate metrics for admin insights if needed
-    return {
-      activeUsers: 0, // Placeholder
-      totalTasks: 0,
-    };
-  }
-}
+const getDashboardMetrics = async (workspaceId) => {
+  return {
+    activeUsers: 0,
+    totalTasks: 0,
+  };
+};
 
-module.exports = new MetricsService();
+module.exports = {
+  trackEvent,
+  getDashboardMetrics,
+};

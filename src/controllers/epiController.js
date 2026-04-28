@@ -1,4 +1,5 @@
 const epiService = require('../services/epiService');
+const logger = require('../utils/logger');
 
 /**
  * EPI Controller
@@ -18,7 +19,7 @@ exports.getSprintEPI = async (req, res) => {
       data
     });
   } catch (error) {
-    console.error('[EPIController] getSprintEPI failed:', error);
+    logger.error('[EPIController] getSprintEPI failed: %o', error);
     res.status(500).json({
       status: 'error',
       message: error.message || 'Internal server error while generating Sprint EPI'
@@ -39,7 +40,7 @@ exports.getTaskEPI = async (req, res) => {
       data
     });
   } catch (error) {
-    console.error('[EPIController] getTaskEPI failed:', error);
+    logger.error('[EPIController] getTaskEPI failed: %o', error);
     res.status(500).json({
       status: 'error',
       message: error.message || 'Internal server error while generating Task EPI'
@@ -60,7 +61,7 @@ exports.getTaskHelp = async (req, res) => {
       data
     });
   } catch (error) {
-    console.error('[EPIController] getTaskHelp failed:', error);
+    logger.error('[EPIController] getTaskHelp failed: %o', error);
     res.status(500).json({
       status: 'error',
       message: error.message || 'Internal server error while generating Task Help'
@@ -81,7 +82,7 @@ exports.executeAction = async (req, res) => {
       data: result
     });
   } catch (error) {
-    console.error('[EPIController] executeAction failed:', error);
+    logger.error('[EPIController] executeAction failed: %o', error);
     res.status(500).json({
       status: 'error',
       message: error.message || 'Action execution failed'
@@ -100,7 +101,7 @@ exports.getNarrativeReport = async (req, res) => {
         data: report
     });
   } catch (error) {
-    console.error('[EPIController] getNarrativeReport failed:', error);
+    logger.error('[EPIController] getNarrativeReport failed: %o', error);
     res.status(500).json({
         status: 'error',
         message: 'Failed to generate stakeholder report'

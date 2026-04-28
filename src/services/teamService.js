@@ -7,183 +7,182 @@ const AppError = require('../utils/appError');
 const metricsService = require('./metricsService');
 const logger = require('../utils/logger');
 
-// Centralizes workspace administrative flows for provisioning and organizing organizational personnel.
-class TeamService {
-  async provisionUser(
-    { name, email, role, projectId, jobTitle },
-    workspaceId,
-    invitedBy,
-    strategy = 'BIRTH'
-  ) {
-    const existingUser = await User.findOne({ email });
-    if (existingUser) {
-      return { status: 'EXISTING', user: existingUser };
-    }
-
-    if (strategy === 'BIRTH') {
-      const newUser = await User.create({
-        name: name || email.split('@')[0],
-        email,
-        password: email,
-        role: role || 'PROJECT_MEMBER',
-        jobTitle: jobTitle || 'Software Engineer',
-        assignedProjectId: projectId || null,
-        workspaceId,
-      });
-
-      if (projectId) {
-        await Project.findByIdAndUpdate(projectId, {
-          $addToSet: { members: newUser._id },
-        });
-      }
-
-      return { status: 'PROVISIONED', user: newUser };
-    } else {
-      // Construct securely tokenized invitation vectors for async deployments.
-      const token = crypto.randomBytes(32).toString('hex');
-      const invitation = await Invitation.findOneAndUpdate(
-        { email },
-        {
-          role,
-          projectId,
-          workspaceId,
-          token,
-          invitedBy,
-          status: 'pending',
-          expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-        },
-        { upsert: true, returnDocument: 'after' }
-      );
-
-      // Fire-and-forget metrics hook
-      metricsService.trackEvent({ _id: invitedBy, workspaceId }, 'invite_sent', { 
-        inviteeEmail: email,
-        role: role,
-        projectId: projectId 
-      }).catch(err => logger.error(`[METRICS] Failed to track invitation: ${err.message}`));
-
-      return { status: 'INVITED', invitation };
-    }
+const provisionUser = async (
+  { name, email, role, projectId, jobTitle },
+  workspaceId,
+  invitedBy,
+  strategy = 'BIRTH'
+) => {
+  const existingUser = await User.findOne({ email });
+  if (existingUser) {
+    return { status: 'EXISTING', user: existingUser };
   }
 
-  async bulkProvision(invites, workspaceId, invitedBy, isStrategicLead) {
-    const provisionedUsers = [];
-    const failedInvites = [];
-    const engineeringRecruiterRoles = ['PROJECT_MEMBER', 'RESTRICTED'];
-
-    for (const invite of invites) {
-      try {
-        // Force strict authorization constraints across technical personnel delegations.
-        if (
-          !isStrategicLead &&
-          !engineeringRecruiterRoles.includes(invite.role)
-        ) {
-          throw new Error(
-            `Unauthorized role (${invite.role}). Only Engineers and Interns can be recruited by non-admins.`
-          );
-        }
-
-        const result = await this.provisionUser(
-          invite,
-          workspaceId,
-          invitedBy,
-          'BIRTH'
-        );
-
-        if (result.status === 'EXISTING') {
-          throw new Error('User already has an account');
-        }
-
-        provisionedUsers.push({
-          email: result.user.email,
-          name: result.user.name,
-          role: result.user.role,
-          status: 'PROVISIONED',
-        });
-      } catch (err) {
-        failedInvites.push({ email: invite.email, message: err.message });
-      }
-    }
-
-    return { provisionedUsers, failedInvites };
-  }
-
-  async getInviteByToken(token) {
-    const invitation = await Invitation.findOne({
-      token,
-      status: 'pending',
-      expiresAt: { $gt: Date.now() },
+  if (strategy === 'BIRTH') {
+    const newUser = await User.create({
+      name: name || email.split('@')[0],
+      email,
+      password: email,
+      role: role || 'PROJECT_MEMBER',
+      jobTitle: jobTitle || 'Software Engineer',
+      assignedProjectId: projectId || null,
+      workspaceId,
     });
 
-    if (!invitation) {
-      throw new AppError('Invalid or expired invitation', 404);
+    if (projectId) {
+      await Project.findByIdAndUpdate(projectId, {
+        $addToSet: { members: newUser._id },
+      });
     }
 
-    return invitation;
+    return { status: 'PROVISIONED', user: newUser };
+  } else {
+    const token = crypto.randomBytes(32).toString('hex');
+    const invitation = await Invitation.findOneAndUpdate(
+      { email },
+      {
+        role,
+        projectId,
+        workspaceId,
+        token,
+        invitedBy,
+        status: 'pending',
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      },
+      { upsert: true, returnDocument: 'after' }
+    );
+
+    metricsService.trackEvent({ _id: invitedBy, workspaceId }, 'invite_sent', { 
+      inviteeEmail: email,
+      role: role,
+      projectId: projectId 
+    }).catch(err => logger.error(`[METRICS] Failed to track invitation: ${err.message}`));
+
+    return { status: 'INVITED', invitation };
   }
+};
 
-  async getWorkspaceTeam(user, isStrategicLead, page = 1, limit = 20) {
-    const skip = (parseInt(page) - 1) * parseInt(limit);
-    const limitValue = parseInt(limit);
-    const workspaceId = user.workspaceId;
+const bulkProvision = async (invites, workspaceId, invitedBy, isStrategicLead) => {
+  const provisionedUsers = [];
+  const failedInvites = [];
+  const engineeringRecruiterRoles = ['PROJECT_MEMBER', 'RESTRICTED'];
 
-    let memberQuery = { workspaceId };
-    let invitationQuery = {
-      workspaceId,
-      status: 'pending',
-      expiresAt: { $gt: Date.now() },
-    };
+  for (const invite of invites) {
+    try {
+      if (
+        !isStrategicLead &&
+        !engineeringRecruiterRoles.includes(invite.role)
+      ) {
+        throw new Error(
+          `Unauthorized role (${invite.role}). Only Engineers and Interns can be recruited by non-admins.`
+        );
+      }
 
-    if (!isStrategicLead) {
-      const authorizedProjects = await Project.find(
-        getProjectAccessQuery(user)
-      ).select('_id');
-      const authorizedProjectIds = authorizedProjects.map((p) => p._id);
+      const result = await provisionUser(
+        invite,
+        workspaceId,
+        invitedBy,
+        'BIRTH'
+      );
 
-      memberQuery.assignedProjectId = { $in: authorizedProjectIds };
-      invitationQuery.projectId = { $in: authorizedProjectIds };
+      if (result.status === 'EXISTING') {
+        throw new Error('User already has an account');
+      }
+
+      provisionedUsers.push({
+        email: result.user.email,
+        name: result.user.name,
+        role: result.user.role,
+        status: 'PROVISIONED',
+      });
+    } catch (err) {
+      failedInvites.push({ email: invite.email, message: err.message });
     }
-
-    const [members, totalMembers, invitations, totalInvitations] = await Promise.all([
-      User.find(memberQuery)
-        .select('name email role jobTitle createdAt assignedProjectId')
-        .populate('assignedProjectId', 'name')
-        .skip(skip)
-        .limit(limitValue)
-        .sort('name')
-        .lean(),
-      User.countDocuments(memberQuery),
-      Invitation.find(invitationQuery)
-        .select('email role expiresAt projectId')
-        .populate('projectId', 'name')
-        .skip(skip)
-        .limit(limitValue)
-        .lean(),
-      Invitation.countDocuments(invitationQuery),
-    ]);
-
-    return {
-      members,
-      totalMembers,
-      invitations,
-      totalInvitations,
-      page: parseInt(page),
-      limit: limitValue
-    };
   }
 
-  async removeInvitation(user, invitationId) {
-    const invitation = await Invitation.findById(invitationId);
-    if (!invitation) throw new AppError('Invitation not found', 404);
+  return { provisionedUsers, failedInvites };
+};
 
-    // Cross-tenant protection
-    if (invitation.workspaceId.toString() !== user.workspaceId.toString()) {
-      throw new AppError('Access Denied: Invitation does not belong to your workspace', 403);
-    }
+const getInviteByToken = async (token) => {
+  const invitation = await Invitation.findOne({
+    token,
+    status: 'pending',
+    expiresAt: { $gt: Date.now() },
+  });
 
-    await Invitation.findByIdAndDelete(invitationId);
-    return true;
+  if (!invitation) {
+    throw new AppError('Invalid or expired invitation', 404);
   }
-}
 
-module.exports = new TeamService();
+  return invitation;
+};
+
+const getWorkspaceTeam = async (user, isStrategicLead, page = 1, limit = 20) => {
+  const skip = (parseInt(page) - 1) * parseInt(limit);
+  const limitValue = parseInt(limit);
+  const workspaceId = user.workspaceId;
+
+  let memberQuery = { workspaceId };
+  let invitationQuery = {
+    workspaceId,
+    status: 'pending',
+    expiresAt: { $gt: Date.now() },
+  };
+
+  if (!isStrategicLead) {
+    const authorizedProjects = await Project.find(
+      getProjectAccessQuery(user)
+    ).select('_id');
+    const authorizedProjectIds = authorizedProjects.map((p) => p._id);
+
+    memberQuery.assignedProjectId = { $in: authorizedProjectIds };
+    invitationQuery.projectId = { $in: authorizedProjectIds };
+  }
+
+  const [members, totalMembers, invitations, totalInvitations] = await Promise.all([
+    User.find(memberQuery)
+      .select('name email role jobTitle createdAt assignedProjectId profilePicture')
+      .populate('assignedProjectId', 'name')
+      .skip(skip)
+      .limit(limitValue)
+      .sort('name')
+      .lean(),
+    User.countDocuments(memberQuery),
+    Invitation.find(invitationQuery)
+      .select('email role expiresAt projectId')
+      .populate('projectId', 'name')
+      .skip(skip)
+      .limit(limitValue)
+      .lean(),
+    Invitation.countDocuments(invitationQuery),
+  ]);
+
+  return {
+    members,
+    totalMembers,
+    invitations,
+    totalInvitations,
+    page: parseInt(page),
+    limit: limitValue
+  };
+};
+
+const removeInvitation = async (user, invitationId) => {
+  const invitation = await Invitation.findById(invitationId);
+  if (!invitation) throw new AppError('Invitation not found', 404);
+
+  if (invitation.workspaceId.toString() !== user.workspaceId.toString()) {
+    throw new AppError('Access Denied: Invitation does not belong to your workspace', 403);
+  }
+
+  await Invitation.findByIdAndDelete(invitationId);
+  return true;
+};
+
+module.exports = {
+  provisionUser,
+  bulkProvision,
+  getInviteByToken,
+  getWorkspaceTeam,
+  removeInvitation,
+};

@@ -1,5 +1,6 @@
 const Project = require('../models/Project');
 const Task = require('../models/Task');
+const logger = require('../utils/logger');
 
 // Analyzes macro project health and generates strategic recommendations for portfolio optimization.
 class PortfolioAgent {
@@ -61,7 +62,7 @@ class PortfolioAgent {
         topPriorityProjectId: highRisk.length > 0 ? highRisk[0]._id : null,
       };
     } catch (error) {
-      console.error('[PortfolioAgent] Audit Error:', error);
+      logger.error('[PortfolioAgent] Audit Error: %o', error);
       throw error;
     }
   }

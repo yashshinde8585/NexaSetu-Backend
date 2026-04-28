@@ -2,14 +2,15 @@ require('dotenv').config({ path: __dirname + '/../../.env' });
 const mongoose = require('mongoose');
 const Role = require('../models/Role');
 const Permission = require('../models/Permission');
+const logger = require('../utils/logger');
 
 const connectDB = async () => {
   try {
     const uri = process.env.DB_LOCAL_URI || process.env.DB_ATLAS_URI;
     await mongoose.connect(uri);
-    console.log('MongoDB connected successfully.');
+    logger.info('MongoDB connected successfully.');
   } catch (error) {
-    console.error('MongoDB connection error:', error);
+    logger.error('MongoDB connection error: %o', error);
     process.exit(1);
   }
 };
@@ -57,18 +58,18 @@ const rolesDef = {
 const seed = async () => {
   await connectDB();
 
-  console.log('Clearing old roles and permissions...');
+  logger.info('Clearing old roles and permissions...');
   await Role.deleteMany({});
   await Permission.deleteMany({});
 
-  console.log('Seeding Permissions...');
+  logger.info('Seeding Permissions...');
   const permissionDocs = {};
   for (const p of permissionsDef) {
     const perm = await Permission.create(p);
     permissionDocs[perm.action] = perm._id;
   }
 
-  console.log('Seeding Roles...');
+  logger.info('Seeding Roles...');
   for (const [roleName, actions] of Object.entries(rolesDef)) {
     const permissionIds = actions.map(a => permissionDocs[a]);
     await Role.create({
@@ -76,10 +77,10 @@ const seed = async () => {
       description: `Auto-seeded role for ${roleName}`,
       permissions: permissionIds
     });
-    console.log(`Created Role: ${roleName} with ${actions.length} permissions.`);
+    logger.info(`Created Role: ${roleName} with ${actions.length} permissions.`);
   }
 
-  console.log('✅ Seeding completed successfully!');
+  logger.info('✅ Seeding completed successfully!');
   process.exit(0);
 };
 

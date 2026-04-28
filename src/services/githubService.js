@@ -42,7 +42,7 @@ class GithubService {
         githubUsername: githubUser.login,
       };
     } catch (error) {
-      console.error('[GitHub Connection Error]:', error.message);
+      logger.error('[GitHub Connection Error]: %s', error.message);
       const statusCode = error.status || (error.response && error.response.status);
       
       if (statusCode === 401) {
@@ -146,8 +146,8 @@ class GithubService {
           statusHint: item.type === 'commit' ? 'done' : 'in_progress',
         },
       }).catch((err) => {
-        console.error(
-          `[AgentOrchestrator Error] Failed to handle GitHub activity ${item.nodeId}:`,
+        logger.error(
+          `[AgentOrchestrator Error] Failed to handle GitHub activity ${item.nodeId}: %s`,
           err.message
         );
       });
@@ -178,7 +178,7 @@ class GithubService {
       })));
       commits = data;
     } catch (err) {
-      console.warn(`[GITHUB RECON] Commits unreachable for ${owner}/${repo}:`, err.message);
+      logger.warn(`[GITHUB RECON] Commits unreachable for ${owner}/${repo}: %s`, err.message);
     }
 
     let prs = [];
@@ -191,7 +191,7 @@ class GithubService {
       })));
       prs = data;
     } catch (err) {
-      console.warn(`[GITHUB RECON] PRs unreachable for ${owner}/${repo}:`, err.message);
+      logger.warn(`[GITHUB RECON] PRs unreachable for ${owner}/${repo}: %s`, err.message);
     }
 
     const activity = [

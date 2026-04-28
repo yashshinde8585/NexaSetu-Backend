@@ -59,6 +59,10 @@ const userSchema = new mongoose.Schema(
       default: 0,
     },
     lockUntil: Date,
+    profilePicture: {
+      type: String,
+      default: null,
+    },
   },
   {
     timestamps: true,
