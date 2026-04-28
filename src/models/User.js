@@ -52,6 +52,8 @@ const userSchema = new mongoose.Schema(
       default: false,
     },
     passwordChangedAt: Date,
+    passwordResetToken: String,
+    passwordResetExpires: Date,
     failedLoginAttempts: {
       type: Number,
       default: 0,

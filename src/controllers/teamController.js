@@ -144,3 +144,14 @@ exports.getWorkspaceRoles = catchAsync(async (req, res, next) => {
     data: { roles: roleDefinitions }
   });
 });
+
+// Revokes an active invitation before it can be used for account provisioning.
+exports.removeInvitation = catchAsync(async (req, res, next) => {
+  await teamService.removeInvitation(req.user, req.params.id);
+
+  res.status(204).json({
+    status: 'success',
+    data: null
+  });
+});
+

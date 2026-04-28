@@ -1,6 +1,7 @@
 const authService = require('../services/authService');
 const catchAsync = require('../utils/catchAsync');
 const config = require('../config/config');
+const logger = require('../utils/logger');
 const { monitorClientStatus } = require('../utils/requestGuard');
 
 const cookieOptions = config.jwt.cookieOptions;
@@ -103,6 +104,25 @@ exports.activateInvitation = catchAsync(async (req, res, next) => {
 
   const user = await authService.activateInvitation(token, name, password);
   await sendAuthResponse(user, 201, req, res);
+});
+
+// Initiate password recovery by generating a secure reset token
+exports.forgotPassword = catchAsync(async (req, res, next) => {
+  const resetToken = await authService.forgotPassword(req.body.email);
+
+  // MOCK: In production, send email here
+  logger.info(`[MOCK EMAIL] Password reset token for ${req.body.email}: ${resetToken}`);
+
+  res.status(200).json({
+    status: 'success',
+    message: 'Token sent to email (Mocked in logs)',
+  });
+});
+
+// Finalize password recovery by validating token and applying new credentials
+exports.resetPassword = catchAsync(async (req, res, next) => {
+  const user = await authService.resetPassword(req.params.token, req.body.password);
+  await sendAuthResponse(user, 200, req, res);
 });
 
 // Mark the onboarding tour as completed for the user

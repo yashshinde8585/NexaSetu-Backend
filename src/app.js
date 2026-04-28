@@ -114,6 +114,11 @@ const strategicIntentRoutes = require('./routes/strategicIntentRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
 const commentRoutes = require('./routes/commentRoutes');
 const epiRoutes = require('./routes/epiRoutes');
+const billingRoutes = require('./routes/billingRoutes');
+const rbacRoutes = require('./routes/rbacRoutes');
+const executionRoutes = require('./routes/executionRoutes');
+const observabilityRoutes = require('./routes/observabilityRoutes');
+const metricsRoutes = require('./routes/metricsRoutes');
 
 v1Router.use('/auth', authRoutes);
 v1Router.use('/projects', projectRoutes);
@@ -130,6 +135,12 @@ v1Router.use('/strategic', strategicIntentRoutes);
 v1Router.use('/notifications', notificationRoutes);
 v1Router.use('/comments', commentRoutes);
 v1Router.use('/epi', epiRoutes);
+v1Router.use('/billing', billingRoutes);
+
+v1Router.use('/rbac', rbacRoutes);
+v1Router.use('/execution', executionRoutes);
+v1Router.use('/observability', observabilityRoutes);
+v1Router.use('/metrics', metricsRoutes);
 
 v1Router.use('/engineering', engineeringRoutes);
 v1Router.use('/leadership', leadershipRoutes);

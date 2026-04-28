@@ -162,6 +162,19 @@ class TeamService {
       limit: limitValue
     };
   }
+
+  async removeInvitation(user, invitationId) {
+    const invitation = await Invitation.findById(invitationId);
+    if (!invitation) throw new AppError('Invitation not found', 404);
+
+    // Cross-tenant protection
+    if (invitation.workspaceId.toString() !== user.workspaceId.toString()) {
+      throw new AppError('Access Denied: Invitation does not belong to your workspace', 403);
+    }
+
+    await Invitation.findByIdAndDelete(invitationId);
+    return true;
+  }
 }
 
 module.exports = new TeamService();

@@ -11,6 +11,8 @@ const {
   activateInvitation,
   completeTour,
   refreshAccessToken,
+  forgotPassword,
+  resetPassword,
 } = require('../controllers/authController');
 const { protect } = require('../middleware/authMiddleware');
 const validate = require('../middleware/validateMiddleware');
@@ -24,6 +26,9 @@ router.post('/login', honeypot, validate(loginSchema), loginUser);
 router.get('/refresh', refreshAccessToken);
 router.post('/activate', activateInvitation);
 router.get('/logout', logoutUser);
+
+router.post('/forgot-password', forgotPassword);
+router.patch('/reset-password/:token', resetPassword);
 
 router.get('/me', protect, getMe);
 router.patch('/complete-tour', protect, completeTour);

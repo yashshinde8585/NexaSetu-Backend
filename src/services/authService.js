@@ -185,6 +185,41 @@ class AuthService {
     await invitation.save();
     return user;
   }
+  // Generate and save a secure password reset token
+  async forgotPassword(email) {
+    const user = await User.findOne({ email });
+    if (!user) throw new AppError('No account found with that email address.', 404);
+
+    const crypto = require('crypto');
+    const resetToken = crypto.randomBytes(32).toString('hex');
+    user.passwordResetToken = crypto.createHash('sha256').update(resetToken).digest('hex');
+    user.passwordResetExpires = Date.now() + 10 * 60 * 1000; // 10 minutes
+
+    await user.save({ validateBeforeSave: false });
+    return resetToken;
+  }
+
+  // Verify token and update user password
+  async resetPassword(token, password) {
+    const crypto = require('crypto');
+    const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
+
+    const user = await User.findOne({
+      passwordResetToken: hashedToken,
+      passwordResetExpires: { $gt: Date.now() },
+    });
+
+    if (!user) throw new AppError('Token is invalid or has expired.', 400);
+
+    user.password = password;
+    user.passwordResetToken = undefined;
+    user.passwordResetExpires = undefined;
+    user.passwordChangedAt = Date.now();
+    
+    await user.save();
+    return user;
+  }
+
   // Mark user tour as completed
   async completeTour(userId) {
     const user = await User.findByIdAndUpdate(userId, { hasSeenTour: true }, { new: true });
