@@ -1,5 +1,6 @@
 const { getRedisClient, isRedisConnected } = require('../config/redis');
 const crypto = require('crypto');
+const logger = require('../utils/logger');
 
 /**
  * Ensures mutating requests (POST, PUT, PATCH) are processed only once per unique key.
@@ -20,7 +21,7 @@ const idempotency = (options = {}) => {
     // If no key is provided, we still proceed, but warn in development
     if (!key) {
       if (process.env.NODE_ENV === 'development') {
-        console.warn(`[IDEMPOTENCY] Missing ${headerName} header for ${req.method} ${req.url}`);
+        logger.warn(`[IDEMPOTENCY] Missing ${headerName} header for ${req.method} ${req.url}`);
       }
       return next();
     }
@@ -51,7 +52,7 @@ const idempotency = (options = {}) => {
             body: JSON.parse(body)
           };
           redis.set(redisKey, JSON.stringify(responseToCache), 'EX', ttl).catch(err => {
-            console.error('[IDEMPOTENCY] Redis set error:', err);
+            logger.error('[IDEMPOTENCY] Redis set error: %o', err);
           });
         }
         
@@ -60,7 +61,7 @@ const idempotency = (options = {}) => {
 
       next();
     } catch (err) {
-      console.error('[IDEMPOTENCY] Error:', err);
+      logger.error('[IDEMPOTENCY] Error: %o', err);
       next();
     }
   };

@@ -8,8 +8,11 @@ const config = require('./config/config');
 const { isRedisConnected } = require('./config/redis');
 const logger = require('./utils/logger');
 const SmartRateLimitStore = require('./utils/SmartRateLimitStore');
+const crypto = require('crypto');
 
 const app = express();
+
+app.set('trust proxy', 1); 
 
 app.use(compression());
 
@@ -54,12 +57,24 @@ const telemetry = require('./middleware/telemetryMiddleware');
 const idempotency = require('./middleware/idempotencyMiddleware');
 const normalizeUnicode = require('./middleware/normalizationMiddleware');
 
+const timeoutHandler = require('./middleware/timeoutHandler');
+
 app.use(telemetry);
 app.use(normalizeUnicode);
 app.use(idempotency());
 
+// Enforce 15s server-side timeout for all API requests.
+app.use(timeoutHandler(15000));
+
 app.use((req, res, next) => {
-  logger.info(`[DEBUG] ${req.method} ${req.url}`);
+  req.id = crypto.randomUUID();
+  const start = Date.now();
+  
+  res.on('finish', () => {
+    const duration = Date.now() - start;
+    logger.info(`[API] ${req.method} ${req.url} - ${res.statusCode} [${duration}ms]`);
+  });
+  
   next();
 });
 
@@ -77,21 +92,13 @@ const createLimiter = (prefix, max, windowMs = 60 * 60 * 1000) => rateLimit({
     prefix: `rl:${prefix}:`,
     windowMs
   }),
-  keyGenerator: (req) => {
-    return req.ip || req.headers['x-forwarded-for'] || 'unknown';
-  },
   skip: (req) => config.isTest,
 });
 
 app.use('/api', createLimiter('global', 1000, 15 * 60 * 1000));
 app.use('/api/auth/login', createLimiter('auth-login', 15, 5 * 60 * 1000));
 
-app.get('/api/health', (req, res) => {
-  res.status(200).json({
-    status: 'success',
-    data: { service: 'NexaSetu API', env: config.env, timestamp: new Date().toISOString() }
-  });
-});
+// Health endpoints registered via healthRoutes below
 
 const v1Router = express.Router();
 
@@ -114,6 +121,12 @@ const strategicIntentRoutes = require('./routes/strategicIntentRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
 const commentRoutes = require('./routes/commentRoutes');
 const epiRoutes = require('./routes/epiRoutes');
+const billingRoutes = require('./routes/billingRoutes');
+const rbacRoutes = require('./routes/rbacRoutes');
+const executionRoutes = require('./routes/executionRoutes');
+const observabilityRoutes = require('./routes/observabilityRoutes');
+const metricsRoutes = require('./routes/metricsRoutes');
+const healthRoutes = require('./routes/healthRoutes');
 
 v1Router.use('/auth', authRoutes);
 v1Router.use('/projects', projectRoutes);
@@ -130,12 +143,19 @@ v1Router.use('/strategic', strategicIntentRoutes);
 v1Router.use('/notifications', notificationRoutes);
 v1Router.use('/comments', commentRoutes);
 v1Router.use('/epi', epiRoutes);
+v1Router.use('/billing', billingRoutes);
+
+v1Router.use('/rbac', rbacRoutes);
+v1Router.use('/execution', executionRoutes);
+v1Router.use('/observability', observabilityRoutes);
+v1Router.use('/metrics', metricsRoutes);
 
 v1Router.use('/engineering', engineeringRoutes);
 v1Router.use('/leadership', leadershipRoutes);
 v1Router.use('/operations', operationsRoutes);
 v1Router.use('/admin', adminRoutes);
 
+app.use('/api/health', healthRoutes);
 app.use(['/api/v1', '/api'], v1Router);
 
 app.use((req, res, next) => {

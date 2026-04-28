@@ -1,7 +1,9 @@
 const Task = require('../models/Task');
 const aiService = require('./aiService');
+const aiOutputValidator = require('../validators/aiOutputValidator');
+const logger = require('../utils/logger');
 
-// Autonomous daemon responsible for extracting operational parameters from linked external CI systems.
+// Autonomous daemon responsible for extracting operational parameters from external CI systems.
 class HarvesterAgent {
   constructor() {
     this.name = 'Harvester';
@@ -12,7 +14,6 @@ class HarvesterAgent {
       const { projectId, githubId, type, message, author, statusHint } =
         eventData;
 
-      // Check distinct telemetry signatures preventing duplicate system data ingestion.
       const existingTask = await Task.findOne({ githubId, project: projectId });
       if (existingTask) {
         return {
@@ -21,22 +22,25 @@ class HarvesterAgent {
         };
       }
 
-      // Augment raw git payloads dynamically to improve natural language structural breakdown.
       const extractionText = `Source: GitHub ${type}\nAuthor: ${author}\nMessage: ${message}`;
       const suggestion = await aiService.extractTaskFromText(extractionText);
 
-      // Commit AI-verified system entities definitively into active datastores.
+      // Validate AI output before persistence to ensure system integrity.
+      const validatedData = aiOutputValidator.validateTaskEnrichment(suggestion);
+
       const task = await Task.create({
-        title: suggestion.title,
+        title: validatedData.title || suggestion.title,
         description:
+          validatedData.description ||
           suggestion.description ||
           `Auto-generated from GitHub ${type}: ${message}`,
         project: projectId,
-        status: statusHint || suggestion.status || 'todo',
+        status: statusHint || validatedData.status || suggestion.status || 'todo',
         source: 'github',
         isAiGenerated: true,
         githubId: githubId,
-        // Retain author traceability mappings for future advanced linkage routines.
+        priority: validatedData.priority || 'medium',
+        estimatedDuration: validatedData.estimatedDuration || 30
       });
 
       return {
@@ -46,7 +50,7 @@ class HarvesterAgent {
         action: `Created task from GitHub ${type}`,
       };
     } catch (error) {
-      console.error('[HarvesterAgent] Error processing activity:', error);
+      logger.error('[HarvesterAgent] Error processing activity:', error);
       throw error;
     }
   }

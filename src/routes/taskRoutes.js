@@ -36,8 +36,10 @@ const router = express.Router();
 router.use(protect);
 router.use(validateWorkflow(['workspace']));
 
-router.get('/my-tasks', getMyTasks);
-router.get('/project/:projectId', getTasks);
+const { cacheMiddleware } = require('../middleware/cacheMiddleware');
+
+router.get('/my-tasks', cacheMiddleware(30), getMyTasks);
+router.get('/project/:projectId', cacheMiddleware(30), getTasks);
 
 // Secure Signed URL Generation
 router.post('/attachments/upload-url', uploadLimiter, getSignedUploadUrl);

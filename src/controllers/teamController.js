@@ -2,29 +2,22 @@ const teamService = require('../services/teamService');
 const auditService = require('../services/auditService');
 const adminService = require('../services/adminService');
 const catchAsync = require('../utils/catchAsync');
+const ResponseBuilder = require('../utils/responseBuilder');
 const { isStrategicLead } = require('../utils/authHelpers');
 
-// Handles workspace personnel provisioning, team invitations, and role-based access management.
-
-// Dispatches a role-specific invitation to a new user via token provisioning.
 exports.inviteUser = catchAsync(async (req, res, next) => {
   const { email, role, projectId } = req.body;
   if (!email || !role)
-    return res.status(400).json({ status: 'fail', message: 'Missing fields' });
+    return ResponseBuilder.error(res, 'Missing fields', 'MISSING_FIELDS', 400);
 
   const isLeadOrAdmin = isStrategicLead(req.user);
   if (!isLeadOrAdmin) {
     const allowedRoles = ['PROJECT_MEMBER', 'RESTRICTED'];
     if (!allowedRoles.includes(role)) {
-      return res.status(403).json({
-        status: 'fail',
-        message:
-          'Unauthorized role assignment. Only Engineers and Interns can be recruited by non-admins.',
-      });
+      return ResponseBuilder.error(res, 'Unauthorized role assignment.', 'UNAUTHORIZED_ROLE', 403);
     }
   }
 
-  // Provision via Token Strategy
   const result = await teamService.provisionUser(
     { email, role, projectId },
     req.user.workspaceId,
@@ -33,9 +26,7 @@ exports.inviteUser = catchAsync(async (req, res, next) => {
   );
 
   if (result.status === 'EXISTING') {
-    return res
-      .status(400)
-      .json({ status: 'fail', message: 'User already has an account' });
+    return ResponseBuilder.error(res, 'User already has an account', 'USER_EXISTS', 400);
   }
 
   await auditService.log({
@@ -46,41 +37,31 @@ exports.inviteUser = catchAsync(async (req, res, next) => {
     details: { email, role, projectId },
   });
 
-  res.status(200).json({
-    status: 'success',
-    data: {
-      invitation: {
-        email: result.invitation.email,
-        role: result.invitation.role,
-        token: '********', // Redacted for security
-      },
+  return ResponseBuilder.success(res, {
+    invitation: {
+      email: result.invitation.email,
+      role: result.invitation.role,
+      token: '********',
     },
   });
 });
 
-// Validates and extracts invitation details using an active provisioning token.
 exports.getInviteByToken = catchAsync(async (req, res, next) => {
   const invitation = await teamService.getInviteByToken(req.params.token);
 
-  res.status(200).json({
-    status: 'success',
-    data: {
-      invitation: {
-        email: invitation.email,
-        role: invitation.role,
-        projectId: invitation.projectId,
-      },
+  return ResponseBuilder.success(res, {
+    invitation: {
+      email: invitation.email,
+      role: invitation.role,
+      projectId: invitation.projectId,
     },
   });
 });
 
-// Provisions multiple users and roles simultaneously into the workspace.
 exports.inviteMultipleUsers = catchAsync(async (req, res, next) => {
   const { invites } = req.body;
   if (!invites || !Array.isArray(invites) || invites.length === 0) {
-    return res
-      .status(400)
-      .json({ status: 'fail', message: 'No invitations provided' });
+    return ResponseBuilder.error(res, 'No invitations provided', 'MISSING_INVITES', 400);
   }
 
   const { provisionedUsers, failedInvites } = await teamService.bulkProvision(
@@ -90,7 +71,6 @@ exports.inviteMultipleUsers = catchAsync(async (req, res, next) => {
     isStrategicLead(req.user)
   );
 
-  // 📝 Audit logging
   await auditService.log({
     action: 'BULK_PROVISION',
     req,
@@ -98,23 +78,18 @@ exports.inviteMultipleUsers = catchAsync(async (req, res, next) => {
     details: { count: provisionedUsers.length, failed: failedInvites.length },
   });
 
-  res.status(200).json({
-    status: 'success',
-    data: {
-      provisionedUsers,
-      failedInvites,
-      message: 'Squad provisioning complete.',
-    },
+  return ResponseBuilder.success(res, {
+    provisionedUsers,
+    failedInvites,
+    message: 'Squad provisioning complete.',
   });
 });
 
-// Retrieves active workspace personnel and pending invitations with access control filtering.
 exports.getWorkspaceTeam = catchAsync(async (req, res, next) => {
   const { page = 1, limit = 20 } = req.query;
   const result = await teamService.getWorkspaceTeam(req.user, isStrategicLead(req.user), page, limit);
 
-  res.status(200).json({
-    status: 'success',
+  return ResponseBuilder.success(res, {
     pagination: {
       members: {
         total: result.totalMembers,
@@ -133,14 +108,12 @@ exports.getWorkspaceTeam = catchAsync(async (req, res, next) => {
   });
 });
 
-/**
- * Retrieves dynamic organizational role definitions for current workspace
- */
 exports.getWorkspaceRoles = catchAsync(async (req, res, next) => {
   const roleDefinitions = await adminService.getRoleDefinitions(req.user.workspaceId);
+  return ResponseBuilder.success(res, { roles: roleDefinitions });
+});
 
-  res.status(200).json({
-    status: 'success',
-    data: { roles: roleDefinitions }
-  });
+exports.removeInvitation = catchAsync(async (req, res, next) => {
+  await teamService.removeInvitation(req.user, req.params.id);
+  return ResponseBuilder.success(res, null, 204);
 });
