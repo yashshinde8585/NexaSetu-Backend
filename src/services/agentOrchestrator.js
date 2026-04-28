@@ -46,8 +46,23 @@ class AgentOrchestrator {
   async processEvent(event) {
     try {
       const { type, payload, project, entityId, entityType } = event;
+      let workspaceId = event.workspaceId;
 
       logger.info(`[ORCHESTRATOR] Processing ${type} for ${entityType}:${entityId}`);
+
+      // Auto-resolve workspaceId from project if missing
+      if (!workspaceId && project) {
+        const projectDoc = await Project.findById(project).select('workspaceId');
+        if (projectDoc) {
+          workspaceId = projectDoc.workspaceId;
+        }
+      }
+
+      // If still no workspaceId, we cannot proceed with AILog creation
+      if (!workspaceId) {
+        logger.warn(`[ORCHESTRATOR] Missing workspaceId for event ${type}. Skipping AILog creation.`);
+        return { status: 'incomplete', reason: 'Missing workspaceId' };
+      }
 
       let decision = 'monitoring';
       let actionTaken = 'logged';
@@ -102,6 +117,7 @@ class AgentOrchestrator {
       // Persist the logic tree for transparency and audit trails.
       return await AILog.create({
         eventType: type,
+        workspaceId,
         project: project || (payload && payload.project),
         entityId,
         entityType,
