@@ -14,6 +14,8 @@ const { sanitizeHTML } = require('../utils/sanitizer');
 const { STORAGE_CONSTANTS } = require('../utils/constants');
 const storageQueue = require('../queues/storageQueue');
 const storageService = require('../services/storageService');
+const metricsService = require('../services/metricsService');
+const logger = require('../utils/logger');
 
 class TaskService {
   // Calculates and persists active work time when mission state changes.
@@ -77,6 +79,9 @@ class TaskService {
         user._id,
         `Status transitioned from ${oldStatus} to ${status}`
       );
+
+      logger.info(`[STATE_TRANSITION] task.status: ${oldStatus} -> ${status} for task ${taskId}`);
+      metricsService.trackEvent(user, 'task_state_transition', { taskId, from: oldStatus, to: status });
 
       return task;
     } catch (error) {
@@ -433,6 +438,9 @@ class TaskService {
         toStatus: status,
         changedBy: user?._id,
       });
+
+      logger.info(`[STATE_TRANSITION] task.status: ${task.status} -> ${status} for task ${updatedTask._id}`);
+      metricsService.trackEvent(user, 'task_state_transition', { taskId: updatedTask._id, from: task.status, to: status });
     }
 
     await AgentOrchestrator.handleEvent({

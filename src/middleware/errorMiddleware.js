@@ -51,7 +51,10 @@ const handleJWTExpiredError = () => new AppError('Your token has expired! Please
 // Verbose error diagnostics for rapid debugging in development environments
 const sendErrorDev = (err, req, res) => {
   res.status(err.statusCode).json({
-    status: err.status,
+    success: false,
+    status: err.statusCode,
+    errorStatus: err.status,
+    code: err.errorCode || err.code || 'ERROR',
     error: err,
     message: err.message,
     stack: err.stack,
@@ -62,8 +65,10 @@ const sendErrorDev = (err, req, res) => {
 const sendErrorProd = (err, req, res) => {
   if (err.isOperational) {
     return res.status(err.statusCode).json({
-      status: err.status,
-      code: err.errorCode || 'OPERATIONAL_ERROR',
+      success: false,
+      status: err.statusCode,
+      errorStatus: err.status,
+      code: err.errorCode || err.code || 'OPERATIONAL_ERROR',
       message: err.message,
     });
   }
@@ -71,7 +76,9 @@ const sendErrorProd = (err, req, res) => {
   // Log unknown critical errors and send generic message
   logger.error('ERROR 💥', err);
   res.status(500).json({
-    status: 'error',
+    success: false,
+    status: 500,
+    errorStatus: 'error',
     code: 'INTERNAL_SERVER_ERROR',
     message: 'Something went very wrong!',
   });
