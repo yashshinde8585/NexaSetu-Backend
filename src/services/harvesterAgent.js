@@ -14,6 +14,12 @@ class HarvesterAgent {
       const { projectId, githubId, type, message, author, statusHint } =
         eventData;
 
+      const Project = require('../models/Project');
+      const projectDoc = await Project.findById(projectId);
+      if (!projectDoc) {
+        return { status: 'failed', reason: 'Project not found' };
+      }
+
       const existingTask = await Task.findOne({ githubId, project: projectId });
       if (existingTask) {
         return {
@@ -35,6 +41,7 @@ class HarvesterAgent {
           suggestion.description ||
           `Auto-generated from GitHub ${type}: ${message}`,
         project: projectId,
+        workspaceId: projectDoc.workspaceId,
         status: statusHint || validatedData.status || suggestion.status || 'todo',
         source: 'github',
         isAiGenerated: true,

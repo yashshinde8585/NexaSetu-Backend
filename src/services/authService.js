@@ -13,8 +13,9 @@ const logger = require('../utils/logger');
 const crypto = require('crypto');
 
 const generateTokens = (userId) => {
-  const accessToken = jwt.sign({ id: userId }, config.jwt.secret, { expiresIn: config.jwt.expiresIn });
-  const refreshToken = jwt.sign({ id: userId }, config.jwt.refreshSecret, { expiresIn: config.jwt.refreshExpiresIn });
+  const id = userId.toString();
+  const accessToken = jwt.sign({ id }, config.jwt.secret, { expiresIn: config.jwt.expiresIn });
+  const refreshToken = jwt.sign({ id }, config.jwt.refreshSecret, { expiresIn: config.jwt.refreshExpiresIn });
   return { accessToken, refreshToken };
 };
 

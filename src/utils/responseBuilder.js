@@ -20,6 +20,15 @@ class ResponseBuilder {
 
     return res.status(statusCode).json(responseBody);
   }
+
+  static error(res, message = 'Operation failed', code = 'ERROR', statusCode = 400) {
+    return res.status(statusCode).json({
+      success: false,
+      status: 'error',
+      code,
+      message,
+    });
+  }
 }
 
 module.exports = ResponseBuilder;

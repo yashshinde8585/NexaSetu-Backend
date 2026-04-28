@@ -18,13 +18,17 @@ const sendAuthResponse = async (user, statusCode, req, res) => {
     ipAddress: req.ip,
   });
 
+  // Clear maxAge from generic options to avoid conflicts with explicit expires
+  const baseOptions = { ...cookieOptions };
+  delete baseOptions.maxAge;
+
   res.cookie('jwt', accessToken, {
-    ...cookieOptions,
+    ...baseOptions,
     expires: new Date(Date.now() + 8 * 60 * 60 * 1000),
   });
 
   res.cookie('refreshToken', refreshToken, {
-    ...cookieOptions,
+    ...baseOptions,
     expires: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
   });
 
