@@ -4,6 +4,8 @@ const Project = require('../models/Project');
 const crypto = require('crypto');
 const { getProjectAccessQuery } = require('../utils/queryHelpers');
 const AppError = require('../utils/appError');
+const metricsService = require('./metricsService');
+const logger = require('../utils/logger');
 
 // Centralizes workspace administrative flows for provisioning and organizing organizational personnel.
 class TeamService {
@@ -52,6 +54,13 @@ class TeamService {
         },
         { upsert: true, returnDocument: 'after' }
       );
+
+      // Fire-and-forget metrics hook
+      metricsService.trackEvent({ _id: invitedBy, workspaceId }, 'invite_sent', { 
+        inviteeEmail: email,
+        role: role,
+        projectId: projectId 
+      }).catch(err => logger.error(`[METRICS] Failed to track invitation: ${err.message}`));
 
       return { status: 'INVITED', invitation };
     }

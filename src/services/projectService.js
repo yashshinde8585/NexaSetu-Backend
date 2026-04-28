@@ -6,6 +6,8 @@ const { calculateDelayStatus } = require('../utils/taskUtils');
 const { getProjectAccessQuery } = require('../utils/queryHelpers');
 const { isManagerOrAdmin, hasLeadRestriction } = require('../utils/authHelpers');
 const AppError = require('../utils/appError');
+const metricsService = require('./metricsService');
+const logger = require('../utils/logger');
 
 class ProjectService {
   async createProject(user, data) {
@@ -56,6 +58,12 @@ class ProjectService {
       entityId: project._id,
       details: { name: project.name },
     });
+
+    // Fire-and-forget metrics hook
+    metricsService.trackEvent(user, 'project_created', { 
+      projectId: project._id, 
+      type: project.type 
+    }).catch(err => logger.error(`[METRICS] Failed to track project creation: ${err.message}`));
 
     return project;
   }

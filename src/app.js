@@ -8,8 +8,11 @@ const config = require('./config/config');
 const { isRedisConnected } = require('./config/redis');
 const logger = require('./utils/logger');
 const SmartRateLimitStore = require('./utils/SmartRateLimitStore');
+const crypto = require('crypto');
 
 const app = express();
+
+app.set('trust proxy', 1); // Trust first proxy (e.g. Nginx, Heroku, etc.)
 
 app.use(compression());
 
@@ -54,12 +57,24 @@ const telemetry = require('./middleware/telemetryMiddleware');
 const idempotency = require('./middleware/idempotencyMiddleware');
 const normalizeUnicode = require('./middleware/normalizationMiddleware');
 
+const timeoutHandler = require('./middleware/timeoutHandler');
+
 app.use(telemetry);
 app.use(normalizeUnicode);
 app.use(idempotency());
 
+// Enforce 15s server-side timeout for all API requests.
+app.use(timeoutHandler(15000));
+
 app.use((req, res, next) => {
-  logger.info(`[DEBUG] ${req.method} ${req.url}`);
+  req.id = crypto.randomUUID();
+  const start = Date.now();
+  
+  res.on('finish', () => {
+    const duration = Date.now() - start;
+    logger.info(`[API] ${req.method} ${req.url} - ${res.statusCode} [${duration}ms]`);
+  });
+  
   next();
 });
 
@@ -77,9 +92,6 @@ const createLimiter = (prefix, max, windowMs = 60 * 60 * 1000) => rateLimit({
     prefix: `rl:${prefix}:`,
     windowMs
   }),
-  keyGenerator: (req) => {
-    return req.ip || req.headers['x-forwarded-for'] || 'unknown';
-  },
   skip: (req) => config.isTest,
 });
 

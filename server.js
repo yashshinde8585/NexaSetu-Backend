@@ -8,7 +8,7 @@ const mongoose = require('mongoose');
 async function bootstrap() {
   try {
     logger.info(`[BOOTSTRAP] Initializing services in ${config.env} mode...`);
-    // Connecting to Redis and DB concurrently to minimize serialized latency
+
     const connectDB = require('./src/config/db');
     const infraPromise = Promise.all([
       connectRedis(),
@@ -27,25 +27,21 @@ async function bootstrap() {
 
     const server = http.createServer(app);
     
-    // Network safeguards to prevent resource exhaustion during slow attacks
+    // Network safeguards to prevent resource exhaustion.
     server.timeout = 30000;
     server.headersTimeout = 31000;
     server.keepAliveTimeout = 5000;
     logger.info('[BOOTSTRAP] Network timeouts enforced');
 
-    // Synchronize real-time communications and automated background tasks
     socketIO.init(server);
     cronService.start();
     logger.info('[BOOTSTRAP] Real-time & Scheduled services synchronized');
 
-    // Start listening only after all critical services are healthy
     server.listen(config.port, () => {
       logger.info(`[NEXA-SETU] API Server listening on port ${config.port} [${config.env}]`);
     });
 
-    /**
-     * Graceful termination to prevent data corruption and ensure connection cleanup.
-     */
+    // Graceful termination handler to ensure clean shutdown.
     const shutdown = async (signal) => {
       logger.info(`[SHUTDOWN] Signal ${signal} detected. Purging resources...`);
       
@@ -78,7 +74,7 @@ async function bootstrap() {
   }
 }
 
-// System-wide error handlers
+// Global exception handlers for system stability.
 process.on('unhandledRejection', (reason, promise) => {
   logger.error('[FATAL] Unhandled Rejection', { reason, promise });
 });

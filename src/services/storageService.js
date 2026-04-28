@@ -3,6 +3,9 @@ const { STORAGE_CONSTANTS } = require('../utils/constants');
 const Workspace = require('../models/Workspace');
 const { v4: uuidv4 } = require('uuid');
 const logger = require('../utils/logger');
+const CircuitBreaker = require('../utils/circuitBreaker');
+
+const storageBreaker = new CircuitBreaker('Supabase_Storage', { failureThreshold: 3, resetTimeout: 30000 });
 
 /**
  * Enterprise-grade Storage Service.
@@ -28,9 +31,9 @@ class StorageService {
     const finalFileName = `${Date.now()}_${uuidv4().substring(0, 8)}_${safeName}`;
     const filePath = `${workspaceId}/${projectId}/${taskId}/${finalFileName}`;
 
-    const { data, error } = await supabase.storage
+    const { data, error } = await storageBreaker.execute(() => supabase.storage
       .from(STORAGE_CONSTANTS.BUCKET_NAME)
-      .createSignedUploadUrl(filePath);
+      .createSignedUploadUrl(filePath), () => ({ error: new Error('Storage service is temporarily unavailable') }));
 
     if (error) {
       logger.error(`[STORAGE] Failed to create signed upload URL: ${error.message}`);
@@ -61,9 +64,9 @@ class StorageService {
     if (!supabase) return null;
     const expiry = 315360000; 
 
-    const { data, error } = await supabase.storage
+    const { data, error } = await storageBreaker.execute(() => supabase.storage
       .from(STORAGE_CONSTANTS.BUCKET_NAME)
-      .createSignedUrl(storagePath, expiry);
+      .createSignedUrl(storagePath, expiry), () => ({ error: new Error('Storage service is temporarily unavailable') }));
 
     if (error) {
       logger.error(`[STORAGE] Failed to generate signed URL: ${error.message}`, { path: storagePath });
@@ -85,13 +88,13 @@ class StorageService {
     const fileName = pathParts.pop();
     const directory = pathParts.join('/');
 
-    const { data, error } = await supabase.storage
+    const { data, error } = await storageBreaker.execute(() => supabase.storage
       .from(STORAGE_CONSTANTS.BUCKET_NAME)
       .list(directory, { 
         limit: 1,
         offset: 0,
         search: fileName
-      });
+      }), () => ({ error: new Error('Storage service is temporarily unavailable') }));
 
     if (error || !data || data.length === 0) {
       logger.warn(`[STORAGE] Verification failed: File not found`, { path: storagePath });

@@ -1,19 +1,20 @@
 const projectService = require('../services/projectService');
 const catchAsync = require('../utils/catchAsync');
+const ResponseBuilder = require('../utils/responseBuilder');
+const { invalidateCache } = require('../middleware/cacheMiddleware');
 
-// Initializes a new project entity within the user's workspace.
 exports.createProject = catchAsync(async (req, res, next) => {
   const project = await projectService.createProject(req.user, req.body);
-  res.status(201).json({ status: 'success', data: { project } });
+  // Data Consistency: Invalidate project cache after creation.
+  await invalidateCache(req.user.workspaceId, '*project*');
+  return ResponseBuilder.success(res, { project }, 201);
 });
 
-// Retrieves all projects the current user is authorized to manage or view.
 exports.getProjects = catchAsync(async (req, res, next) => {
   const { page, limit } = req.query;
   const result = await projectService.getProjects(req.user, page, limit);
   
-  res.status(200).json({
-    status: 'success',
+  return ResponseBuilder.success(res, {
     results: result.projects.length,
     pagination: {
       total: result.total,
@@ -25,22 +26,20 @@ exports.getProjects = catchAsync(async (req, res, next) => {
   });
 });
 
-// Fetches specific project telemetry ensuring strict workspace containment.
 exports.getProject = catchAsync(async (req, res, next) => {
   const project = await projectService.getProject(req.user, req.params.id);
-  res.status(200).json({ status: 'success', data: { project } });
+  return ResponseBuilder.success(res, { project });
 });
 
-// Aggregates task matrices to generate robust health and completion metrics.
 exports.getProjectAnalytics = catchAsync(async (req, res, next) => {
   const { sprintId } = req.query;
   const { id } = req.params;
   const data = await projectService.getProjectAnalytics(req.user, id, sprintId);
-  res.status(200).json({ status: 'success', data });
+  return ResponseBuilder.success(res, data);
 });
 
-// Modifies top-level project metadata with strict role-based access validation.
 exports.updateProject = catchAsync(async (req, res, next) => {
   const project = await projectService.updateProject(req.user, req.params.id, req.body);
-  res.status(200).json({ status: 'success', data: { project } });
+  await invalidateCache(req.user.workspaceId, '*project*');
+  return ResponseBuilder.success(res, { project });
 });

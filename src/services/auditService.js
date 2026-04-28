@@ -1,34 +1,53 @@
 const AuditLog = require('../models/AuditLog');
+const logger = require('../utils/logger');
 
-// Persists user and system activities for audit tracking.
+// Audit Service: Centralizes system audit logging with support for state diffing.
 class AuditService {
-  async log({ action, req, entityType, entityId, details }) {
+  async log({ action, user, workspaceId, entityType, entityId, details, req }) {
     try {
       const entry = {
         action,
-        performer: req.user._id,
-        workspaceId: req.user.workspaceId,
+        performer: user?._id || req?.user?._id,
+        workspaceId: workspaceId || req?.user?.workspaceId,
         entityType,
         entityId,
         details,
-        ip:
-          req.ip ||
-          req.headers['x-forwarded-for'] ||
-          req.connection.remoteAddress,
+        ip: req ? (req.ip || req.headers['x-forwarded-for'] || req.connection.remoteAddress) : 'system',
+        timestamp: new Date()
       };
 
-      const log = await AuditLog.create(entry);
-
+      await AuditLog.create(entry);
+      
       if (process.env.NODE_ENV !== 'production') {
-        console.log(
-          `[AUDIT]: ${action} by ${req.user.email} on ${entityType} ${entityId || ''}`
-        );
+        logger.info(`[AUDIT]: ${action} on ${entityType}:${entityId}`);
       }
-
-      return log;
     } catch (err) {
-      console.error('Failed to write audit log:', err);
+      logger.error(`[AUDIT ERROR] Failed to write log: ${err.message}`);
     }
+  }
+
+  // Specialized logger for entity updates that calculates field-level diffs.
+  async logUpdate(user, entityType, entityId, before, after, req) {
+    const diff = {};
+    Object.keys(after).forEach(key => {
+      if (JSON.stringify(before[key]) !== JSON.stringify(after[key])) {
+        diff[key] = {
+          old: before[key],
+          new: after[key]
+        };
+      }
+    });
+
+    if (Object.keys(diff).length === 0) return;
+
+    return this.log({
+      action: `UPDATE_${entityType}`,
+      user,
+      entityType,
+      entityId,
+      details: { diff },
+      req
+    });
   }
 }
 

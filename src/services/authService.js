@@ -8,6 +8,7 @@ const mongoose = require('mongoose');
 const { mapRole } = require('../utils/authHelpers');
 const AppError = require('../utils/appError');
 const workspaceService = require('./workspaceService');
+const metricsService = require('./metricsService');
 
 class AuthService {
   // Register user and provision workspace or join via invitation (Atomic)
@@ -66,6 +67,12 @@ class AuthService {
         await workspaceService.transferOwnership(workspaceId, createdUser._id);
       }
 
+      // Fire-and-forget metrics hook
+      metricsService.trackEvent(createdUser, 'signup_success', { 
+        method: invitation ? 'invitation' : 'direct',
+        role: createdUser.role 
+      }).catch(err => logger.error(`[METRICS] Failed to track signup: ${err.message}`));
+
       return createdUser;
     } catch (error) {
       throw error;
@@ -101,6 +108,12 @@ class AuthService {
     user.failedLoginAttempts = 0;
     user.lockUntil = undefined;
     await user.save({ validateBeforeSave: false });
+
+    // Fire-and-forget metrics hook
+    metricsService.trackEvent(user, 'login_success').catch(err => 
+      logger.error(`[METRICS] Failed to track login: ${err.message}`)
+    );
+
     return user;
   }
 

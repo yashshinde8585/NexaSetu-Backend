@@ -11,6 +11,7 @@ const {
   updateProject,
 } = require('../controllers/projectController');
 const { protect, requirePermission } = require('../middleware/authMiddleware');
+const { cacheMiddleware } = require('../middleware/cacheMiddleware');
 const { PERMISSIONS } = require('../config/permissions');
 
 const validate = require('../middleware/validateMiddleware');
@@ -34,9 +35,9 @@ router.post('/',
   validate(createProjectSchema), 
   createProject
 );
-router.get('/', getProjects);
+router.get('/', cacheMiddleware(60), getProjects);
 router.get('/:id', getProject);
 router.patch('/:id', validate(updateProjectSchema), updateProject);
-router.get('/:id/analytics', getProjectAnalytics);
+router.get('/:id/analytics', cacheMiddleware(30), getProjectAnalytics);
 
 module.exports = router;

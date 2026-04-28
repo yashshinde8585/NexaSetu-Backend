@@ -6,6 +6,8 @@ const router = express.Router();
 
 router.use(protect);
 
-router.get('/stats', dashboardController.getDashboardStats);
+const { cacheMiddleware } = require('../middleware/cacheMiddleware');
+
+router.get('/stats', cacheMiddleware(60), dashboardController.getDashboardStats);
 
 module.exports = router;

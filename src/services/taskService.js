@@ -9,12 +9,13 @@ const { isManagerOrAdmin } = require('../utils/authHelpers');
 const { getTaskAccessQuery, getProjectAccessQuery } = require('../utils/queryHelpers');
 const { formatDueDate } = require('../utils/dashboardHelpers');
 const AppError = require('../utils/appError');
-const commentController = require('../controllers/commentController'); // Note: should ideally be a service
+const commentController = require('../controllers/commentController');
 const { sanitizeHTML } = require('../utils/sanitizer');
 const { STORAGE_CONSTANTS } = require('../utils/constants');
 const storageQueue = require('../queues/storageQueue');
 const storageService = require('../services/storageService');
 const metricsService = require('../services/metricsService');
+const auditService = require('../services/auditService');
 const logger = require('../utils/logger');
 
 class TaskService {
@@ -24,14 +25,12 @@ class TaskService {
     const isCurrentlyActive = (task.status === 'in_progress' && !task.blocked);
     const willBeActive = (newStatus === 'in_progress');
 
-    // Deduct elapsed time only when transitioning away from an active state
     if (isCurrentlyActive && !willBeActive && task.lastStartedAt) {
       const elapsedMinutes = Math.max(0, (now - task.lastStartedAt) / (1000 * 60));
       task.remainingDuration = Math.max(0, (task.remainingDuration || task.estimatedDuration) - elapsedMinutes);
       task.lastStartedAt = null;
     }
     
-    // Mark session start for active work tracking
     if (willBeActive && !isCurrentlyActive) {
       task.lastStartedAt = now;
       if (task.remainingDuration === undefined || task.remainingDuration === null) {
@@ -48,7 +47,7 @@ class TaskService {
     }
   }
 
-  async updateTaskStatus(user, taskId, status) {
+  async updateTaskStatus(user, taskId, status, req) {
     try {
       const task = await Task.findById(taskId);
       if (!task) {
@@ -58,7 +57,7 @@ class TaskService {
       const oldStatus = task.status;
       if (oldStatus === status) return task;
 
-      // Prevent non-privileged users from reversing terminal states (Done/Archived)
+      // Prevent non-privileged users from reversing terminal states (Done/Archived).
       const terminalStates = ['done', 'archived'];
       if (terminalStates.includes(oldStatus) && !['todo', 'in_progress'].includes(status) && !isManagerOrAdmin(user)) {
         throw new AppError(`Action Denied: Cannot move a mission from ${oldStatus} to ${status} without manager approval.`, 403);
@@ -73,6 +72,9 @@ class TaskService {
       });
 
       await task.save();
+
+      // Data Consistency: 1. DB Write Success -> 2. Audit -> 3. Metrics -> 4. Events.
+      await auditService.logUpdate(user, 'TASK', task._id, { status: oldStatus }, { status: status }, req);
 
       await commentController.logActivity(
         taskId,
@@ -124,14 +126,13 @@ class TaskService {
         attachments: attachments || [],
       };
 
-      // Enterprise Hardening: Verify Quota
+      // Storage quota verification.
       const totalNewSize = taskData.attachments.reduce((acc, a) => acc + a.size, 0);
       const hasQuota = await storageService.checkQuota(taskData.workspaceId, totalNewSize);
       if (!hasQuota) {
-        throw new AppError('Storage quota exceeded for this workspace. Please upgrade or delete old assets.', 403);
+        throw new AppError('Storage quota exceeded for this workspace.', 403);
       }
 
-      // Hardened metadata validation for attachments
       if (taskData.attachments.length > 0) {
         for (const file of taskData.attachments) {
           storageService.validateAttachment(file, {
@@ -140,23 +141,10 @@ class TaskService {
             taskId: 'new' 
           });
 
-          // Anti-Spoofing: Verify file actually exists in storage
           const isVerified = await storageService.verifyAttachment(file.storagePath, file.size);
           if (!isVerified) {
             throw new AppError(`Integrity Failure: File ${file.name} could not be verified in storage.`, 400);
           }
-        }
-      }
-
-      // Cross-tenant data protection: Verify assignee belongs to the same workspace
-      if (assignedUser) {
-        const User = require('../models/User');
-        const assignee = await User.findById(assignedUser);
-        if (!assignee) {
-          throw new AppError('Integrity Error: The assigned performer does not exist.', 400);
-        }
-        if (assignee.workspaceId.toString() !== projectDoc.workspaceId.toString()) {
-          throw new AppError('Integrity Violation: Performer must belong to the same workspace as the mission.', 400);
         }
       }
 
@@ -171,10 +159,17 @@ class TaskService {
 
       const task = await Task.create(taskData);
 
-      // Persist storage usage update
+      // Data Consistency Sequence.
+      await auditService.log({
+        action: 'CREATE_TASK',
+        user,
+        entityType: 'TASK',
+        entityId: task._id,
+        details: taskData
+      });
+
       await storageService.updateStorageUsage(task.workspaceId, totalNewSize);
 
-      // Audit trail for initial task state
       await TaskStatusHistory.create({
         task: task._id,
         fromStatus: 'none',
@@ -182,7 +177,7 @@ class TaskService {
         changedBy: user?._id,
       });
 
-      // Signal autonomous agents to evaluate the new task context for dependencies or automation
+      // Signal autonomous agents for impact assessment.
       await AgentOrchestrator.handleEvent({
         type: 'TASK_CREATED',
         entityId: task._id,
@@ -191,7 +186,6 @@ class TaskService {
         payload: task,
       });
 
-      // Notify the performer only if they didn't create the task themselves
       if (task.assignedUser && task.assignedUser.toString() !== user._id.toString()) {
         const ticketId = `${projectDoc.key || 'NEXA'}-${task.taskNumber || 'NEW'}`;
         await Notification.create({
@@ -204,6 +198,11 @@ class TaskService {
           workspaceId: task.workspaceId
         });
       }
+
+      metricsService.trackEvent(user, 'task_created', { 
+        taskId: task._id, 
+        projectId: task.project 
+      }).catch(err => logger.error(`[METRICS] Failed to track task creation: ${err.message}`));
 
       return task;
     } catch (error) {
@@ -304,7 +303,7 @@ class TaskService {
     const projectAccess = await Project.findOne(query);
 
     if (!projectAccess) {
-      throw new AppError('Access denied to this project task', 403);
+      throw new AppError('Access denied', 403);
     }
 
     const taskObj = task.toObject();
@@ -313,11 +312,11 @@ class TaskService {
     taskObj.sprintInfo = taskObj.sprint; 
     taskObj.createdFormatted = formatDueDate(taskObj.createdAt);
 
-    // Secure Signed Download URLs for private storage
+    // Generate signed download URLs for private attachments.
     if (taskObj.attachments && taskObj.attachments.length > 0) {
       const enrichmentPromises = taskObj.attachments.map(async (att) => {
         const signedUrl = await storageService.getSignedDownloadUrl(att.storagePath);
-        return { ...att, url: signedUrl || att.url }; // Fallback to original if signing fails
+        return { ...att, url: signedUrl || att.url };
       });
       taskObj.attachments = await Promise.all(enrichmentPromises);
     }
@@ -326,8 +325,6 @@ class TaskService {
   }
 
   async updateTask(user, id, data) {
-    const { title, description, status, assignedUser, dueDate, priority, estimatedDuration } = data;
-
     const task = await Task.findById(id);
     if (!task) {
       throw new AppError('Task not found', 404);
@@ -340,7 +337,7 @@ class TaskService {
       throw new AppError('Access denied', 403);
     }
 
-    const allowedFields = ['title', 'description', 'assignedUser', 'dueDate', 'startDate', 'durationUnit', 'priority', 'type', 'estimatedDuration', 'attachments'];
+    const allowedFields = ['title', 'description', 'status', 'assignedUser', 'dueDate', 'startDate', 'durationUnit', 'priority', 'type', 'estimatedDuration', 'attachments'];
     const updateData = {};
     allowedFields.forEach(field => {
       if (data[field] !== undefined) {
@@ -350,12 +347,11 @@ class TaskService {
       }
     });
 
-    // Validate new attachments if provided
     if (updateData.attachments) {
       const totalNewSize = updateData.attachments.reduce((acc, a) => acc + a.size, 0);
       const hasQuota = await storageService.checkQuota(project.workspaceId, totalNewSize);
       if (!hasQuota) {
-        throw new AppError('Storage quota exceeded. Please upgrade your workspace.', 403);
+        throw new AppError('Storage quota exceeded.', 403);
       }
 
       for (const file of updateData.attachments) {
@@ -371,20 +367,18 @@ class TaskService {
         }
       }
       
-      // Update usage
       await storageService.updateStorageUsage(project.workspaceId, totalNewSize);
     }
 
-    // Optimistic Concurrency Control (OCC): Prevents 'lost updates' in collaborative environments
+    // Optimistic Concurrency Control (OCC).
     const clientVersion = data.version !== undefined ? data.version : data.__v;
-    
     if (clientVersion === undefined) {
       throw new AppError('Conflict Prevention: Version number is required for updates.', 400);
     }
 
+    const status = updateData.status;
     if (status && status !== task.status) {
       this._updateTaskTimeTracking(task, status);
-      updateData.status = status;
       updateData.remainingDuration = task.remainingDuration;
       updateData.lastStartedAt = task.lastStartedAt;
 
@@ -397,14 +391,8 @@ class TaskService {
         const start = task.startedAt || task.createdAt;
         updateData.actualDuration = Math.round((new Date() - start) / (1000 * 60));
       }
-
-      if (status !== 'done' && task.status === 'done') {
-        updateData.completedAt = null;
-        updateData.actualDuration = null;
-      }
     }
 
-    // Atomic update with version check
     const updatedTask = await Task.findOneAndUpdate(
       { _id: id, __v: clientVersion },
       { $set: updateData, $inc: { __v: 1 } },
@@ -415,13 +403,16 @@ class TaskService {
     ).populate('assignedUser', 'name email');
 
     if (!updatedTask) {
-      throw new AppError('Conflict Detected: This task has been modified by another session. Please refresh and try again.', 409);
+      throw new AppError('Conflict Detected: This task has been modified by another session.', 409);
     }
 
-    if (assignedUser && assignedUser.toString() !== task.assignedUser?.toString()) {
+    // Data Consistency Sequence.
+    await auditService.logUpdate(user, 'TASK', updatedTask._id, task.toObject(), updatedTask.toObject());
+
+    if (updateData.assignedUser && updateData.assignedUser.toString() !== task.assignedUser?.toString()) {
       const ticketId = `${project.key || 'NEXA'}-${updatedTask.taskNumber || 'MEMO'}`;
       await Notification.create({
-        recipient: assignedUser,
+        recipient: updateData.assignedUser,
         sender: user._id,
         type: 'TASK_ASSIGNED',
         title: user.name,
@@ -525,11 +516,10 @@ class TaskService {
 
     await task.save();
 
-    const actionText = blocked ? `MISSION BLOCKED: ${reason}` : 'MISSION UNBLOCKED';
     await commentController.logActivity(
       taskId,
       user._id,
-      actionText
+      blocked ? `MISSION BLOCKED: ${reason}` : 'MISSION UNBLOCKED'
     );
 
     return task;
@@ -545,20 +535,16 @@ class TaskService {
     query._id = task.project;
     const project = await Project.findOne(query);
     
-    // Only admins or managers can delete tasks, or the creator
     const isOwner = task.createdBy?.toString() === user._id.toString();
     if (!isManagerOrAdmin(user) && !isOwner) {
-      throw new AppError('Action Denied: You do not have permission to terminate this mission.', 403);
+      throw new AppError('Action Denied.', 403);
     }
 
-    // If there are attachments, trigger cleanup job
     if (task.attachments && task.attachments.length > 0) {
       const storagePaths = task.attachments.map(a => a.storagePath);
       const totalDeletedSize = task.attachments.reduce((acc, a) => acc + a.size, 0);
       
       await storageQueue.add('cleanup-orphans', { storagePaths });
-      
-      // Decrement storage usage
       await storageService.updateStorageUsage(task.workspaceId, -totalDeletedSize);
     }
 

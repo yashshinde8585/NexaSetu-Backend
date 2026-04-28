@@ -8,6 +8,9 @@ const AgentOrchestrator = require('../services/agentOrchestrator');
 const { encrypt, decrypt } = require('../utils/crypto');
 const logger = require('../utils/logger');
 const AppError = require('../utils/appError');
+const CircuitBreaker = require('../utils/circuitBreaker');
+
+const githubBreaker = new CircuitBreaker('GitHub_API', { failureThreshold: 3, resetTimeout: 30000 });
 
 class GithubService {
   getOctokit(accessToken) {
@@ -22,7 +25,7 @@ class GithubService {
 
     try {
       const octokit = this.getOctokit(accessToken);
-      const { data: githubUser } = await octokit.rest.users.getAuthenticated();
+      const { data: githubUser } = await githubBreaker.execute(() => octokit.rest.users.getAuthenticated());
 
       await Workspace.findByIdAndUpdate(
         user.workspaceId,
@@ -63,10 +66,10 @@ class GithubService {
     }
 
     const octokit = this.getOctokit(userDoc.githubAccessToken);
-    const { data } = await octokit.rest.repos.listForAuthenticatedUser({
+    const { data } = await githubBreaker.execute(() => octokit.rest.repos.listForAuthenticatedUser({
       sort: 'updated',
       per_page: 50,
-    });
+    }), () => { throw new AppError('GitHub API is temporarily unavailable', 503); });
     return data.map((repo) => ({
       id: repo.id,
       name: repo.name,
@@ -168,11 +171,11 @@ class GithubService {
 
     let commits = [];
     try {
-      const { data } = await retry(() => octokit.rest.repos.listCommits({
+      const { data } = await githubBreaker.execute(() => retry(() => octokit.rest.repos.listCommits({
         owner,
         repo,
         per_page: 20,
-      }));
+      })));
       commits = data;
     } catch (err) {
       console.warn(`[GITHUB RECON] Commits unreachable for ${owner}/${repo}:`, err.message);
@@ -180,12 +183,12 @@ class GithubService {
 
     let prs = [];
     try {
-      const { data } = await retry(() => octokit.rest.repos.listPullRequests({
+      const { data } = await githubBreaker.execute(() => retry(() => octokit.rest.repos.listPullRequests({
         owner,
         repo,
         state: 'all',
         per_page: 20,
-      }));
+      })));
       prs = data;
     } catch (err) {
       console.warn(`[GITHUB RECON] PRs unreachable for ${owner}/${repo}:`, err.message);
