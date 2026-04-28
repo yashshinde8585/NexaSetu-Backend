@@ -3,17 +3,19 @@ const ActionRequest = require('../models/ActionRequest');
 const Task = require('../models/Task');
 const Project = require('../models/Project');
 const executionPolicy = require('./executionPolicy');
+const aiOutputValidator = require('../validators/aiOutputValidator');
+const logger = require('../utils/logger');
 
-// Engine for executing and tracking approved system actions.
+// Engine for executing and tracking approved autonomous system actions.
 class ActionExecutor {
   constructor() {
     this.name = 'ActionExecutor';
   }
+
   async processDecision(decision) {
     try {
       const { type, targetId, targetType, payload, agent, reason } = decision;
 
-      // Validate required payload fields.
       if (!type || !targetId || !payload) {
         throw new Error('Incomplete action data');
       }
@@ -21,7 +23,7 @@ class ActionExecutor {
       const mode =
         decision.mode || executionPolicy.getExecutionMode(type, payload);
 
-      console.log(
+      logger.info(
         `[ActionExecutor] Processing ${type} (Mode: ${mode}) for agent: ${agent}`
       );
 
@@ -36,7 +38,7 @@ class ActionExecutor {
         );
         return { status: 'executed', ...result };
       } else {
-        // Create a pending request for manual approval.
+        // Create a pending request for manual supervisor approval.
         const request = await ActionRequest.create({
           type,
           targetId,
@@ -53,7 +55,7 @@ class ActionExecutor {
         };
       }
     } catch (error) {
-      console.error('[ActionExecutor] Processing Error:', error);
+      logger.error(`[ActionExecutor] Processing Error: ${error.message}`);
       throw error;
     }
   }
@@ -64,7 +66,14 @@ class ActionExecutor {
     let newValue = null;
 
     try {
-      // Execute the requested action type.
+      // Validate AI-driven output to prevent system state corruption.
+      const aiAgents = ['Scheduler', 'Harvester', 'Portfolio'];
+      if (aiAgents.includes(agent)) {
+        if (payload.newDate && isNaN(new Date(payload.newDate).getTime())) {
+          throw new Error('AI generated invalid date for task shift');
+        }
+      }
+
       switch (type) {
         case 'UPDATE_TASK_DEADLINE':
           oldValue = await Task.findById(targetId, 'dueDate');
@@ -115,7 +124,6 @@ class ActionExecutor {
           throw new Error(`Unsupported action type: ${type}`);
       }
 
-      // Persist the executed action to the audit log.
       await ActionRequest.create({
         type,
         targetId,
@@ -131,7 +139,7 @@ class ActionExecutor {
 
       return { result, oldValue, newValue };
     } catch (error) {
-      console.error('[ActionExecutor] Execution failed:', error.message);
+      logger.error(`[ActionExecutor] Execution failed: ${error.message}`);
       throw error;
     }
   }
@@ -159,7 +167,7 @@ class ActionExecutor {
       
       return result;
     } catch (error) {
-      console.error('[ActionExecutor] Approval failed:', error.message);
+      logger.error(`[ActionExecutor] Approval failed: ${error.message}`);
       throw error;
     }
   }

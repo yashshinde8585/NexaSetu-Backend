@@ -1,5 +1,6 @@
 const Task = require('../models/Task');
 const taskUtils = require('../utils/taskUtils');
+const logger = require('../utils/logger');
 
 // Automatically calculates dependency impacts and adjusts cascaded task timelines proactively.
 class SchedulerAgent {
@@ -60,7 +61,7 @@ class SchedulerAgent {
         reason: `Impact assessment from delay of "${delayedTask.title}"`,
       };
     } catch (error) {
-      console.error('[SchedulerAgent] Cascade Error:', error);
+      logger.error('[SchedulerAgent] Cascade Error: %o', error);
       throw error;
     }
   }

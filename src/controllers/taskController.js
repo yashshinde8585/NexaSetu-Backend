@@ -1,29 +1,36 @@
 const taskService = require('../services/taskService');
 const storageService = require('../services/storageService');
 const catchAsync = require('../utils/catchAsync');
+const ResponseBuilder = require('../utils/responseBuilder');
+const dataTransformer = require('../utils/dataTransformer');
+const { invalidateCache } = require('../middleware/cacheMiddleware');
 
-// Update task status and log activity.
 exports.updateTaskStatus = catchAsync(async (req, res, next) => {
-  const taskId = req.params.id || req.body.taskId;
-  const { status } = req.body;
-  const task = await taskService.updateTaskStatus(req.user, taskId, status);
-  res.status(200).json({ status: 'success', data: { task } });
+  const dto = dataTransformer.transform(req, ['status', 'taskId']);
+  const taskId = req.params.id || dto.taskId;
+  const task = await taskService.updateTaskStatus(req.user, taskId, dto.status, req);
+  
+  // Data Consistency: Purge workspace task cache.
+  await invalidateCache(req.user.workspaceId, '*task*');
+  
+  return ResponseBuilder.success(res, { task });
 });
 
-// Create a new task.
 exports.createTask = catchAsync(async (req, res, next) => {
-  const task = await taskService.createTask(req.user, req.body);
-  res.status(201).json({ status: 'success', data: { task } });
+  const dto = dataTransformer.transform(req);
+  const task = await taskService.createTask(req.user, dto);
+  
+  await invalidateCache(req.user.workspaceId, '*task*');
+  
+  return ResponseBuilder.success(res, { task }, 201);
 });
 
-// Retrieve tasks for a project.
 exports.getTasks = catchAsync(async (req, res, next) => {
   const { projectId } = req.params;
   const { sprintId, page, limit } = req.query;
   const result = await taskService.getTasks(req.user, projectId, sprintId, page, limit);
 
-  res.status(200).json({
-    status: 'success',
+  return ResponseBuilder.success(res, {
     results: result.tasks.length,
     pagination: {
       total: result.totalTasks,
@@ -35,25 +42,25 @@ exports.getTasks = catchAsync(async (req, res, next) => {
   });
 });
 
-// Retrieve a task by ID.
 exports.getTaskById = catchAsync(async (req, res, next) => {
   const task = await taskService.getTaskById(req.user, req.params.id);
-  res.status(200).json({ status: 'success', data: { task } });
+  return ResponseBuilder.success(res, { task });
 });
 
-// Update task details and manage lifecycle.
 exports.updateTask = catchAsync(async (req, res, next) => {
-  const task = await taskService.updateTask(req.user, req.params.id, req.body);
-  res.status(200).json({ status: 'success', data: { task } });
+  const dto = dataTransformer.transform(req);
+  const task = await taskService.updateTask(req.user, req.params.id, dto);
+  
+  await invalidateCache(req.user.workspaceId, '*task*');
+  
+  return ResponseBuilder.success(res, { task });
 });
 
-// Retrieve tasks assigned to the current user.
 exports.getMyTasks = catchAsync(async (req, res, next) => {
   const { scope, page, limit } = req.query;
   const result = await taskService.getMyTasks(req.user, scope, page, limit);
 
-  res.status(200).json({
-    status: 'success',
+  return ResponseBuilder.success(res, {
     results: result.tasks.length,
     pagination: {
       total: result.totalTasks,
@@ -65,37 +72,39 @@ exports.getMyTasks = catchAsync(async (req, res, next) => {
   });
 });
 
-// Toggle task blockage status and log activity.
 exports.toggleTaskBlockage = catchAsync(async (req, res, next) => {
-  const taskId = req.params.id || req.body.taskId;
-  const { blocked, reason } = req.body;
-  const task = await taskService.toggleTaskBlockage(req.user, taskId, blocked, reason);
-  res.status(200).json({ status: 'success', data: { task } });
+  const dto = dataTransformer.transform(req, ['blocked', 'reason', 'taskId']);
+  const taskId = req.params.id || dto.taskId;
+  const task = await taskService.toggleTaskBlockage(req.user, taskId, dto.blocked, dto.reason);
+  
+  await invalidateCache(req.user.workspaceId, '*task*');
+  
+  return ResponseBuilder.success(res, { task });
 });
 
-// Delete a task and cleanup resources.
 exports.deleteTask = catchAsync(async (req, res, next) => {
   await taskService.deleteTask(req.user, req.params.id);
-  res.status(204).json({ status: 'success', data: null });
+  await invalidateCache(req.user.workspaceId, '*task*');
+  
+  return ResponseBuilder.success(res, null, 204);
 });
 
-// Generate a signed upload URL for attachments.
 exports.getSignedUploadUrl = catchAsync(async (req, res, next) => {
-  const { workspaceId, projectId, taskId, fileName, fileType } = req.body;
+  const dto = dataTransformer.transform(req);
   
-  // Hardened validation: user must belong to workspace
-  if (req.user.workspaceId.toString() !== workspaceId.toString()) {
-    return res.status(403).json({ status: 'fail', message: 'Unauthorized workspace access' });
+  // Security Guard: Ensure user strictly belongs to the target workspace.
+  if (req.user.workspaceId.toString() !== dto.workspaceId?.toString()) {
+    return ResponseBuilder.error(res, 'Unauthorized workspace access', 'FORBIDDEN', 403);
   }
 
   const data = await storageService.getSignedUploadUrl(
-    workspaceId, 
-    projectId, 
-    taskId || 'new', 
-    fileName, 
-    fileType,
-    req.body.fileSize || 0
+    dto.workspaceId, 
+    dto.projectId, 
+    dto.taskId || 'new', 
+    dto.fileName, 
+    dto.fileType,
+    dto.fileSize || 0
   );
   
-  res.status(200).json({ status: 'success', data });
+  return ResponseBuilder.success(res, data);
 });

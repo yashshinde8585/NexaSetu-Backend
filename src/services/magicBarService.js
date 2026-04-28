@@ -9,6 +9,7 @@ const normalizer = require('./parameterNormalizer');
 const teamService = require('./teamService');
 const { getProjectAccessQuery } = require('../utils/queryHelpers');
 const { isManagerOrAdmin, hasLeadRestriction } = require('../utils/authHelpers');
+const logger = require('../utils/logger');
 
 const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
 
@@ -179,8 +180,8 @@ class MagicBarService {
           return Array.isArray(actions) ? actions : [actions];
         }
       } catch (error) {
-        console.error(
-          `[MagicBarService] error with ${currentModel}:`,
+        logger.error(
+          `[MagicBarService] error with ${currentModel}: %s`,
           error.message
         );
       }
@@ -672,7 +673,7 @@ class MagicBarService {
               await actionExecutor.approveRequest(request._id, user.id);
               approvedCount++;
             } catch (e) {
-              console.error('Action Approval Failed', e);
+              logger.error('Action Approval Failed: %o', e);
             }
           }
           stepData.message = `Bulk executor triggered. ${approvedCount} pending strategic modifications approved and deployed to production.`;

@@ -4,6 +4,7 @@ const Task = require('../models/Task');
 const User = require('../models/User');
 const ActionRequest = require('../models/ActionRequest');
 const actionExecutor = require('./actionExecutor');
+const logger = require('../utils/logger');
 
 // Scheduled background tasks for system monitoring and automated actions.
 class CronService {
@@ -12,9 +13,9 @@ class CronService {
   }
 
   start() {
-    console.log(`[${this.name}] Starting scheduled tasks...`);
+    logger.info(`[${this.name}] Starting scheduled tasks...`);
     cron.schedule('0 8 * * *', async () => {
-      console.log(`[${this.name}] Running morning routine...`);
+      logger.info(`[${this.name}] Running morning routine...`);
       await this.runMorningDiagnostic();
     });
   }
@@ -50,16 +51,16 @@ class CronService {
                     agent: 'Sentinel',
                   });
                 } catch (taskErr) {
-                  console.error(`[${this.name}] Failed to mitigate task ${task._id}:`, taskErr.message);
+                  logger.error(`[${this.name}] Failed to mitigate task ${task._id}: %s`, taskErr.message);
                 }
               }
-              console.log(
+              logger.info(
                 `[${this.name}] Staged timeline mitigation for ${project.name}`
               );
             }
           }
         } catch (projErr) {
-          console.error(`[${this.name}] Diagnostic failed for project ${project.name}:`, projErr.message);
+          logger.error(`[${this.name}] Diagnostic failed for project ${project.name}: %s`, projErr.message);
         }
       }
 
@@ -81,14 +82,14 @@ class CronService {
               agent: 'Sentinel',
               status: 'pending',
             });
-            console.log(`[${this.name}] Overload alert generated for ${m.name}`);
+            logger.info(`[${this.name}] Overload alert generated for ${m.name}`);
           }
         } catch (userErr) {
-          console.error(`[${this.name}] Diagnostic failed for user ${m.name}:`, userErr.message);
+          logger.error(`[${this.name}] Diagnostic failed for user ${m.name}: %s`, userErr.message);
         }
       }
     } catch (error) {
-      console.error(`[${this.name}] Global telemetry failure:`, error);
+      logger.error(`[${this.name}] Global telemetry failure:`, error);
     }
   }
 }

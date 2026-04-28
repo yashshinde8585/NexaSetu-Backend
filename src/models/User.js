@@ -52,11 +52,17 @@ const userSchema = new mongoose.Schema(
       default: false,
     },
     passwordChangedAt: Date,
+    passwordResetToken: String,
+    passwordResetExpires: Date,
     failedLoginAttempts: {
       type: Number,
       default: 0,
     },
     lockUntil: Date,
+    profilePicture: {
+      type: String,
+      default: null,
+    },
   },
   {
     timestamps: true,

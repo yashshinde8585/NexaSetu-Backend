@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const logger = require('../utils/logger');
 
 const taskSchema = new mongoose.Schema(
   {
@@ -238,7 +239,7 @@ taskSchema.pre('save', async function () {
         }
       }
     } catch (err) {
-      console.warn('[TASK-NUMBER] Sequence generation failed, using timestamp fallback');
+      logger.warn('[TASK-NUMBER] Sequence generation failed, using timestamp fallback');
       this.taskNumber = Date.now();
     }
   }
