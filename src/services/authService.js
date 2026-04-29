@@ -19,66 +19,71 @@ const generateTokens = (userId) => {
   return { accessToken, refreshToken };
 };
 
+const { runInTransaction } = require('../utils/dbUtils');
+
 const registerUser = async (userData) => {
   const { email, name, admin, password, workspaceName, plan, assignedProjectId } = userData;
 
   const existingUser = await User.findOne({ email });
   if (existingUser) throw new AppError('This email is already registered.', 400);
 
-  const invitation = await Invitation.findOne({ email, status: 'pending' });
-  let workspaceId, role, jobTitle;
+  return await runInTransaction(async (session) => {
+    const invitation = await Invitation.findOne({ email, status: 'pending' }).session(session);
+    let workspaceId, role, jobTitle;
 
-  if (invitation) {
-    workspaceId = invitation.workspaceId;
-    role = mapRole(invitation.role) || 'PROJECT_MEMBER';
-    
-    jobTitle = 'Software Engineer';
-    const normalizedRole = invitation.role.toUpperCase();
-    if (normalizedRole.includes('MANAGER')) jobTitle = 'Engineering Manager';
-    else if (normalizedRole.includes('ADMIN')) jobTitle = 'Workspace Administrator';
-    else if (normalizedRole.includes('VP')) jobTitle = 'VP Engineering';
-    else if (normalizedRole.includes('LEAD')) jobTitle = 'Tech Lead';
-    else if (normalizedRole.includes('INTERN')) jobTitle = 'Intern';
-    else if (normalizedRole.includes('QA')) jobTitle = 'QA Engineer';
-  } else {
-    role = 'WORKSPACE_ADMIN';
-    jobTitle = userData.jobTitle || (plan?.includes('executive') ? 'Chief Technology Officer' : 'Workspace Administrator');
+    if (invitation) {
+      workspaceId = invitation.workspaceId;
+      role = mapRole(invitation.role) || 'PROJECT_MEMBER';
+      
+      jobTitle = 'Software Engineer';
+      const normalizedRole = invitation.role.toUpperCase();
+      if (normalizedRole.includes('MANAGER')) jobTitle = 'Engineering Manager';
+      else if (normalizedRole.includes('ADMIN')) jobTitle = 'Workspace Administrator';
+      else if (normalizedRole.includes('VP')) jobTitle = 'VP Engineering';
+      else if (normalizedRole.includes('LEAD')) jobTitle = 'Tech Lead';
+      else if (normalizedRole.includes('INTERN')) jobTitle = 'Intern';
+      else if (normalizedRole.includes('QA')) jobTitle = 'QA Engineer';
+    } else {
+      role = 'WORKSPACE_ADMIN';
+      jobTitle = userData.jobTitle || (plan?.includes('executive') ? 'Chief Technology Officer' : 'Workspace Administrator');
 
-    const newWorkspace = await workspaceService.provisionWorkspace({
-      name: workspaceName || `${name}'s Hub`,
-      adminName: admin,
-      plan: plan || 'free'
-    });
-    workspaceId = newWorkspace._id;
-  }
+      const newWorkspace = await workspaceService.provisionWorkspace({
+        name: workspaceName || `${name}'s Hub`,
+        adminName: admin,
+        plan: plan || 'free'
+      }, session);
+      workspaceId = newWorkspace._id;
+    }
 
-  const user = await User.create([{
-    name,
-    email,
-    password,
-    role: (invitation ? invitation.role : role),
-    jobTitle,
-    workspaceId,
-    assignedProjectId: (invitation ? invitation.projectId : null) || assignedProjectId,
-    passwordChangedAt: Date.now(),
-  }]);
+    const user = await User.create([{
+      name,
+      email,
+      password,
+      role: (invitation ? invitation.role : role),
+      jobTitle,
+      workspaceId,
+      assignedProjectId: (invitation ? invitation.projectId : null) || assignedProjectId,
+      passwordChangedAt: Date.now(),
+    }], { session });
 
-  const createdUser = user[0];
+    const createdUser = user[0];
 
-  if (invitation) {
-    invitation.status = 'accepted';
-    await invitation.save();
-  } else {
-    await workspaceService.transferOwnership(workspaceId, createdUser._id);
-  }
+    if (invitation) {
+      invitation.status = 'accepted';
+      await invitation.save({ session });
+    } else {
+      await workspaceService.transferOwnership(workspaceId, createdUser._id, session);
+    }
 
-  metricsService.trackEvent(createdUser, 'signup_success', { 
-    method: invitation ? 'invitation' : 'direct',
-    role: createdUser.role 
-  }).catch(err => logger.error(`[METRICS] Failed to track signup: ${err.message}`));
+    metricsService.trackEvent(createdUser, 'signup_success', { 
+      method: invitation ? 'invitation' : 'direct',
+      role: createdUser.role 
+    }).catch(err => logger.error(`[METRICS] Failed to track signup: ${err.message}`));
 
-  return createdUser;
+    return createdUser;
+  });
 };
+
 
 const loginUser = async (email, password) => {
   const user = await User.findOne({ email }).select('+password');
@@ -223,6 +228,17 @@ const completeTour = async (userId) => {
   return user;
 };
 
+const updateAvatar = async (user, publicUrl) => {
+  const updatedUser = await User.findByIdAndUpdate(
+    user._id,
+    { profilePicture: publicUrl },
+    { new: true, runValidators: true }
+  ).select('-password');
+  
+  if (!updatedUser) throw new AppError('User not found', 404);
+  return updatedUser;
+};
+
 module.exports = {
   registerUser,
   loginUser,
@@ -234,4 +250,5 @@ module.exports = {
   forgotPassword,
   resetPassword,
   completeTour,
+  updateAvatar,
 };

@@ -1,57 +1,69 @@
 const { MemoryStore } = require('express-rate-limit');
-const { RedisStore } = require('rate-limit-redis');
 const { getRedisClient, isRedisConnected } = require('../config/redis');
 const logger = require('./logger');
 
 class SmartRateLimitStore {
   constructor(options = {}) {
     this.prefix = options.prefix || 'rl:';
+    this.windowMs = options.windowMs || 60000;
     this.localStore = new MemoryStore();
-    this.windowMs = options.windowMs;
-    
     this.localStore.init({ windowMs: this.windowMs });
 
-    this.redisStore = new RedisStore({
-      sendCommand: async (...args) => {
-        const client = getRedisClient();
-        return await client.call(...args);
-      },
-      prefix: this.prefix,
-    });
+    this.luaIncrement = `
+      local current = redis.call("INCR", KEYS[1])
+      if current == 1 then
+        redis.call("PEXPIRE", KEYS[1], ARGV[1])
+      end
+      local ttl = redis.call("PTTL", KEYS[1])
+      return {current, ttl}
+    `;
   }
 
   async increment(key) {
+    const fullKey = `${this.prefix}${key}`;
+    
     if (isRedisConnected()) {
       try {
-        return await this.redisStore.increment(key);
+        const redis = getRedisClient();
+        const [totalHits, pttl] = await redis.eval(this.luaIncrement, 1, fullKey, this.windowMs);
+        
+        return {
+          totalHits,
+          resetTime: new Date(Date.now() + pttl)
+        };
       } catch (err) {
         logger.warn(`[RATE-LIMIT] Redis increment failed for ${key}, falling back to memory: ${err.message}`);
-        return await this.localStore.increment(key);
       }
     }
+    
     return await this.localStore.increment(key);
   }
 
   async decrement(key) {
+    const fullKey = `${this.prefix}${key}`;
     if (isRedisConnected()) {
       try {
-        return await this.redisStore.decrement(key);
+        const redis = getRedisClient();
+        await redis.decr(fullKey);
       } catch (err) {
-        return await this.localStore.decrement(key);
+        await this.localStore.decrement(key);
       }
+    } else {
+      await this.localStore.decrement(key);
     }
-    return await this.localStore.decrement(key);
   }
 
   async resetKey(key) {
+    const fullKey = `${this.prefix}${key}`;
     if (isRedisConnected()) {
       try {
-        return await this.redisStore.resetKey(key);
+        const redis = getRedisClient();
+        await redis.del(fullKey);
       } catch (err) {
-        return await this.localStore.resetKey(key);
+        await this.localStore.resetKey(key);
       }
     }
-    return await this.localStore.resetKey(key);
+    await this.localStore.resetKey(key);
   }
 }
 

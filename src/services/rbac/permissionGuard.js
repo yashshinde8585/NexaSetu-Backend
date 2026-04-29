@@ -4,7 +4,8 @@ const ScopeResolver = require('./scopeResolver');
 const checkPermission = (requiredAction) => {
   return async (req, res, next) => {
     try {
-      const userId = req.user._id; // Assuming authMiddleware runs first
+      if (!req.user) return res.status(401).json({ message: 'Unauthorized: Missing user context' });
+      const userId = req.user._id;
       const hasPerm = await RoleResolver.hasPermission(userId, requiredAction);
       
       if (!hasPerm) {
@@ -20,6 +21,7 @@ const checkPermission = (requiredAction) => {
 const checkRole = (requiredRole) => {
   return async (req, res, next) => {
     try {
+      if (!req.user) return res.status(401).json({ message: 'Unauthorized: Missing user context' });
       const roles = await RoleResolver.getUserRoles(req.user._id);
       if (!roles.some(r => r.name === requiredRole)) {
         return res.status(403).json({ message: `Forbidden: Requires role ${requiredRole}` });

@@ -54,7 +54,6 @@ const aiLogSchema = new mongoose.Schema(
     timestamp: {
       type: Date,
       default: Date.now,
-      index: true,
     },
   },
   {
@@ -62,8 +61,8 @@ const aiLogSchema = new mongoose.Schema(
   }
 );
 
-// High-cardinality indexing for log retrieval
 aiLogSchema.index({ workspaceId: 1, eventType: 1, timestamp: -1 });
 aiLogSchema.index({ workspaceId: 1, project: 1, timestamp: -1 });
+aiLogSchema.index({ timestamp: 1 }, { expiresAfterSeconds: 2592000 });
 
 module.exports = mongoose.model('AILog', aiLogSchema);

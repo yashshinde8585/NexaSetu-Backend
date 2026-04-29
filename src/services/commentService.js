@@ -2,18 +2,24 @@ const Comment = require('../models/Comment');
 const Task = require('../models/Task');
 const Notification = require('../models/Notification');
 const { getIO, EVENTS } = require('../socket');
-const { cacheGet, cacheSet, cacheDel } = require('../utils/redisCache');
+const { getRedisClient } = require('../config/redis');
 const logger = require('../utils/logger');
 const AppError = require('../utils/appError');
 
 const truncate = (text, max = 100) =>
   text.length > max ? text.substring(0, max) + '...' : text;
 
+const { cacheManager } = require('../middleware/cacheMiddleware');
+
 class CommentService {
   async getTaskComments(taskId) {
-    const cacheKey = `task_comments:${taskId}`;
+    const task = await Task.findById(taskId);
+    const workspaceId = task?.workspaceId || 'global';
+    
+    const cacheKey = cacheManager.generateKey(workspaceId, 'comment', taskId);
+    const legacyKey = `task_comments:${taskId}`;
 
-    const cached = await cacheGet(cacheKey);
+    const cached = await cacheManager.getWithFallback(cacheKey, legacyKey);
     if (cached) {
       logger.info(`[MEMORY GRID] Discussion signals retrieved for mission: ${taskId}`);
       return { comments: cached, source: 'memory_grid' };
@@ -23,18 +29,18 @@ class CommentService {
       .sort('createdAt')
       .populate('user', 'name email');
 
-    await cacheSet(cacheKey, comments);
+    await cacheManager.set(cacheKey, comments);
 
     return { comments, source: 'primary_database' };
   }
 
   async addComment(user, taskId, content) {
-    const cacheKey = `task_comments:${taskId}`;
-
     const task = await Task.findById(taskId).populate('project');
     if (!task) {
       throw new AppError('Task not found', 404);
     }
+
+    const workspaceId = task.workspaceId || user.workspaceId;
 
     const comment = await Comment.create({
       task: taskId,
@@ -43,7 +49,8 @@ class CommentService {
       type: 'user_comment',
     });
 
-    await cacheDel(cacheKey);
+    await cacheManager.invalidate(workspaceId, `comment:${taskId}`);
+    await getRedisClient().del(`task_comments:${taskId}`).catch(() => {});
 
     const snippet = truncate(content);
     const notifiedUsers = new Set([user._id.toString()]);
@@ -57,7 +64,7 @@ class CommentService {
       const mentionRegex = new RegExp(`@${escapedName}\\b`, 'i');
 
       if (mentionRegex.test(content)) {
-        await Notification.create({
+        const notification = await Notification.create({
           recipient: member._id,
           sender: user._id,
           type: 'COMMENT_ADDED',
@@ -66,12 +73,17 @@ class CommentService {
           link: `/task/${task._id}`,
           workspaceId: user.workspaceId,
         });
+
+        try {
+          getIO().to(member._id.toString()).emit(EVENTS.NOTIFICATION_RECEIVED, notification);
+        } catch (err) {}
+
         notifiedUsers.add(member._id.toString());
       }
     }
 
     if (task.assignedUser && !notifiedUsers.has(task.assignedUser.toString())) {
-      await Notification.create({
+      const notification = await Notification.create({
         recipient: task.assignedUser,
         sender: user._id,
         type: 'COMMENT_ADDED',
@@ -80,6 +92,10 @@ class CommentService {
         link: `/task/${task._id}`,
         workspaceId: user.workspaceId,
       });
+
+      try {
+        getIO().to(task.assignedUser.toString()).emit(EVENTS.NOTIFICATION_RECEIVED, notification);
+      } catch (err) {}
     }
 
     const populatedComment = await Comment.findById(comment._id).populate('user', 'name email');
@@ -102,6 +118,11 @@ class CommentService {
         content,
         type: 'system_log',
       });
+
+      const task = await Task.findById(taskId);
+      const workspaceId = task?.workspaceId || 'global';
+      await cacheManager.invalidate(workspaceId, `comment:${taskId}`);
+      await getRedisClient().del(`task_comments:${taskId}`).catch(() => {});
     } catch (err) {
       logger.error(`[ACTIVITY-LOG] Failed to log system activity: ${err.message}`);
     }

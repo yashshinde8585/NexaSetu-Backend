@@ -3,15 +3,12 @@ const storageService = require('../services/storageService');
 const catchAsync = require('../utils/catchAsync');
 const ResponseBuilder = require('../utils/responseBuilder');
 const dataTransformer = require('../utils/dataTransformer');
-const { invalidateCache } = require('../middleware/cacheMiddleware');
 
 exports.updateTaskStatus = catchAsync(async (req, res, next) => {
   const dto = dataTransformer.transform(req, ['status', 'taskId']);
   const taskId = req.params.id || dto.taskId;
   const task = await taskService.updateTaskStatus(req.user, taskId, dto.status, req);
   
-  // Data Consistency: Purge workspace task cache.
-  await invalidateCache(req.user.workspaceId, '*task*');
   
   return ResponseBuilder.success(res, { task });
 });
@@ -19,9 +16,6 @@ exports.updateTaskStatus = catchAsync(async (req, res, next) => {
 exports.createTask = catchAsync(async (req, res, next) => {
   const dto = dataTransformer.transform(req);
   const task = await taskService.createTask(req.user, dto);
-  
-  await invalidateCache(req.user.workspaceId, '*task*');
-  
   return ResponseBuilder.success(res, { task }, 201);
 });
 
@@ -51,8 +45,6 @@ exports.updateTask = catchAsync(async (req, res, next) => {
   const dto = dataTransformer.transform(req);
   const task = await taskService.updateTask(req.user, req.params.id, dto);
   
-  await invalidateCache(req.user.workspaceId, '*task*');
-  
   return ResponseBuilder.success(res, { task });
 });
 
@@ -77,14 +69,12 @@ exports.toggleTaskBlockage = catchAsync(async (req, res, next) => {
   const taskId = req.params.id || dto.taskId;
   const task = await taskService.toggleTaskBlockage(req.user, taskId, dto.blocked, dto.reason);
   
-  await invalidateCache(req.user.workspaceId, '*task*');
-  
   return ResponseBuilder.success(res, { task });
 });
 
 exports.deleteTask = catchAsync(async (req, res, next) => {
   await taskService.deleteTask(req.user, req.params.id);
-  await invalidateCache(req.user.workspaceId, '*task*');
+  
   
   return ResponseBuilder.success(res, null, 204);
 });
@@ -92,7 +82,6 @@ exports.deleteTask = catchAsync(async (req, res, next) => {
 exports.getSignedUploadUrl = catchAsync(async (req, res, next) => {
   const dto = dataTransformer.transform(req);
   
-  // Security Guard: Ensure user strictly belongs to the target workspace.
   if (req.user.workspaceId.toString() !== dto.workspaceId?.toString()) {
     return ResponseBuilder.error(res, 'Unauthorized workspace access', 'FORBIDDEN', 403);
   }

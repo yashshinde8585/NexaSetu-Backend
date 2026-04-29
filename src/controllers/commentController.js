@@ -22,8 +22,3 @@ exports.addComment = catchAsync(async (req, res, next) => {
     data: { comment },
   });
 });
-
-// Implementation for future system-level log injection
-exports.logActivity = async (taskId, userId, content) => {
-  await commentService.logActivity(taskId, userId, content);
-};

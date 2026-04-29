@@ -3,6 +3,7 @@ const Project = require('../models/Project');
 const Task = require('../models/Task');
 const AppError = require('../utils/appError');
 const { getProjectAccessQuery } = require('../utils/queryHelpers');
+const { invalidateCache } = require('../middleware/cacheMiddleware');
 
 class SprintService {
   async createSprint(user, data) {
@@ -22,6 +23,8 @@ class SprintService {
       createdBy: user._id,
       workspaceId: user.workspaceId,
     });
+
+    await invalidateCache(user.workspaceId, 'sprint');
 
     return sprint;
   }
@@ -65,6 +68,9 @@ class SprintService {
     if (!sprint) {
       throw new AppError('No sprint found with that ID', 404);
     }
+
+    await invalidateCache(sprint.workspaceId, 'sprint');
+
     return sprint;
   }
 
@@ -73,6 +79,9 @@ class SprintService {
     if (!sprint) {
       throw new AppError('No sprint found with that ID', 404);
     }
+
+    await invalidateCache(sprint.workspaceId, 'sprint');
+
     return sprint;
   }
 

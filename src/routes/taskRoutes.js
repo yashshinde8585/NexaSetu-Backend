@@ -1,8 +1,5 @@
 const express = require('express');
-/**
- * Task Execution & Ownership Routes
- * Manages atomic task operations, state transitions, and resource protection.
- */
+
 const {
   createTask,
   getTasks,
@@ -23,12 +20,17 @@ const { verifyOwnership } = require('../middleware/ownershipMiddleware');
 const { validateWorkflow } = require('../middleware/workflowMiddleware');
 const Task = require('../models/Task');
 const rateLimit = require('express-rate-limit');
+const SmartRateLimitStore = require('../utils/SmartRateLimitStore');
+const { cacheMiddleware } = require('../middleware/cacheMiddleware');
 
-// Rate limit: 10 uploads per minute per user
 const uploadLimiter = rateLimit({
   windowMs: 1 * 60 * 1000,
   max: 10,
-  message: { status: 'fail', message: 'Too many upload requests. Please try again later.' }
+  message: { status: 'fail', message: 'Too many upload requests. Please try again later.' },
+  store: new SmartRateLimitStore({
+    prefix: 'rl:task-upload:',
+    windowMs: 1 * 60 * 1000
+  })
 });
 
 const router = express.Router();
@@ -36,10 +38,8 @@ const router = express.Router();
 router.use(protect);
 router.use(validateWorkflow(['workspace']));
 
-const { cacheMiddleware } = require('../middleware/cacheMiddleware');
-
-router.get('/my-tasks', cacheMiddleware(30), getMyTasks);
-router.get('/project/:projectId', cacheMiddleware(30), getTasks);
+router.get('/my-tasks', cacheMiddleware('task', 30), getMyTasks);
+router.get('/project/:projectId', cacheMiddleware('task', 30), getTasks);
 
 // Secure Signed URL Generation
 router.post('/attachments/upload-url', uploadLimiter, getSignedUploadUrl);

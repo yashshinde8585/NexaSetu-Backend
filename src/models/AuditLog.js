@@ -36,12 +36,13 @@ const auditLogSchema = new mongoose.Schema(
     timestamp: {
       type: Date,
       default: Date.now,
-      index: true,
     },
   },
   {
-    timestamps: false, // We use our own timestamp
+    timestamps: false,
   }
 );
+
+auditLogSchema.index({ timestamp: 1 }, { expiresAfterSeconds: 7776000 });
 
 module.exports = mongoose.model('AuditLog', auditLogSchema);

@@ -1,5 +1,7 @@
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
+const logger = require('../utils/logger');
+const { encrypt, decrypt } = require('../utils/crypto');
 
 const userSchema = new mongoose.Schema(
   {
@@ -27,6 +29,8 @@ const userSchema = new mongoose.Schema(
     },
     githubAccessToken: {
       type: String,
+      get: decrypt,
+      set: encrypt,
     },
     role: {
       type: String,
@@ -66,6 +70,8 @@ const userSchema = new mongoose.Schema(
   },
   {
     timestamps: true,
+    toJSON: { getters: true },
+    toObject: { getters: true },
   }
 );
 
@@ -78,9 +84,17 @@ userSchema.methods.comparePassword = async function (candidatePassword) {
   return await bcrypt.compare(candidatePassword, this.password);
 };
 
-// ESR Optimization: workspaceId (Equality) -> role/email (Sort/Equality)
 userSchema.index({ workspaceId: 1, role: 1 });
 userSchema.index({ workspaceId: 1, email: 1 });
 userSchema.index({ workspaceId: 1, githubId: 1 }, { sparse: true });
+
+userSchema.pre(/^find/, async function () {
+  const query = this.getQuery();
+  const isGlobalLookup = query.email !== undefined || query._id !== undefined || this.getOptions().bypassTenantSafety;
+  
+  if (query.workspaceId === undefined && !isGlobalLookup) {
+    logger.warn(`[TENANT-SAFETY] Query executed without workspaceId filter on User collection: %o`, query);
+  }
+});
 
 module.exports = mongoose.model('User', userSchema);

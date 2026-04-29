@@ -1,16 +1,11 @@
-const { getRedisClient, isRedisConnected } = require('../config/redis');
+const { getRedisClient, isRedisConnected, withTimeout } = require('../config/redis');
 const crypto = require('crypto');
 const logger = require('../utils/logger');
 
-/**
- * Ensures mutating requests (POST, PUT, PATCH) are processed only once per unique key.
- * Uses Redis to store and replay responses, preventing duplicate state mutations on unstable networks.
- */
 const idempotency = (options = {}) => {
   const { ttl = 86400, headerName = 'x-idempotency-key' } = options;
 
   return async (req, res, next) => {
-    // Only apply to mutating methods
     const mutatingMethods = ['POST', 'PUT', 'PATCH'];
     if (!mutatingMethods.includes(req.method)) {
       return next();
@@ -18,7 +13,6 @@ const idempotency = (options = {}) => {
 
     const key = req.headers[headerName];
 
-    // If no key is provided, we still proceed, but warn in development
     if (!key) {
       if (process.env.NODE_ENV === 'development') {
         logger.warn(`[IDEMPOTENCY] Missing ${headerName} header for ${req.method} ${req.url}`);
@@ -26,7 +20,6 @@ const idempotency = (options = {}) => {
       return next();
     }
 
-    // If Redis is down, we must proceed without idempotency to maintain availability
     if (!isRedisConnected()) {
       return next();
     }
@@ -35,28 +28,42 @@ const idempotency = (options = {}) => {
     const redisKey = `idempotency:${req.path}:${key}`;
 
     try {
-      // 1. Check if we have a cached response
-      const cached = await redis.get(redisKey);
+      const cached = await withTimeout(redis.get(redisKey), 500); 
       if (cached) {
+        if (cached === 'IN_PROGRESS') {
+          return res.status(409).json({
+            status: 'fail',
+            message: 'A request with this idempotency key is already being processed.'
+          });
+        }
         const { status, body } = JSON.parse(cached);
+        logger.info(`[IDEMPOTENCY] Replaying response for key: ${key}`);
         return res.status(status).json(body);
       }
 
-      // 2. Intercept res.send/res.json to cache the response
-      const originalSend = res.send;
-      res.send = function (body) {
-        // Only cache successful or client-error responses (avoid caching server errors)
+      const locked = await withTimeout(redis.set(redisKey, 'IN_PROGRESS', 'NX', 'EX', 60), 500);
+      if (!locked) {
+        return res.status(409).json({
+          status: 'fail',
+          message: 'Conflict: Request already in progress.'
+        });
+      }
+
+      const originalJson = res.json;
+      res.json = function (body) {
         if (res.statusCode < 500) {
           const responseToCache = {
             status: res.statusCode,
-            body: JSON.parse(body)
+            body: body
           };
           redis.set(redisKey, JSON.stringify(responseToCache), 'EX', ttl).catch(err => {
             logger.error('[IDEMPOTENCY] Redis set error: %o', err);
           });
+        } else {
+          redis.del(redisKey).catch(() => {});
         }
         
-        return originalSend.call(this, body);
+        return originalJson.call(this, body);
       };
 
       next();

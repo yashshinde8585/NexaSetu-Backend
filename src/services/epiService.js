@@ -1,13 +1,10 @@
 const Task = require('../models/Task');
 const Sprint = require('../models/Sprint');
 const aiService = require('./aiService');
-const { cacheGet, cacheSet } = require('../utils/redisCache');
 const prompts = require('../config/prompts.json');
+const { cacheManager, invalidateCache } = require('../middleware/cacheMiddleware');
+const logger = require('../utils/logger');
 
-/**
- * EPI Service
- * Handles project intelligence and template management.
- */
 
 const formatTemplate = (template, data) => {
   let result = template;
@@ -18,53 +15,72 @@ const formatTemplate = (template, data) => {
 };
 
 exports.getSprintEPI = async (sprintId) => {
-  const cacheKey = `epi:sprint:${sprintId}`;
-  const cachedData = await cacheGet(cacheKey);
-  if (cachedData) return { ...cachedData, cached: true };
-
   const sprint = await Sprint.findById(sprintId);
   if (!sprint) throw new Error('Sprint not found');
-  const tasks = await Task.find({ sprint: sprintId });
   
-  const totalTasks = tasks.length;
-  const doneTasks = tasks.filter(t => t.status === 'done').length;
-  const completionPercentage = totalTasks > 0 ? (doneTasks / totalTasks) * 100 : 0;
-  const timeElapsedPercentage = Math.min(100, ((new Date() - sprint.startDate) / (sprint.endDate - sprint.startDate)) * 100);
+  const workspaceId = sprint.workspaceId || 'global';
+  const cacheKey = cacheManager.generateKey(workspaceId, 'epi', sprintId);
+  const legacyKey = `epi:sprint:${sprintId}`;
 
-  const blockers = tasks.filter(t => t.dependencies?.length > 0 && t.status !== 'done');
-  const criticalPathSummary = [];
-  for (const task of blockers) {
-    const bTasks = await Task.find({ _id: { $in: task.dependencies }, status: { $ne: 'done' } });
-    if (bTasks.length > 0) criticalPathSummary.push(`- "${task.title}" blocked by: ${bTasks.map(bt => bt.title).join(', ')}`);
+  // 1. Try to get from cache (with migration fallback)
+  const cachedData = await cacheManager.getWithFallback(cacheKey, legacyKey);
+  if (cachedData) return { ...cachedData, cached: true };
+
+  // 2. Concurrency Protection: Acquire lock before expensive AI computation
+  const lockAcquired = await cacheManager.acquireLock(`epi:${sprintId}`, 30);
+  if (!lockAcquired) {
+    // If locked, wait briefly and try cache one last time, or return "computing" status
+    await new Promise(r => setTimeout(r, 2000));
+    const recheck = await cacheManager.get(cacheKey);
+    if (recheck) return { ...recheck, cached: true };
+    throw new Error('EPI Engine is currently processing this sprint. Please retry in a moment.');
   }
 
-  const userPrompt = formatTemplate(prompts.templates.EPI_SUMMARY, {
-    name: sprint.name,
-    goal: sprint.goal,
-    donePercentage: completionPercentage.toFixed(1),
-    timePercentage: timeElapsedPercentage.toFixed(1),
-    status: sprint.status,
-    healthScore: sprint.healthScore,
-    blockers: criticalPathSummary.length > 0 ? criticalPathSummary.join('\n') : 'None.'
-  });
+  try {
+    const tasks = await Task.find({ sprint: sprintId });
+    
+    const totalTasks = tasks.length;
+    const doneTasks = tasks.filter(t => t.status === 'done').length;
+    const completionPercentage = totalTasks > 0 ? (doneTasks / totalTasks) * 100 : 0;
+    const timeElapsedPercentage = Math.min(100, ((new Date() - sprint.startDate) / (sprint.endDate - sprint.startDate)) * 100);
 
-  const [narrative, predictions, suggestedActions] = await Promise.all([
-    aiService.processPrompt(prompts.system.EPI_ENGINE, userPrompt, { highReasoning: false, temperature: 0.4 }),
-    getPredictiveAnalysis(sprintId, tasks, sprint),
-    getSuggestedActions(sprintId, criticalPathSummary, tasks)
-  ]);
+    const blockers = tasks.filter(t => t.dependencies?.length > 0 && t.status !== 'done');
+    const criticalPathSummary = [];
+    for (const task of blockers) {
+      const bTasks = await Task.find({ _id: { $in: task.dependencies }, status: { $ne: 'done' } });
+      if (bTasks.length > 0) criticalPathSummary.push(`- "${task.title}" blocked by: ${bTasks.map(bt => bt.title).join(', ')}`);
+    }
 
-  const finalResponse = {
-    sprintName: sprint.name,
-    metrics: { completionPercentage, timeElapsedPercentage, healthScore: sprint.healthScore },
-    criticalBlockers: criticalPathSummary,
-    narrative,
-    suggestedActions,
-    predictions
-  };
+    const userPrompt = formatTemplate(prompts.templates.EPI_SUMMARY, {
+      name: sprint.name,
+      goal: sprint.goal,
+      donePercentage: completionPercentage.toFixed(1),
+      timePercentage: timeElapsedPercentage.toFixed(1),
+      status: sprint.status,
+      healthScore: sprint.healthScore,
+      blockers: criticalPathSummary.length > 0 ? criticalPathSummary.join('\n') : 'None.'
+    });
 
-  await cacheSet(cacheKey, finalResponse, 600);
-  return finalResponse;
+    const [narrative, predictions, suggestedActions] = await Promise.all([
+      aiService.processPrompt(prompts.system.EPI_ENGINE, userPrompt, { highReasoning: false, temperature: 0.4 }),
+      getPredictiveAnalysis(sprintId, tasks, sprint),
+      getSuggestedActions(sprintId, criticalPathSummary, tasks)
+    ]);
+
+    const finalResponse = {
+      sprintName: sprint.name,
+      metrics: { completionPercentage, timeElapsedPercentage, healthScore: sprint.healthScore },
+      criticalBlockers: criticalPathSummary,
+      narrative,
+      suggestedActions,
+      predictions
+    };
+
+    await cacheManager.set(cacheKey, finalResponse, 600);
+    return finalResponse;
+  } finally {
+    await cacheManager.releaseLock(`epi:${sprintId}`);
+  }
 };
 
 const getPredictiveAnalysis = async (sprintId, tasks, sprint) => {
@@ -122,11 +138,20 @@ const getSuggestedActions = async (sprintId, pathSummary, tasks) => {
 
 exports.executeAction = async (actionType, metadata) => {
     if (actionType === 'reassign') {
-        await Task.findByIdAndUpdate(metadata.taskId, { assignedUser: metadata.toUserId });
+        const task = await Task.findByIdAndUpdate(metadata.taskId, { assignedUser: metadata.toUserId }, { new: true });
+        if (task) {
+          await invalidateCache(task.workspaceId, 'task');
+          await invalidateCache(task.workspaceId, 'epi');
+        }
         return { success: true };
     }
     if (actionType === 'priority_bump') {
+        const sprint = await Sprint.findById(metadata.sprintId);
         await Task.updateMany({ sprint: metadata.sprintId, status: { $ne: 'done' }, dependencies: { $exists: true, $ne: [] } }, { priority: 'urgent' });
+        if (sprint) {
+          await invalidateCache(sprint.workspaceId, 'task');
+          await invalidateCache(sprint.workspaceId, 'epi');
+        }
         return { success: true };
     }
     throw new Error('Unsupported action type');

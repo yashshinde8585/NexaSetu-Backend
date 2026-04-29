@@ -4,7 +4,7 @@ const ReportingService = require('../services/observability/reportingService');
 
 exports.getMetrics = async (req, res, next) => {
   try {
-    const metrics = await MetricsService.getMetrics(req.query.workspaceId, req.query);
+    const metrics = await MetricsService.getMetrics(req.user.workspaceId, req.query);
     res.status(200).json({ status: 'success', data: { metrics } });
   } catch (err) { next(err); }
 };
@@ -25,7 +25,7 @@ exports.getIntegrity = async (req, res, next) => {
 
 exports.getReports = async (req, res, next) => {
   try {
-    const report = await ReportingService.generateDashboardReport(req.query.workspaceId, req.query.teamId);
+    const report = await ReportingService.generateDashboardReport(req.user.workspaceId, req.query.teamId);
     res.status(200).json({ status: 'success', data: { report } });
   } catch (err) { next(err); }
 };

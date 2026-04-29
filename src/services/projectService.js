@@ -8,6 +8,7 @@ const { isManagerOrAdmin, hasLeadRestriction } = require('../utils/authHelpers')
 const AppError = require('../utils/appError');
 const metricsService = require('./metricsService');
 const logger = require('../utils/logger');
+const { invalidateCache } = require('../middleware/cacheMiddleware');
 
 const createProject = async (user, data) => {
   const { name, sprint } = data;
@@ -61,7 +62,9 @@ const createProject = async (user, data) => {
     projectId: project._id, 
     type: project.type 
   }).catch(err => logger.error(`[METRICS] Failed to track project creation: ${err.message}`));
-
+  
+  await invalidateCache(user.workspaceId, 'project');
+  
   return project;
 };
 
@@ -210,6 +213,8 @@ const updateProject = async (user, id, updateData) => {
     new: true,
     runValidators: true,
   }).populate('members', 'name email role profilePicture');
+
+  await invalidateCache(user.workspaceId, 'project');
 
   return updatedProject;
 };

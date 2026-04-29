@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const logger = require('../utils/logger');
 
 const projectSchema = new mongoose.Schema(
   {
@@ -36,7 +37,7 @@ const projectSchema = new mongoose.Schema(
       {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'User',
-        index: true, // Multikey index for member-based lookup
+        index: true,
       },
     ],
     githubRepo: {
@@ -87,5 +88,12 @@ projectSchema.pre('save', function () {
 projectSchema.index({ workspaceId: 1, key: 1 }, { unique: true });
 projectSchema.index({ workspaceId: 1, name: 1 });
 projectSchema.index({ workspaceId: 1, members: 1 });
+
+projectSchema.pre(/^find/, async function () {
+  const query = this.getQuery();
+  if (query.workspaceId === undefined && !this.getOptions().bypassTenantSafety) {
+    logger.warn(`[TENANT-SAFETY] Query executed without workspaceId filter on Project collection: %o`, query);
+  }
+});
 
 module.exports = mongoose.model('Project', projectSchema);

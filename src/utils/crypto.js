@@ -5,10 +5,6 @@ const ALGORITHM = 'aes-256-cbc';
 const ENCRYPTION_KEY = config.security.encryptionKey;
 const IV_LENGTH = 16;
 
-/**
- * Encrypts plaintext using AES-256-CBC
- * @param {string} text
- */
 exports.encrypt = (text) => {
   if (!text) return null;
   const iv = crypto.randomBytes(IV_LENGTH);
@@ -18,12 +14,9 @@ exports.encrypt = (text) => {
   return iv.toString('hex') + ':' + encrypted.toString('hex');
 };
 
-/**
- * Decrypts text encrypted by the encrypt function
- * @param {string} text - Encrypted string in "iv:content" format
- */
 exports.decrypt = (text) => {
-  if (!text || !text.includes(':')) return null;
+  if (!text) return null;
+  if (!text.includes(':')) return text; 
   const [ivHex, encryptedHex] = text.split(':');
   const iv = Buffer.from(ivHex, 'hex');
   const encryptedText = Buffer.from(encryptedHex, 'hex');
