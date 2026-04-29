@@ -84,6 +84,8 @@ const finalizeSprint = async (user, sprintId) => {
 };
 
 const getSprintStats = async (user, sprintId) => {
+  const logger = require('../utils/logger');
+  logger.info(`[STATS] Fetching stats for sprint ${sprintId} in workspace ${user.workspaceId}`);
   const sprintObjectId = new mongoose.Types.ObjectId(sprintId);
 
   const sprint = await Sprint.findOne({
@@ -92,7 +94,7 @@ const getSprintStats = async (user, sprintId) => {
   });
 
   if (!sprint) {
-    throw new AppError('No sprint found with that ID in your workspace', 404);
+    return null;
   }
 
   const sprintProjects = await getProjectsForSprint(
@@ -246,16 +248,17 @@ const getSprintStats = async (user, sprintId) => {
     },
   ]);
 
-  const raw = aggregation[0];
-  const summary = raw.summary[0] || {
+  const raw = aggregation[0] || { summary: [], avgDuration: [], blockers: [], workload: [], velocityHistory: [] };
+  const summary = raw.summary?.[0] || {
     total: 0,
     completed: 0,
     inProgress: 0,
     inReview: 0,
+    todo: 0,
     overdue: 0,
   };
-  const avgFlux = raw.avgDuration[0]?.avgFlux || 0;
-  const blockerCount = raw.blockers[0]?.count || 0;
+  const avgFlux = raw.avgDuration?.[0]?.avgFlux || 0;
+  const blockerCount = raw.blockers?.[0]?.count || 0;
   const sprintWorkload = raw.workload || [];
 
   const completionRate =

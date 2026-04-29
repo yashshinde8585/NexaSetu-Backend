@@ -36,12 +36,13 @@ const init = (server) => {
 
     io = new Server(server, {
       cors: {
-        origin: config.env === 'development' ? true : config.clientUrl,
+        origin: config.env === 'development' ? 'http://localhost:5173' : config.clientUrl,
         methods: ['GET', 'POST'],
         credentials: true,
       },
       pingTimeout: 60000,
-      pingInterval: 25000
+      pingInterval: 25000,
+      transports: ['websocket', 'polling']
     });
 
     io.adapter(createAdapter(pubClient, subClient));
@@ -147,4 +148,17 @@ const getEmitter = () => {
   return emitter;
 };
 
-module.exports = { init, getIO, getEmitter, EVENTS };
+const close = async () => {
+  if (io) {
+    logger.info('[SOCKET] Shutting down real-time hub...');
+    await new Promise((resolve) => {
+      io.close(() => {
+        logger.info('[SOCKET] Hub connections terminated');
+        resolve();
+      });
+    });
+  }
+};
+
+module.exports = { init, getIO, getEmitter, close, EVENTS };
+

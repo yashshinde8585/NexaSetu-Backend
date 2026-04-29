@@ -9,7 +9,8 @@ const globalErrorHandler = (err, req, res, next) => {
   err.status = err.status || 'error';
 
   if (config.isProduction) {
-    let error = err;
+    let error = Object.assign(err);
+    error.message = err.message;
 
     // Map technical DB/JWT signals to user-friendly messages.
     if (err.name === 'CastError') error = handleCastErrorDB(err);

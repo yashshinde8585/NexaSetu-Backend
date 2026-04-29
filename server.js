@@ -65,6 +65,7 @@ async function bootstrap() {
       
       server.close(async () => {
         try {
+          await socketIO.close();
           await workerManager.shutdown();
           
           await mongoose.connection.close();

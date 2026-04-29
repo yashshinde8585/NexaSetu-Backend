@@ -73,10 +73,18 @@ app.use((req, res, next) => {
   const start = Date.now();
   
   runWithContext({ requestId }, () => {
-    res.on('finish', () => {
+    let logged = false;
+    const logRequest = () => {
+      if (logged) return;
+      logged = true;
       const duration = Date.now() - start;
-      logger.info(`[API] ${req.method} ${req.url} - ${res.statusCode} [${duration}ms]`);
-    });
+      const status = res.statusCode;
+      const finished = res.writableFinished || res.finished;
+      logger.info(`[API] ${req.method} ${req.url} - ${status} [${duration}ms]${finished ? '' : ' (aborted)'}`);
+    };
+
+    res.on('finish', logRequest);
+    res.on('close', logRequest);
     
     next();
   });
@@ -168,7 +176,7 @@ app.use(['/api/v1', '/api'], v1Router);
 app.use((req, res, next) => {
   res.status(404).json({
     status: 'fail',
-    message: `Can't find ${req.originalUrl} on this server!`
+    message: `Can't find ${req.method} ${req.originalUrl} on this server! Check route mounting.`
   });
 });
 
