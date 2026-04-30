@@ -18,6 +18,10 @@ const EVENTS = {
   LEAVE_TASK: 'leave_task',
   JOIN_PROJECT: 'join_project',
   LEAVE_PROJECT: 'leave_project',
+  JOIN_WORKSPACE: 'join_workspace',
+  LEAVE_WORKSPACE: 'leave_workspace',
+  USER_UPDATED: 'USER_UPDATED',
+  TEAM_UPDATED: 'TEAM_UPDATED',
   NEW_SIGNAL: 'new_signal',
   TASK_UPDATED: 'task_updated',
   AGENT_ACTIVITY: 'AGENT_ACTIVITY',
@@ -113,6 +117,24 @@ const init = (server) => {
         if (!projectId) return;
         socket.leave(projectId.toString());
         logger.debug(`[SOCKET] ${socket.id} left project room: ${projectId}`);
+      });
+
+      socket.on(EVENTS.JOIN_WORKSPACE, async (workspaceId) => {
+        if (!workspaceId) return;
+
+        // Ensure user belongs to this workspace and has admin/manager role
+        if (socket.user.workspaceId.toString() !== workspaceId.toString()) {
+          return socket.emit(EVENTS.ERROR, { message: 'Access denied to this workspace room.' });
+        }
+
+        socket.join(`workspace:${workspaceId}`);
+        logger.debug(`[SOCKET] ${socket.id} joined workspace room: ${workspaceId}`);
+      });
+
+      socket.on(EVENTS.LEAVE_WORKSPACE, (workspaceId) => {
+        if (!workspaceId) return;
+        socket.leave(`workspace:${workspaceId}`);
+        logger.debug(`[SOCKET] ${socket.id} left workspace room: ${workspaceId}`);
       });
 
       socket.on(EVENTS.DISCONNECT, (reason) => {

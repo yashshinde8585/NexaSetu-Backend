@@ -1,5 +1,5 @@
 const express = require('express');
-const { getDashboard, getRoleBreakdown, getIndividualBreakdown } = require('../controllers/leadershipController');
+const { getDashboard, getRoleBreakdown, getIndividualBreakdown, recalculate } = require('../controllers/leadershipController');
 const { protect, restrictTo } = require('../middleware/authMiddleware');
 const performanceTracker = require('../middleware/telemetryMiddleware');
 
@@ -9,6 +9,7 @@ router.use(protect);
 router.use(performanceTracker);
 
 router.get('/dashboard', restrictTo('WORKSPACE_ADMIN', 'VP_ENGINEERING', 'ENGINEERING_MANAGER', 'TECH_LEAD'), getDashboard);
+router.post('/recalculate', restrictTo('WORKSPACE_ADMIN', 'VP_ENGINEERING', 'ENGINEERING_MANAGER', 'TECH_LEAD'), recalculate);
 router.get('/function/:category/roles', restrictTo('WORKSPACE_ADMIN', 'VP_ENGINEERING'), getRoleBreakdown);
 router.get('/roles/:role/individuals', restrictTo('WORKSPACE_ADMIN', 'VP_ENGINEERING'), getIndividualBreakdown);
 

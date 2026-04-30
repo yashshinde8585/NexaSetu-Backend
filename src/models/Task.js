@@ -169,6 +169,11 @@ const taskSchema = new mongoose.Schema(
         completed: { type: Boolean, default: false },
       },
     ],
+    category: {
+      type: String,
+      enum: ['backend', 'frontend', 'qa', 'design', 'other'],
+      index: true,
+    },
     attachments: [
       {
         name: {

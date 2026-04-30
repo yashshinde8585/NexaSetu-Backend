@@ -63,6 +63,12 @@ const userSchema = new mongoose.Schema(
       default: 0,
     },
     lockUntil: Date,
+    status: {
+      type: String,
+      enum: ['Active', 'Deactivated', 'Invited'],
+      default: 'Active',
+      index: true,
+    },
     profilePicture: {
       type: String,
       default: null,

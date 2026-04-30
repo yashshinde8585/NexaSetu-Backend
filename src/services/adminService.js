@@ -5,17 +5,35 @@ const AuditLog = require('../models/AuditLog');
 const Project = require('../models/Project');
 const Team = require('../models/Team');
 const teamService = require('./teamService');
+const dashboardService = require('./dashboardService');
+const healthService = require('./observability/healthService');
 const AppError = require('../utils/appError');
 
 // Internal Helpers
-const formatOverview = (workspace, users) => {
+const formatOverview = (workspace, users, projectsData, health) => {
   const activeRoles = [...new Set(users.map(u => u.role))];
+  
+  // Calculate aggregate metrics from projects
+  const avgHealth = projectsData.length > 0 
+    ? Math.round(projectsData.reduce((sum, p) => sum + p.healthScore, 0) / projectsData.length)
+    : 100;
+    
+  const avgProgress = projectsData.length > 0
+    ? Math.round(projectsData.reduce((sum, p) => sum + p.percentage, 0) / projectsData.length)
+    : 0;
+
+  const highRiskCount = projectsData.filter(p => p.riskLevel === 'High').length;
+
   return {
     name: workspace?.name || 'NexaSetu Org',
     totalUsers: users.length,
     activeRoles: activeRoles.length,
-    integrations: 2,
-    status: 'Healthy'
+    integrations: Object.values(workspace?.integrations || {}).filter(i => i.connected).length,
+    status: health?.status || 'HEALTHY',
+    healthScore: avgHealth,
+    progress: avgProgress,
+    riskLevel: highRiskCount > 0 ? 'HIGH' : 'LOW',
+    capacity: '85%' // Placeholder for now as capacity logic is complex
   };
 };
 
@@ -108,17 +126,23 @@ const getRolePermissionsDefinitions = (overrides = {}) => {
 
 // Exported Service Methods
 const getAdminDashboard = async (workspaceId, filters = {}) => {
-  const [workspace, users, logs, teams] = await Promise.all([
+  const [workspace, users, logs, teams, health] = await Promise.all([
     Workspace.findById(workspaceId).select('name subscription settings rolePermissions integrations').lean(),
     User.find({ workspaceId }).select('name email role status updatedAt lastActive githubAccessToken').lean(),
     getRecentLogs(workspaceId, filters.action),
-    Team.find({ workspaceId }).populate('lead', 'name').lean()
+    Team.find({ workspaceId }).populate('lead', 'name').lean(),
+    healthService.getSystemHealth()
   ]);
 
   const { PERMISSIONS } = require('../config/permissions');
 
+  // Fetch project metrics using dashboardService
+  // Mock user for dashboardService context
+  const mockAdminUser = { _id: workspaceId, role: 'WORKSPACE_ADMIN', workspaceId };
+  const { projects: projectsData } = await dashboardService.getDashboardStats(mockAdminUser);
+
   return {
-    overview: formatOverview(workspace, users),
+    overview: formatOverview(workspace, users, projectsData, health),
     users: formatUsers(users, teams),
     roles: getRolePermissionsDefinitions(workspace?.rolePermissions || {}),
     availablePermissions: Object.values(PERMISSIONS),
@@ -227,14 +251,53 @@ const inviteUser = async (workspaceId, performerId, email, role, projectId) => {
 };
 
 const deactivateUser = async (workspaceId, performerId, userId, status) => {
-  const user = await User.findByIdAndUpdate(userId, { status: status }, { new: true });
-  if (!user) throw new AppError('User not found', 404);
+  if (typeof userId === 'object') {
+    // Attempt to recover if the entire body was passed as userId
+    userId = userId.userId || userId.id;
+  }
+
+  const user = await User.findOneAndUpdate(
+    { _id: userId, workspaceId },
+    { status },
+    { new: true }
+  );
+  
+  if (!user) throw new AppError('User not found in this workspace', 404);
+  
+  await AuditLog.create({
+    workspaceId,
+    performer: performerId,
+    action: 'USER_DEACTIVATE',
+    entityType: 'USER',
+    entityId: user._id,
+    details: `Updated user status to: ${status}`
+  });
+
   return user;
 };
 
 const updateUserRole = async (workspaceId, performerId, userId, role) => {
-  const user = await User.findByIdAndUpdate(userId, { role }, { new: true });
-  if (!user) throw new AppError('User not found', 404);
+  if (typeof userId === 'object') {
+    userId = userId.userId || userId.id;
+  }
+
+  const user = await User.findOneAndUpdate(
+    { _id: userId, workspaceId },
+    { role },
+    { new: true }
+  );
+
+  if (!user) throw new AppError('User not found in this workspace', 404);
+
+  await AuditLog.create({
+    workspaceId,
+    performer: performerId,
+    action: 'USER_ROLE_UPDATE',
+    entityType: 'USER',
+    entityId: user._id,
+    details: `Updated user role to: ${role}`
+  });
+
   return user;
 };
 

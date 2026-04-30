@@ -72,6 +72,12 @@ exports.toggleTaskBlockage = catchAsync(async (req, res, next) => {
   return ResponseBuilder.success(res, { task });
 });
 
+exports.updateTaskSteps = catchAsync(async (req, res, next) => {
+  const { steps } = req.body;
+  const task = await taskService.updateTaskSteps(req.user, req.params.id, steps);
+  return ResponseBuilder.success(res, { task });
+});
+
 exports.deleteTask = catchAsync(async (req, res, next) => {
   await taskService.deleteTask(req.user, req.params.id);
   

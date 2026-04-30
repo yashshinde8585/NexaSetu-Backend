@@ -8,6 +8,7 @@ const {
   getTaskById,
   updateTaskStatus,
   toggleTaskBlockage,
+  updateTaskSteps,
   deleteTask,
   getSignedUploadUrl,
 } = require('../controllers/taskController');
@@ -49,6 +50,7 @@ router.post('/', requirePermission(PERMISSIONS.CREATE_TASKS), validate(createTas
 router.patch('/:id', verifyOwnership(Task), validate(updateTaskSchema), updateTask);
 router.patch('/:id/status', verifyOwnership(Task), updateTaskStatus);
 router.patch('/:id/block', verifyOwnership(Task), toggleTaskBlockage);
+router.patch('/:id/steps', verifyOwnership(Task), updateTaskSteps);
 router.delete('/:id', verifyOwnership(Task), deleteTask);
 
 module.exports = router;

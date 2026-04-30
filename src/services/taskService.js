@@ -528,6 +528,30 @@ const toggleTaskBlockage = async (user, taskId, blocked, reason) => {
   return task;
 };
 
+const updateTaskSteps = async (user, taskId, steps) => {
+  const task = await Task.findById(taskId);
+  if (!task) {
+    throw new AppError('No mission found with that ID', 404);
+  }
+
+  task.steps = steps;
+  await task.save();
+
+  await invalidateCache(user.workspaceId, '*task*');
+
+  try {
+    getIO().to(task.project.toString()).emit(EVENTS.TASK_UPDATED, { 
+      type: 'UPDATE', 
+      taskId: task._id, 
+      projectId: task.project
+    });
+  } catch (err) {
+    logger.warn('[SOCKET] Failed to broadcast steps update');
+  }
+
+  return task;
+};
+
 const deleteTask = async (user, taskId) => {
   const task = await Task.findById(taskId);
   if (!task) {
@@ -588,5 +612,6 @@ module.exports = {
   updateTask,
   getMyTasks,
   toggleTaskBlockage,
+  updateTaskSteps,
   deleteTask,
 };

@@ -5,6 +5,8 @@ const User = require('../models/User');
 const Sprint = require('../models/Sprint');
 const AuditLog = require('../models/AuditLog');
 const { calculateProgress, formatTimeAgo } = require('../utils/dashboardHelpers');
+const Team = require('../models/Team');
+const Service = require('../models/Service');
 
 const getTacticalBase = (activity) => {
   return {
@@ -99,15 +101,17 @@ const getActivityFeed = async (workspaceId) => {
 };
 
 const getCTOSpecifics = async (workspaceId) => {
-  const [atRiskCount, totalBlockers, totalEngineers, sprintTasks, blockedTasks] = await Promise.all([
+  const [atRiskCount, totalBlockers, totalEngineers, sprintTasks, blockedTasks, totalTasks, doneTasks] = await Promise.all([
     Project.countDocuments({ workspaceId, status: 'at_risk' }),
     Task.countDocuments({ workspaceId, blocked: true, status: { $ne: 'done' } }),
-    User.countDocuments({ workspaceId, role: { $in: ['SENIOR_ENGINEER', 'SOFTWARE_ENGINEER', 'JUNIOR_ENGINEER'] } }),
+    User.countDocuments({ workspaceId, role: { $regex: /ENGINEER/i } }),
     Task.aggregate([
       { $match: { workspaceId: new mongoose.Types.ObjectId(workspaceId) } },
       { $group: { _id: '$status', count: { $sum: 1 } } }
     ]),
-    Task.find({ workspaceId, blocked: true, status: { $ne: 'done' } }).limit(5).populate('assignedUser', 'role').lean()
+    Task.find({ workspaceId, blocked: true, status: { $ne: 'done' } }).limit(5).populate('assignedUser', 'role').lean(),
+    Task.countDocuments({ workspaceId }),
+    Task.countDocuments({ workspaceId, status: 'done' })
   ]);
 
   const pipeline = {
@@ -125,23 +129,26 @@ const getCTOSpecifics = async (workspaceId) => {
     else categorizedBlockers.engineering.push(task.title);
   });
 
+  const avgUtilization = totalEngineers > 0 ? Math.min(95, Math.round(( (totalTasks - doneTasks) / (totalEngineers * 5) ) * 100)) : 0;
+  const completionRate = totalTasks > 0 ? Math.round((doneTasks / totalTasks) * 100) : 0;
+
   return {
     global: {
       projectsAtRisk: atRiskCount,
       totalBlockers: totalBlockers,
       orgDeliveryDrift: atRiskCount > 0 ? atRiskCount * 1.5 : 0,
-      avgUtilization: totalEngineers > 0 ? 78 : 0, 
+      avgUtilization, 
       teamsOverloaded: atRiskCount > 2 ? 1 : 0
     },
     functionalBreakdown: {
       engineeringLeadership: { activeProjects: atRiskCount, delayed: atRiskCount, avgDrift: atRiskCount, decisionsPending: 0 },
-      engineeringIC: { totalEngineers, avgLoad: totalEngineers > 0 ? 75 : 0, overloaded: 0, completionRate: totalEngineers > 0 ? 88 : 0 },
+      engineeringIC: { totalEngineers, avgLoad: avgUtilization, overloaded: avgUtilization > 85 ? 1 : 0, completionRate },
       qa: { activeCycles: atRiskCount > 0 ? 1 : 0, blockedTests: totalBlockers, bugBacklog: 0, avgDelay: 0 },
       peopleOps: { hiringOpen: 0, attritionRisk: 0, avgLoad: 0, burnoutRiskTeams: 0 }
     },
     functionalTable: [
       { function: 'Engineering Leadership', load: atRiskCount > 0 ? 85 : 0, blockers: 0, delay: '0d', status: 'green' },
-      { function: 'Engineering ICs', load: totalEngineers > 0 ? 78 : 0, blockers: totalBlockers, delay: atRiskCount > 0 ? `${atRiskCount}d` : '0d', status: atRiskCount > 0 ? 'yellow' : 'green' },
+      { function: 'Engineering ICs', load: avgUtilization, blockers: totalBlockers, delay: atRiskCount > 0 ? `${atRiskCount}d` : '0d', status: atRiskCount > 0 ? 'yellow' : 'green' },
       { function: 'Quality Assurance', load: 0, blockers: 0, delay: '0d', status: 'green' },
       { function: 'People & Ops', load: 0, blockers: 0, delay: '0d', status: 'green' }
     ],
@@ -183,52 +190,175 @@ const getVPESpecifics = async (workspaceId) => {
 };
 
 const getTLSpecifics = async (workspaceId) => {
-  const [totalTasks, blockedTasks, bugTasks, projects] = await Promise.all([
+  const [totalTasks, blockedTasks, bugTasks, projects, services] = await Promise.all([
     Task.countDocuments({ workspaceId }),
     Task.countDocuments({ workspaceId, blocked: true, status: { $ne: 'done' } }),
     Task.countDocuments({ workspaceId, type: 'bug', status: { $ne: 'done' } }),
-    Project.countDocuments({ workspaceId })
+    Project.countDocuments({ workspaceId }),
+    Service.find({ workspaceId }).populate('owner', 'name').lean()
   ]);
 
   const activeBlockers = await Task.find({ workspaceId, blocked: true, status: { $ne: 'done' } }).limit(5).lean();
 
+  const healthyServices = services.filter(s => s.status === 'healthy').length;
+  const highRiskModules = services.filter(s => (s.technicalDebt?.score || 0) > 70).length;
+
+  const buildLogs = await AuditLog.find({ 
+    workspaceId, 
+    action: { $regex: /BUILD/i } 
+  }).sort('-timestamp').limit(50).lean();
+
+  const successBuilds = buildLogs.filter(l => l.action === 'BUILD_SUCCESS').length;
+  const totalBuilds = buildLogs.length;
+  const successRate = totalBuilds > 0 ? Math.round((successBuilds / totalBuilds) * 100) : 100;
+
+  const staleThreshold = new Date();
+  staleThreshold.setDate(staleThreshold.getDate() - 3);
+
+  const codeLogs = await AuditLog.find({
+    workspaceId,
+    action: { $regex: /COMMIT|PR|MERGE/i },
+    timestamp: { $gte: new Date(new Date().setHours(0,0,0,0)) }
+  }).lean();
+
+  const stalePRLogs = await AuditLog.aggregate([
+    { $match: { 
+        workspaceId: new mongoose.Types.ObjectId(workspaceId),
+        action: 'PR_OPEN',
+        timestamp: { $lt: staleThreshold }
+    } },
+    { $lookup: {
+        from: 'auditlogs',
+        let: { prId: '$details.prId' },
+        pipeline: [
+          { $match: { 
+              $expr: { $and: [
+                { $eq: ['$details.prId', '$$prId'] },
+                { $in: ['$action', ['PR_MERGED', 'PR_CLOSED']] }
+              ] }
+          } }
+        ],
+        as: 'resolution'
+    } },
+    { $match: { resolution: { $size: 0 } } }
+  ]);
+
+  const bugTrackerRaw = await Task.find({ 
+    workspaceId, 
+    type: 'bug', 
+    status: { $ne: 'done' } 
+  }).limit(10).lean();
+
   return {
     systemHealth: {
-      servicesHealthy: projects > 0 ? 'All Systems Go' : 'No Active Projects',
+      servicesHealthy: services.length > 0 ? `${healthyServices}/${services.length}` : (projects > 0 ? 'All Systems Go' : 'No Active Projects'),
       criticalBlockers: blockedTasks,
-      highRiskModules: 0,
+      highRiskModules: highRiskModules,
       openBugs: bugTasks,
-      buildStability: projects > 0 ? '100%' : 'N/A'
+      buildStability: totalBuilds > 0 ? `${successRate}%` : '100%'
     },
-    serviceMap: [],
+    serviceMap: await Promise.all(services.map(async s => {
+      const serviceLogs = await AuditLog.find({
+        workspaceId,
+        $or: [
+          { 'details.serviceId': s._id },
+          { action: { $regex: new RegExp(s.name, 'i') } }
+        ]
+      }).sort('-timestamp').limit(5).lean();
+
+      return {
+        id: s._id.toString(),
+        name: s.name,
+        status: s.status,
+        latency: `${s.latency || 0}ms`,
+        errorRate: s.errorRate || 0,
+        owner: s.owner?.name || 'Platform Team',
+        dependencies: s.dependencies?.map(d => d.toString()) || [],
+        healthHistory: serviceLogs.map(l => ({
+          status: l.action.includes('FAIL') ? 'failing' : (l.action.includes('DEGRADED') ? 'degraded' : 'healthy'),
+          time: formatTimeAgo(l.timestamp),
+          event: l.action
+        }))
+      };
+    })),
     blockers: activeBlockers.map(t => ({
+      id: t._id,
       title: t.title,
       severity: t.priority || 'high',
       impact: 'Deployment Delay',
       since: formatTimeAgo(t.updatedAt)
     })),
-    bugTracker: [],
-    buildHealth: { lastBuild: projects > 0 ? 'success' : 'none', successRate: '100%', deployFrequency: 'Ad-hoc', rollbackCount: 0 },
-    codeActivity: { commitsToday: 0, prsOpen: 0, prsMerged: 0, stalePRs: 0 },
-    technicalDebt: []
+    bugTracker: bugTrackerRaw.map(b => ({
+      id: b._id,
+      issue: b.title,
+      severity: b.priority || 'medium',
+      module: b.category || 'core',
+      status: b.status
+    })),
+    buildHealth: { 
+      lastBuild: buildLogs[0]?.action === 'BUILD_SUCCESS' ? 'SUCCESS' : (buildLogs[0]?.action === 'BUILD_FAILED' ? 'FAILING' : 'NONE'), 
+      successRate: `${successRate}%`, 
+      deployFrequency: totalBuilds > 0 ? `${(totalBuilds / 7).toFixed(1)}/D` : '0/D', 
+      rollbackCount: buildLogs.filter(l => l.action === 'ROLLBACK').length 
+    },
+    codeActivity: { 
+      commitsToday: codeLogs.filter(l => l.action.includes('COMMIT')).length, 
+      prsOpen: codeLogs.filter(l => l.action.includes('PR_OPEN')).length, 
+      prsMerged: codeLogs.filter(l => l.action.includes('PR_MERGED')).length, 
+      stalePRs: stalePRLogs.length
+    },
+    technicalDebt: services
+      .filter(s => (s.technicalDebt?.score || 0) > 30)
+      .map(s => ({
+        module: s.name,
+        reason: s.technicalDebt?.notes || 'Refactor Required',
+        debtLevel: (s.technicalDebt?.score || 0) > 70 ? 'High' : 'Medium'
+      }))
   };
 };
 
-const getEMSpecifics = async (workspaceId) => {
+const getEMSpecifics = async (workspaceId, userId) => {
+  // 1. RBAC Scope: Find team managed by this user
+  const managedTeam = await Team.findOne({ workspaceId, lead: userId }).lean();
+  const teamMemberIds = managedTeam ? managedTeam.members : null;
+
+  const userQuery = { workspaceId };
+  if (teamMemberIds) {
+    userQuery._id = { $in: teamMemberIds };
+  }
+
+  const taskQuery = { workspaceId, status: { $ne: 'done' } };
+  if (teamMemberIds) {
+    taskQuery.assignedUser = { $in: teamMemberIds };
+  }
+
   const [users, tasks, activeSprint] = await Promise.all([
-    User.find({ workspaceId }).limit(10).lean(),
-    Task.find({ workspaceId, status: { $ne: 'done' } }).sort('-priority -dueDate').limit(15).populate('assignedUser', 'name').lean(),
+    User.find(userQuery).limit(20).lean(),
+    Task.find(taskQuery).sort('-priority -dueDate').limit(50).populate('assignedUser', 'name').lean(),
     Sprint.findOne({ workspaceId, status: 'active' }).lean()
   ]);
 
+  const AVAILABLE_HOURS_WEEK = 40;
+  const AVAILABLE_MINUTES_WEEK = AVAILABLE_HOURS_WEEK * 60;
+
   const teamWorkload = users.map(user => {
     const userTasks = tasks.filter(t => t.assignedUser?._id.toString() === user._id.toString());
+    
+    // V1: Legacy load calculation (tasks * 20)
     const load = Math.min(100, (userTasks.length * 20));
+    
+    // V2: Accurate load calculation (estimatedDuration / capacity)
+    // estimatedDuration is in minutes by default
+    const totalMinutes = userTasks.reduce((acc, t) => acc + (t.estimatedDuration || 30), 0);
+    const loadV2 = Math.round(Math.min(100, (totalMinutes / AVAILABLE_MINUTES_WEEK) * 100));
+
     return {
+      id: user._id,
       member: user.name,
       tasks: userTasks.length,
       load,
-      status: load > 85 ? 'red' : load > 60 ? 'yellow' : 'green'
+      loadV2,
+      status: loadV2 > 90 ? 'red' : loadV2 > 70 ? 'yellow' : 'green'
     };
   });
 
@@ -298,17 +428,36 @@ const getEMSpecifics = async (workspaceId) => {
       daysLeft
     },
     distribution: {
-      backend: tasks.filter(t => t.title.toLowerCase().includes('api') || t.title.toLowerCase().includes('db')).length,
-      frontend: tasks.filter(t => t.title.toLowerCase().includes('ui') || t.title.toLowerCase().includes('design')).length,
-      qa: tasks.filter(t => t.title.toLowerCase().includes('test')).length,
-      other: 0,
+      backend: tasks.filter(t => 
+        t.category === 'backend' || 
+        t.title.toLowerCase().includes('api') || 
+        t.title.toLowerCase().includes('db') || 
+        t.title.toLowerCase().includes('server')
+      ).length,
+      frontend: tasks.filter(t => 
+        t.category === 'frontend' || 
+        t.title.toLowerCase().includes('ui') || 
+        t.title.toLowerCase().includes('design') || 
+        t.title.toLowerCase().includes('css')
+      ).length,
+      qa: tasks.filter(t => 
+        t.category === 'qa' || 
+        t.title.toLowerCase().includes('test') || 
+        t.title.toLowerCase().includes('bug') || 
+        t.title.toLowerCase().includes('verify')
+      ).length,
+      other: tasks.length - (
+        tasks.filter(t => t.category === 'backend' || t.title.toLowerCase().includes('api') || t.title.toLowerCase().includes('db') || t.title.toLowerCase().includes('server')).length +
+        tasks.filter(t => t.category === 'frontend' || t.title.toLowerCase().includes('ui') || t.title.toLowerCase().includes('design') || t.title.toLowerCase().includes('css')).length +
+        tasks.filter(t => t.category === 'qa' || t.title.toLowerCase().includes('test') || t.title.toLowerCase().includes('bug') || t.title.toLowerCase().includes('verify')).length
+      ),
       imbalance: blockers.length > 3 ? 'Heavy focus on Backend causing QA starvation' : null
     },
     focusToday: taskBoard.filter(t => t.due === 'Today' || t.priority === 'urgent').map(t => t.title).slice(0, 3)
   };
 };
 
-const getRoleSpecificData = async (workspaceId, role) => {
+const getRoleSpecificData = async (workspaceId, role, userId) => {
   const r = (role || '').toUpperCase().replace(' ', '_');
 
   if (['CTO', 'WORKSPACE_ADMIN'].includes(r)) {
@@ -324,7 +473,7 @@ const getRoleSpecificData = async (workspaceId, role) => {
   }
   
   if (['EM', 'ENGINEERING_MANAGER'].includes(r)) {
-    return await getEMSpecifics(workspaceId);
+    return await getEMSpecifics(workspaceId, userId);
   }
 
   return {};
@@ -339,7 +488,7 @@ const getLeadershipDashboard = async (userId, workspaceId, role) => {
     getActivityFeed(workspaceId)
   ]);
 
-  const roleSpecificData = await getRoleSpecificData(workspaceId, role);
+  const roleSpecificData = await getRoleSpecificData(workspaceId, role, userId);
 
   return {
     ...getTacticalBase(activity),
