@@ -7,7 +7,7 @@ const createTaskSchema = z.object({
   project: z.string().min(24, 'Invalid project ID format'),
   status: z.enum(['todo', 'in_progress', 'in_review', 'done']).optional(),
   assignedUser: z.string().optional(),
-  sprint: z.string().optional(),
+  sprint: z.string().nullable().optional(),
   dueDate: z.string().optional().refine((val) => !val || !isNaN(Date.parse(val)), {
     message: 'Invalid date format',
   }),
@@ -33,7 +33,7 @@ const updateTaskSchema = z.object({
   description: z.string().max(5000, 'Description is too long').optional(),
   status: z.enum(['todo', 'in_progress', 'in_review', 'done']).optional(),
   assignedUser: z.string().optional(),
-  sprint: z.string().optional(),
+  sprint: z.string().nullable().optional(),
   dueDate: z.string().optional().refine((val) => !val || !isNaN(Date.parse(val)), {
     message: 'Invalid date format',
   }),

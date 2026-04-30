@@ -209,6 +209,11 @@ const updateProject = async (user, id, updateData) => {
     throw new AppError('You do not have permission to update tactical settings for this mission.', 403);
   }
 
+  // Sanitize: Convert empty strings or invalid IDs to null for the sprint field
+  if (updateData.sprint === '' || updateData.sprint === 'null') {
+    updateData.sprint = null;
+  }
+
   const updatedProject = await Project.findByIdAndUpdate(id, updateData, {
     new: true,
     runValidators: true,

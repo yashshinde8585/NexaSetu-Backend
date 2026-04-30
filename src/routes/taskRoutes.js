@@ -11,6 +11,7 @@ const {
   updateTaskSteps,
   deleteTask,
   getSignedUploadUrl,
+  submitTaskReview,
 } = require('../controllers/taskController');
 const { protect, requirePermission } = require('../middleware/authMiddleware');
 const { PERMISSIONS } = require('../config/permissions');
@@ -51,6 +52,7 @@ router.patch('/:id', verifyOwnership(Task), validate(updateTaskSchema), updateTa
 router.patch('/:id/status', verifyOwnership(Task), updateTaskStatus);
 router.patch('/:id/block', verifyOwnership(Task), toggleTaskBlockage);
 router.patch('/:id/steps', verifyOwnership(Task), updateTaskSteps);
+router.post('/:id/review', verifyOwnership(Task), submitTaskReview);
 router.delete('/:id', verifyOwnership(Task), deleteTask);
 
 module.exports = router;

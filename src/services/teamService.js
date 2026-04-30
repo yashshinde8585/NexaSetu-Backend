@@ -62,10 +62,11 @@ const provisionUser = async (
   }
 };
 
-const bulkProvision = async (invites, workspaceId, invitedBy, isStrategicLead) => {
+const bulkProvision = async (invites, workspaceId, user, isStrategicLead) => {
   const provisionedUsers = [];
   const failedInvites = [];
   const engineeringRecruiterRoles = ['PROJECT_MEMBER', 'RESTRICTED'];
+  const isAdmin = user.role === 'WORKSPACE_ADMIN' || user.role === 'ADMIN';
 
   for (const invite of invites) {
     try {
@@ -78,10 +79,19 @@ const bulkProvision = async (invites, workspaceId, invitedBy, isStrategicLead) =
         );
       }
 
+      // Security Hardening: Project access check for non-admins
+      if (!isAdmin && invite.projectId) {
+        const { canAccessResource } = require('../utils/authHelpers');
+        const hasAccess = await canAccessResource(user, invite.projectId, 'project');
+        if (!hasAccess) {
+          throw new Error('Unauthorized project assignment for this sector.');
+        }
+      }
+
       const result = await provisionUser(
         invite,
         workspaceId,
-        invitedBy,
+        user._id,
         'BIRTH'
       );
 
@@ -179,10 +189,38 @@ const removeInvitation = async (user, invitationId) => {
   return true;
 };
 
+const updateMemberProject = async (user, memberId, projectId) => {
+  const member = await User.findOne({ _id: memberId, workspaceId: user.workspaceId });
+  if (!member) throw new AppError('Member not found', 404);
+
+  const oldProjectId = member.assignedProjectId;
+
+  // 1. Update the User
+  member.assignedProjectId = projectId || null;
+  await member.save();
+
+  // 2. Remove from old project if exists
+  if (oldProjectId) {
+    await Project.findByIdAndUpdate(oldProjectId, {
+      $pull: { members: memberId }
+    });
+  }
+
+  // 3. Add to new project if exists
+  if (projectId) {
+    await Project.findByIdAndUpdate(projectId, {
+      $addToSet: { members: memberId }
+    });
+  }
+
+  return member;
+};
+
 module.exports = {
   provisionUser,
   bulkProvision,
   getInviteByToken,
   getWorkspaceTeam,
   removeInvitation,
+  updateMemberProject,
 };

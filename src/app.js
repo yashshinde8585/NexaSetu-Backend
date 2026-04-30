@@ -142,6 +142,7 @@ const rbacRoutes = require('./routes/rbacRoutes');
 const executionRoutes = require('./routes/executionRoutes');
 const observabilityRoutes = require('./routes/observabilityRoutes');
 const metricsRoutes = require('./routes/metricsRoutes');
+const directiveRoutes = require('./routes/directiveRoutes');
 
 v1Router.use('/auth', authRoutes);
 v1Router.use('/projects', projectRoutes);
@@ -164,6 +165,7 @@ v1Router.use('/rbac', rbacRoutes);
 v1Router.use('/execution', executionRoutes);
 v1Router.use('/observability', observabilityRoutes);
 v1Router.use('/metrics', metricsRoutes);
+v1Router.use('/directives', directiveRoutes);
 
 v1Router.use('/engineering', engineeringRoutes);
 v1Router.use('/leadership', leadershipRoutes);

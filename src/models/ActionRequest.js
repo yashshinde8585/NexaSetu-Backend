@@ -12,6 +12,7 @@ const actionRequestSchema = new mongoose.Schema(
         'PROJECT_TIMELINE_SHIFT',
         'GITHUB_SYNC',
         'DELETE_TASK',
+        'STABILIZE_SUGGESTION',
       ],
     },
     targetId: {

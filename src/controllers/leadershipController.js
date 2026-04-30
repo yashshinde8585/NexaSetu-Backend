@@ -62,3 +62,10 @@ exports.recalculate = catchAsync(async (req, res, next) => {
     data
   });
 });
+
+exports.getWarRoomData = catchAsync(async (req, res, next) => {
+  const { projectId } = req.params;
+  const workspaceId = req.user.workspaceId;
+  const data = await leadershipService.getProjectWarRoomData(workspaceId, projectId);
+  res.status(200).json({ status: 'success', data });
+});

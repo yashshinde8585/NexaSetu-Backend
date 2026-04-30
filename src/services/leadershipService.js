@@ -121,11 +121,11 @@ const getCTOSpecifics = async (workspaceId) => {
     release: sprintTasks.find(t => t._id === 'done')?.count || 0
   };
 
-  const categorizedBlockers = { engineering: [], qa: [], peopleOps: [] };
+  const categorizedBlockers = { engineering: [], qa: [], hr: [] };
   blockedTasks.forEach(task => {
     const role = task.assignedUser?.role || 'ENGINEERING';
     if (role.includes('QA')) categorizedBlockers.qa.push(task.title);
-    else if (role.includes('HR')) categorizedBlockers.peopleOps.push(task.title);
+    else if (role.includes('HR')) categorizedBlockers.hr.push(task.title);
     else categorizedBlockers.engineering.push(task.title);
   });
 
@@ -144,13 +144,13 @@ const getCTOSpecifics = async (workspaceId) => {
       engineeringLeadership: { activeProjects: atRiskCount, delayed: atRiskCount, avgDrift: atRiskCount, decisionsPending: 0 },
       engineeringIC: { totalEngineers, avgLoad: avgUtilization, overloaded: avgUtilization > 85 ? 1 : 0, completionRate },
       qa: { activeCycles: atRiskCount > 0 ? 1 : 0, blockedTests: totalBlockers, bugBacklog: 0, avgDelay: 0 },
-      peopleOps: { hiringOpen: 0, attritionRisk: 0, avgLoad: 0, burnoutRiskTeams: 0 }
+      hr: { hiringOpen: 0, attritionRisk: 0, avgLoad: 0, burnoutRiskTeams: 0 }
     },
     functionalTable: [
       { function: 'Engineering Leadership', load: atRiskCount > 0 ? 85 : 0, blockers: 0, delay: '0d', status: 'green' },
       { function: 'Engineering ICs', load: avgUtilization, blockers: totalBlockers, delay: atRiskCount > 0 ? `${atRiskCount}d` : '0d', status: atRiskCount > 0 ? 'yellow' : 'green' },
       { function: 'Quality Assurance', load: 0, blockers: 0, delay: '0d', status: 'green' },
-      { function: 'People & Ops', load: 0, blockers: 0, delay: '0d', status: 'green' }
+      { function: 'HR', load: 0, blockers: 0, delay: '0d', status: 'green' }
     ],
     blockers: categorizedBlockers,
     pipeline
@@ -503,7 +503,7 @@ const getRoleBreakdown = async (workspaceId, category) => {
     leadership: ['WORKSPACE_ADMIN', 'VP_ENGINEERING', 'ENGINEERING_MANAGER', 'TECH_LEAD'],
     engineering: ['SENIOR_ENGINEER', 'SOFTWARE_ENGINEER', 'INTERN'],
     qa: ['QA_LEAD', 'QA', 'SQA'], 
-    people: ['PEOPLE_OPS']
+    people: ['HR']
   };
 
   const targetRoles = rolesMap[category.toLowerCase()] || [];
@@ -566,8 +566,86 @@ const getIndividualBreakdown = async (workspaceId, role) => {
   ]);
 };
 
+const getProjectWarRoomData = async (workspaceId, projectId) => {
+  const [project, activeSprint, tasks, directives] = await Promise.all([
+    Project.findById(projectId).populate('members', 'name role avatar').lean(),
+    Sprint.findOne({ workspaceId, status: 'active' }).lean(),
+    Task.find({ projectId }).populate('assignedUser', 'name role').lean(),
+    require('../models/Directive').find({ workspaceId, status: 'issued' }).sort('-priority').limit(3).lean()
+  ]);
+
+  if (!project) return null;
+
+  const totalTasks = tasks.length;
+  const completedTasks = tasks.filter(t => t.status === 'done').length;
+  const blockedTasks = tasks.filter(t => t.blocked && t.status !== 'done');
+  const criticalTasks = tasks.filter(t => (t.priority === 'urgent' || t.priority === 'high') && t.status !== 'done');
+  
+  const progress = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
+  
+  // Calculate Drift
+  const overdueCount = tasks.filter(t => t.dueDate && new Date(t.dueDate) < new Date() && t.status !== 'done').length;
+  const health = overdueCount > 5 || blockedTasks.length > 3 ? 'AT_RISK' : (overdueCount > 0 ? 'NEEDS_ATTENTION' : 'ON_TRACK');
+
+  return {
+    project: {
+      name: project.name,
+      key: project.key,
+      health,
+      progress,
+      membersCount: project.members.length
+    },
+    sprint: activeSprint ? {
+      name: activeSprint.name,
+      daysLeft: Math.max(0, Math.ceil((new Date(activeSprint.endDate) - new Date()) / (1000 * 60 * 60 * 24)))
+    } : null,
+    metrics: {
+      total: totalTasks,
+      completed: completedTasks,
+      blocked: blockedTasks.length,
+      critical: criticalTasks.length,
+      drift: overdueCount > 0 ? `+${overdueCount}d` : '0d'
+    },
+    blockers: blockedTasks.map(t => ({
+      id: t._id,
+      title: t.title,
+      owner: t.assignedUser?.name || 'Unassigned',
+      reason: t.blockedReason || 'Unknown'
+    })),
+    directives: directives.map(d => ({
+      id: d._id,
+      title: d.title,
+      type: d.type,
+      priority: d.priority
+    })),
+    criticalPath: criticalTasks.slice(0, 5).map(t => ({
+      id: t._id,
+      title: t.title,
+      status: t.status,
+      owner: t.assignedUser?.name || 'Unassigned'
+    })),
+    reviewQueue: tasks.filter(t => t.status === 'in_review').map(t => ({
+      id: t._id,
+      title: t.title,
+      owner: t.assignedUser?.name || 'Unassigned',
+      reviewers: t.reviewers
+    })),
+    burnoutRisks: project.members.map(m => {
+       const userTasks = tasks.filter(t => t.assignedUser?._id.toString() === m._id.toString());
+       const load = Math.min(100, userTasks.length * 20); // Simplified load for now
+       return { name: m.name, load, role: m.role };
+    }).filter(m => m.load >= 80),
+    eventFeed: await AuditLog.find({ 'details.projectId': projectId }).sort('-timestamp').limit(10).populate('performer', 'name').lean()
+      .then(logs => logs.map(l => ({
+        text: `${l.performer?.name || 'System'} -> ${l.action}`,
+        time: formatTimeAgo(l.timestamp)
+      })))
+  };
+};
+
 module.exports = {
   getLeadershipDashboard,
   getRoleBreakdown,
   getIndividualBreakdown,
+  getProjectWarRoomData,
 };

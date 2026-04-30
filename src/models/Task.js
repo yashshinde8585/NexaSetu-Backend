@@ -27,7 +27,7 @@ const taskSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ['todo', 'in_progress', 'in_review', 'done'],
+      enum: ['todo', 'in_progress', 'blocked', 'in_review', 'approved', 'rejected', 'done'],
       default: 'todo',
       index: true,
     },
@@ -169,6 +169,35 @@ const taskSchema = new mongoose.Schema(
         completed: { type: Boolean, default: false },
       },
     ],
+    reviewers: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User',
+      },
+    ],
+    reviewStatus: {
+      type: String,
+      enum: ['pending', 'code_review', 'test_validation', 'approved', 'rejected'],
+      default: 'pending',
+    },
+    escalationOwner: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      index: true,
+    },
+    isEscalated: {
+      type: Boolean,
+      default: false,
+    },
+    reviewNotes: {
+      type: String,
+      trim: true,
+    },
+    strategicDirective: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Directive',
+      index: true,
+    },
     category: {
       type: String,
       enum: ['backend', 'frontend', 'qa', 'design', 'other'],

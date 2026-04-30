@@ -85,6 +85,12 @@ exports.deleteTask = catchAsync(async (req, res, next) => {
   return ResponseBuilder.success(res, null, 204);
 });
 
+exports.submitTaskReview = catchAsync(async (req, res, next) => {
+  const { result, notes } = req.body;
+  const task = await taskService.submitTaskReview(req.user, req.params.id, result, notes);
+  return ResponseBuilder.success(res, { task });
+});
+
 exports.getSignedUploadUrl = catchAsync(async (req, res, next) => {
   const dto = dataTransformer.transform(req);
   

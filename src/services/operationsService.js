@@ -8,7 +8,7 @@ const { calculateProgress, mapTaskToDashboard } = require('../utils/dashboardHel
 
 /**
  * Operations Service
- * Combines logic for QA and HR/People functions.
+ * Combines logic for QA and HR functions.
  */
 class OperationsService {
   async getOperationsDashboard(userId, workspaceId, role) {
@@ -17,8 +17,8 @@ class OperationsService {
       return await this._getSQASections(workspaceId);
     } else if (r.includes('QA')) {
       return await this._getQASections(workspaceId);
-    } else if (r === 'PEOPLE_OPS') {
-      return await this._getPeopleOpsSections(workspaceId);
+    } else if (r === 'HR') {
+      return await this._getHRSections(workspaceId);
     }
 
     return { timestamp: new Date() };
@@ -211,7 +211,7 @@ class OperationsService {
     return coverage;
   }
 
-  async _getPeopleOpsSections(workspaceId) {
+  async _getHRSections(workspaceId) {
     const [users, teams, tasks, logs] = await Promise.all([
       User.find({ workspaceId }).lean(),
       Team.find({ workspaceId }).populate('members').lean(),

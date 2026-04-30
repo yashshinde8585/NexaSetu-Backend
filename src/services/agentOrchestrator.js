@@ -85,6 +85,20 @@ const processEvent = async (event) => {
         reason = type === 'TASK_CREATED' ? 'New entry impact assessment' : 'Status/Assignment change impact';
         break;
 
+      case 'TASK_BLOCKED':
+        agent = 'Sentinel';
+        decision = 'escalation required';
+        actionTaken = 'notified TL + marked project health drift';
+        reason = 'Critical path task blocked by external dependency';
+        break;
+
+      case 'TASK_REVIEW_PENDING':
+        agent = 'Enforcer';
+        decision = 'quality gate active';
+        actionTaken = 'locked task status until approval';
+        reason = 'Mandatory review loop initialized';
+        break;
+
       case 'USER_OVERLOADED':
         agent = 'Resource';
         decision = 'redistribution required';
