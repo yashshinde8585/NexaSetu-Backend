@@ -26,10 +26,19 @@ const { logTaskUpdate, logTaskCreation } = require('./taskHelpers/TaskAuditLogge
 
 const updateTaskStatus = async (user, taskId, status, req) => {
   try {
+    if (!status) {
+      throw new AppError('Mission Status is required.', 400);
+    }
+
     const task = await Task.findById(taskId);
     if (!task) {
       throw new AppError('No mission found with that ID', 404);
     }
+
+    const oldStatus = task.status;
+    
+    // If status hasn't changed, return early to save resources
+    if (oldStatus === status) return task;
 
     const isManager = isManagerOrAdmin(user);
     
@@ -63,17 +72,14 @@ const updateTaskStatus = async (user, taskId, status, req) => {
       }
     }
 
-    // 3. Ownership Shift: REJECTED -> Developer Owns
-    if (status === 'rejected') {
-       // Logic handled in submitTaskReview, but defensive check here
-    }
-
     // 4. Blocked Handling: Assign Escalation
     if (status === 'blocked') {
       if (!task.blockedReason) throw new AppError('Blockage reason required.', 400);
       const projectDoc = await Project.findById(task.project);
-      task.escalationOwner = projectDoc.createdBy; // Escalate to Project Owner
-      task.isEscalated = true;
+      if (projectDoc) {
+        task.escalationOwner = projectDoc.createdBy; // Escalate to Project Owner
+        task.isEscalated = true;
+      }
     } else {
       task.isEscalated = false;
       task.escalationOwner = null;
@@ -86,10 +92,15 @@ const updateTaskStatus = async (user, taskId, status, req) => {
 
     updateTaskTimeTracking(task, status);
     task.status = status;
-    task.timelineHistory.push({
-      status,
-      timestamp: Date.now(),
-      reason: `System: Status transitioned from ${oldStatus || 'unknown'} to ${status} by ${user?.name || 'Authorized Performer'}`,
+    
+    // Use timelineHistory ONLY for schema-compliant events (due dates)
+    // For status, use the TaskStatusHistory model
+    await TaskStatusHistory.create({
+      task: taskId,
+      fromStatus: oldStatus,
+      toStatus: status,
+      changedBy: user._id,
+      timestamp: new Date()
     });
 
     await task.save();
@@ -719,9 +730,8 @@ const submitTaskReview = async (user, taskId, result, notes) => {
   }
 
   task.timelineHistory.push({
-    status: task.status,
-    timestamp: Date.now(),
     reason: `Review Result: ${result.toUpperCase()} by ${user.name}. Notes: ${notes}`,
+    timestamp: new Date()
   });
 
   await task.save();
