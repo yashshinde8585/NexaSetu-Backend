@@ -6,171 +6,168 @@ const executionPolicy = require('./executionPolicy');
 const aiOutputValidator = require('../validators/aiOutputValidator');
 const logger = require('../utils/logger');
 
-// Engine for executing and tracking approved autonomous system actions.
-class ActionExecutor {
-  constructor() {
-    this.name = 'ActionExecutor';
-  }
+const processDecision = async (decision) => {
+  try {
+    const { type, targetId, targetType, payload, agent, reason } = decision;
 
-  async processDecision(decision) {
-    try {
-      const { type, targetId, targetType, payload, agent, reason } = decision;
-
-      if (!type || !targetId || !payload) {
-        throw new Error('Incomplete action data');
-      }
-
-      const mode =
-        decision.mode || executionPolicy.getExecutionMode(type, payload);
-
-      logger.info(
-        `[ActionExecutor] Processing ${type} (Mode: ${mode}) for agent: ${agent}`
-      );
-
-      if (mode === 'auto') {
-        const result = await this.executeImmediately(
-          type,
-          targetId,
-          targetType,
-          payload,
-          reason,
-          agent
-        );
-        return { status: 'executed', ...result };
-      } else {
-        // Create a pending request for manual supervisor approval.
-        const request = await ActionRequest.create({
-          type,
-          targetId,
-          targetType,
-          payload,
-          reason,
-          agent,
-          status: 'pending',
-        });
-        return {
-          status: 'pending_approval',
-          requestId: request._id,
-          mode: 'approval',
-        };
-      }
-    } catch (error) {
-      logger.error(`[ActionExecutor] Processing Error: ${error.message}`);
-      throw error;
+    if (!type || !targetId || !payload) {
+      throw new Error('Incomplete action data');
     }
-  }
 
-  async executeImmediately(type, targetId, targetType, payload, reason, agent) {
-    let result = null;
-    let oldValue = null;
-    let newValue = null;
+    const mode =
+      decision.mode || executionPolicy.getExecutionMode(type, payload);
 
-    try {
-      // Validate AI-driven output to prevent system state corruption.
-      const aiAgents = ['Scheduler', 'Harvester', 'Portfolio'];
-      if (aiAgents.includes(agent)) {
-        if (payload.newDate && isNaN(new Date(payload.newDate).getTime())) {
-          throw new Error('AI generated invalid date for task shift');
-        }
-      }
+    logger.info(
+      `[ActionExecutor] Processing ${type} (Mode: ${mode}) for agent: ${agent}`
+    );
 
-      switch (type) {
-        case 'UPDATE_TASK_DEADLINE':
-          oldValue = await Task.findById(targetId, 'dueDate');
-          if (!oldValue) throw new Error('Task not found');
-          
-          result = await Task.findByIdAndUpdate(
-            targetId,
-            {
-              dueDate: payload.newDate,
-              $push: {
-                timelineHistory: {
-                  oldDueDate: oldValue.dueDate,
-                  newDueDate: payload.newDate,
-                  reason: reason || 'Autonomous Scheduler Adjustment',
-                },
-              },
-            },
-            { returnDocument: 'after' }
-          );
-          newValue = result.dueDate;
-          break;
-
-        case 'STATUS_CHANGE':
-          oldValue = await Task.findById(targetId, 'status');
-          if (!oldValue) throw new Error('Task not found');
-          
-          result = await Task.findByIdAndUpdate(
-            targetId,
-            { status: payload.status },
-            { returnDocument: 'after' }
-          );
-          newValue = result.status;
-          break;
-
-        case 'REASSIGN_TASK':
-          oldValue = await Task.findById(targetId, 'assignedUser');
-          if (!oldValue) throw new Error('Task not found');
-          
-          result = await Task.findByIdAndUpdate(
-            targetId,
-            { assignedUser: payload.newUserId },
-            { returnDocument: 'after' }
-          );
-          newValue = result.assignedUser;
-          break;
-
-        default:
-          throw new Error(`Unsupported action type: ${type}`);
-      }
-
-      await ActionRequest.create({
+    if (mode === 'auto') {
+      const result = await executeImmediately(
+        type,
+        targetId,
+        targetType,
+        payload,
+        reason,
+        agent
+      );
+      return { status: 'executed', ...result };
+    } else {
+      // Create a pending request for manual supervisor approval.
+      const request = await ActionRequest.create({
         type,
         targetId,
         targetType,
         payload,
         reason,
         agent,
-        status: 'executed',
-        executedAt: new Date(),
-        oldValue,
-        newValue,
+        status: 'pending',
       });
-
-      return { result, oldValue, newValue };
-    } catch (error) {
-      logger.error(`[ActionExecutor] Execution failed: ${error.message}`);
-      throw error;
+      return {
+        status: 'pending_approval',
+        requestId: request._id,
+        mode: 'approval',
+      };
     }
+  } catch (error) {
+    logger.error(`[ActionExecutor] Processing Error: ${error.message}`);
+    throw error;
   }
+};
 
-  async approveRequest(requestId, userId) {
-    try {
-      const request = await ActionRequest.findById(requestId);
-      if (!request || request.status !== 'pending') {
-        throw new Error('Request not found or already processed');
+const executeImmediately = async (type, targetId, targetType, payload, reason, agent) => {
+  let result = null;
+  let oldValue = null;
+  let newValue = null;
+
+  try {
+    // Validate AI-driven output to prevent system state corruption.
+    const aiAgents = ['Scheduler', 'Harvester', 'Portfolio'];
+    if (aiAgents.includes(agent)) {
+      if (payload.newDate && isNaN(new Date(payload.newDate).getTime())) {
+        throw new Error('AI generated invalid date for task shift');
       }
-
-      const result = await this.executeImmediately(
-        request.type,
-        request.targetId,
-        request.targetType,
-        request.payload,
-        request.reason,
-        request.agent
-      );
-
-      request.status = 'approved';
-      request.executedAt = new Date();
-      request.createdBy = userId;
-      await request.save();
-      
-      return result;
-    } catch (error) {
-      logger.error(`[ActionExecutor] Approval failed: ${error.message}`);
-      throw error;
     }
-  }
-}
 
-module.exports = new ActionExecutor();
+    switch (type) {
+      case 'UPDATE_TASK_DEADLINE':
+        oldValue = await Task.findById(targetId, 'dueDate');
+        if (!oldValue) throw new Error('Task not found');
+        
+        result = await Task.findByIdAndUpdate(
+          targetId,
+          {
+            dueDate: payload.newDate,
+            $push: {
+              timelineHistory: {
+                oldDueDate: oldValue.dueDate,
+                newDueDate: payload.newDate,
+                reason: reason || 'Autonomous Scheduler Adjustment',
+              },
+            },
+          },
+          { returnDocument: 'after' }
+        );
+        newValue = result.dueDate;
+        break;
+
+      case 'STATUS_CHANGE':
+        oldValue = await Task.findById(targetId, 'status');
+        if (!oldValue) throw new Error('Task not found');
+        
+        result = await Task.findByIdAndUpdate(
+          targetId,
+          { status: payload.status },
+          { returnDocument: 'after' }
+        );
+        newValue = result.status;
+        break;
+
+      case 'REASSIGN_TASK':
+        oldValue = await Task.findById(targetId, 'assignedUser');
+        if (!oldValue) throw new Error('Task not found');
+        
+        result = await Task.findByIdAndUpdate(
+          targetId,
+          { assignedUser: payload.newUserId },
+          { returnDocument: 'after' }
+        );
+        newValue = result.assignedUser;
+        break;
+
+      default:
+        throw new Error(`Unsupported action type: ${type}`);
+    }
+
+    await ActionRequest.create({
+      type,
+      targetId,
+      targetType,
+      payload,
+      reason,
+      agent,
+      status: 'executed',
+      executedAt: new Date(),
+      oldValue,
+      newValue,
+    });
+
+    return { result, oldValue, newValue };
+  } catch (error) {
+    logger.error(`[ActionExecutor] Execution failed: ${error.message}`);
+    throw error;
+  }
+};
+
+const approveRequest = async (requestId, userId) => {
+  try {
+    const request = await ActionRequest.findById(requestId);
+    if (!request || request.status !== 'pending') {
+      throw new Error('Request not found or already processed');
+    }
+
+    const result = await executeImmediately(
+      request.type,
+      request.targetId,
+      request.targetType,
+      request.payload,
+      request.reason,
+      request.agent
+    );
+
+    request.status = 'approved';
+    request.executedAt = new Date();
+    request.createdBy = userId;
+    await request.save();
+    
+    return result;
+  } catch (error) {
+    logger.error(`[ActionExecutor] Approval failed: ${error.message}`);
+    throw error;
+  }
+};
+
+module.exports = {
+  processDecision,
+  executeImmediately,
+  approveRequest
+};
