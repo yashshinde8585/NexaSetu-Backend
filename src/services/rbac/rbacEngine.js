@@ -2,28 +2,33 @@ const Role = require('../../models/Role');
 const Permission = require('../../models/Permission');
 const User = require('../../models/User');
 
-class RbacEngine {
-  async getRoles() {
-    return Role.find().populate('permissions');
-  }
+const getRoles = async () => {
+  return Role.find().populate('permissions');
+};
 
-  async createRole(name, description, permissionIds) {
-    const role = new Role({ name, description, permissions: permissionIds });
-    return role.save();
-  }
+const createRole = async (name, description, permissionIds) => {
+  const role = new Role({ name, description, permissions: permissionIds });
+  return role.save();
+};
 
-  async updateRole(id, updates) {
-    return Role.findByIdAndUpdate(id, updates, { new: true });
-  }
+const updateRole = async (id, updates) => {
+  return Role.findByIdAndUpdate(id, updates, { new: true });
+};
 
-  async getPermissions() {
-    return Permission.find();
-  }
+const getPermissions = async () => {
+  return Permission.find();
+};
 
-  async createPermission(action, description) {
-    const permission = new Permission({ action, description });
-    return permission.save();
-  }
-}
+const createPermission = async (action, description) => {
+  const permission = new Permission({ action, description });
+  return permission.save();
+};
 
-module.exports = new RbacEngine();
+module.exports = {
+  getRoles,
+  createRole,
+  updateRole,
+  getPermissions,
+  createPermission,
+};
+
