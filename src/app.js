@@ -39,7 +39,14 @@ app.use(helmet({
   },
 }));
 
-app.use(express.json({ limit: '15kb' }));
+app.use(express.json({ 
+  limit: '15kb',
+  verify: (req, res, buf) => {
+    if (req.originalUrl.includes('/webhooks')) {
+      req.rawBody = buf;
+    }
+  }
+}));
 app.use((err, req, res, next) => {
   if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
     return res.status(400).json({
@@ -143,7 +150,9 @@ const executionRoutes = require('./routes/executionRoutes');
 const observabilityRoutes = require('./routes/observabilityRoutes');
 const metricsRoutes = require('./routes/metricsRoutes');
 const directiveRoutes = require('./routes/directiveRoutes');
+const webhookRoutes = require('./routes/webhookRoutes');
 
+v1Router.use('/webhooks', webhookRoutes);
 v1Router.use('/auth', authRoutes);
 v1Router.use('/projects', projectRoutes);
 v1Router.use('/tasks', taskRoutes);

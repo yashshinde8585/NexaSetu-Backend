@@ -22,7 +22,7 @@ const generateTokens = (userId) => {
 const { runInTransaction } = require('../utils/dbUtils');
 
 const registerUser = async (userData) => {
-  const { email, name, admin, password, workspaceName, plan, assignedProjectId } = userData;
+  const { email, name, admin, password, workspaceName, plan, assignedProjectId, clerkUserId } = userData;
 
   const existingUser = await User.findOne({ email });
   if (existingUser) throw new AppError('This email is already registered.', 400);
@@ -63,6 +63,7 @@ const registerUser = async (userData) => {
       jobTitle,
       workspaceId,
       assignedProjectId: (invitation ? invitation.projectId : null) || assignedProjectId,
+      clerkUserId,
       passwordChangedAt: Date.now(),
     }], { session });
 

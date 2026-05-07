@@ -7,46 +7,82 @@ const { mapRole } = require('../utils/authHelpers');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
 const logger = require('../utils/logger');
+const { createClerkClient } = require('@clerk/clerk-sdk-node');
+const clerkClient = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY });
 
 // Middleware to protect routes and ensure user is authenticated
 exports.protect = catchAsync(async (req, res, next) => {
+  const useClerk = process.env.USE_CLERK_AUTH === 'true';
   let token;
+  let user;
 
-  // Extract token from authorization header or cookies
   if (req.headers.authorization?.startsWith('Bearer')) {
     token = req.headers.authorization.split(' ')[1];
-  } else if (req.cookies?.jwt) {
+  } else if (useClerk && req.cookies?.__session) {
+    token = req.cookies.__session;
+  } else if (!useClerk && req.cookies?.jwt) {
     token = req.cookies.jwt;
   }
 
-  if (!token) {
-    return next(new AppError('You are not logged in! Please log in to get access.', 401));
-  }
+  if (useClerk) {
+    if (!token) {
+       return next(new AppError('No token provided. Please log in.', 401));
+    }
+    try {
+      // For Clerk, the token might be in the Authorization header
+      const decodedToken = await clerkClient.verifyToken(token);
+      const userId = decodedToken.sub;
+      
+      user = await User.findOne({ clerkUserId: userId }).select('-password');
+      
+      if (!user) {
+        // Fallback for users who exist in Clerk but not yet synced to MongoDB
+        const clerkUser = await clerkClient.users.getUser(userId);
+        const email = clerkUser.emailAddresses[0]?.emailAddress;
+        
+        user = await User.findOne({ email }).select('-password');
+        
+        if (user) {
+          user.clerkUserId = userId;
+          await user.save();
+        } else {
+           return next(new AppError('User not found in local database. Synchronization pending.', 401));
+        }
+      }
+    } catch (err) {
+      console.error('[CLERK-AUTH-ERROR] Token verification failed:', err.message);
+      return next(new AppError(`Invalid or expired Clerk session: ${err.message}`, 401));
+    }
+  } else {
+    if (!token) {
+      return next(new AppError('You are not logged in! Please log in to get access.', 401));
+    }
 
-  // Verify the JWT token signature and expiration
-  let decoded;
-  try {
-    decoded = jwt.verify(token, config.jwt.secret);
-  } catch (err) {
-    return next(new AppError('Invalid or expired token. Please log in again.', 401));
-  }
+    // Verify the JWT token signature and expiration
+    let decoded;
+    try {
+      decoded = jwt.verify(token, config.jwt.secret);
+    } catch (err) {
+      return next(new AppError('Invalid or expired token. Please log in again.', 401));
+    }
 
-  // Verify that the user still exists in the system
-  const user = await User.findById(decoded.id).select('-password');
-  if (!user) {
-    return next(new AppError('The user belonging to this token no longer exists.', 401));
-  }
+    // Verify that the user still exists in the system
+    user = await User.findById(decoded.id).select('-password');
+    if (!user) {
+      return next(new AppError('The user belonging to this token no longer exists.', 401));
+    }
 
-  // Check if password was changed after the token was issued
-  if (user.passwordChangedAt) {
-    const changedTimestamp = parseInt(user.passwordChangedAt.getTime() / 1000, 10);
-    if (decoded.iat < changedTimestamp) {
-      return next(new AppError('User recently changed password! Please log in again.', 401));
+    // Check if password was changed after the token was issued
+    if (user.passwordChangedAt) {
+      const changedTimestamp = parseInt(user.passwordChangedAt.getTime() / 1000, 10);
+      if (decoded.iat < changedTimestamp) {
+        return next(new AppError('User recently changed password! Please log in again.', 401));
+      }
     }
   }
 
   // Recover missing workspace context automatically
-  if (!user.workspaceId && req.method !== 'GET') {
+  if (!user.workspaceId) {
     const workspace = await Workspace.findOne({
       $or: [{ admin: user._id }, { owner: user._id }],
     }).select('_id');

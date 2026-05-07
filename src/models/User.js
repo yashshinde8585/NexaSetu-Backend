@@ -69,6 +69,12 @@ const userSchema = new mongoose.Schema(
       default: 'Active',
       index: true,
     },
+    clerkUserId: {
+      type: String,
+      unique: true,
+      sparse: true,
+      index: true,
+    },
     profilePicture: {
       type: String,
       default: null,

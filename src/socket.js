@@ -53,20 +53,57 @@ const init = (server) => {
 
     io.use(async (socket, next) => {
       try {
+        const useClerk = process.env.USE_CLERK_AUTH === 'true';
         const cookies = socket.handshake.headers.cookie;
-        const token = cookies ? cookie.parse(cookies).accessToken : null;
+        const tokenFromCookie = cookies ? cookie.parse(cookies).accessToken : null;
         const authHeader = socket.handshake.auth?.token || socket.handshake.headers.authorization;
-        const finalToken = token || (authHeader?.startsWith('Bearer ') ? authHeader.split(' ')[1] : authHeader);
+        const finalToken = tokenFromCookie || (authHeader?.startsWith('Bearer ') ? authHeader.split(' ')[1] : authHeader);
 
         if (!finalToken) {
           logger.warn(`[SOCKET-AUTH] Connection denied: Missing token for ${socket.id}`);
           return next(new Error('Authentication failed: Missing token'));
         }
 
-        const decoded = jwt.verify(finalToken, config.jwt.secret);
-        if (!decoded.id) return next(new Error('Authentication failed: Invalid token payload'));
+        let decoded;
+        let userId;
+
+        if (useClerk) {
+          const { createClerkClient } = require('@clerk/clerk-sdk-node');
+          const clerkClient = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY });
+          const verified = await clerkClient.verifyToken(finalToken);
+          userId = verified.sub;
+          
+          const User = require('./models/User');
+          const user = await User.findOne({ clerkUserId: userId }).select('_id workspaceId role jobTitle');
+          
+          if (!user) {
+             logger.warn(`[SOCKET-AUTH] User ${userId} verified by Clerk but not found in local DB.`);
+             return next(new Error('Authentication failed: Profile synchronization pending'));
+          }
+          
+          socket.user = {
+            id: user._id,
+            workspaceId: user.workspaceId,
+            role: user.role,
+            jobTitle: user.jobTitle
+          };
+        } else {
+          decoded = jwt.verify(finalToken, config.jwt.secret);
+          if (!decoded.id) return next(new Error('Authentication failed: Invalid token payload'));
+          
+          const User = require('./models/User');
+          const user = await User.findById(decoded.id).select('_id workspaceId role jobTitle');
+          
+          if (!user) return next(new Error('Authentication failed: User no longer exists'));
+
+          socket.user = {
+            id: user._id,
+            workspaceId: user.workspaceId,
+            role: user.role,
+            jobTitle: user.jobTitle
+          };
+        }
         
-        socket.user = decoded;
         next();
       } catch (err) {
         logger.error(`[SOCKET-AUTH] Token validation failed: ${err.message}`);
