@@ -6,6 +6,9 @@ const { getProjectAccessQuery } = require('../utils/queryHelpers');
 const AppError = require('../utils/appError');
 const metricsService = require('./metricsService');
 const logger = require('../utils/logger');
+const { createClerkClient } = require('@clerk/clerk-sdk-node');
+
+const clerkClient = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY });
 
 const provisionUser = async (
   { name, email, role, projectId, jobTitle },
@@ -19,10 +22,39 @@ const provisionUser = async (
   }
 
   if (strategy === 'BIRTH') {
+    let clerkUserId = null;
+
+    // Clerk Hardening: Create user in Clerk so they can actually log in
+    try {
+      const clerkUser = await clerkClient.users.createUser({
+        emailAddress: [email],
+        password: email, // As per UI invitation: "Temporary Password: {email}"
+        firstName: name?.split(' ')[0] || '',
+        lastName: name?.split(' ').slice(1).join(' ') || '',
+        skipPasswordChecks: true,
+        skipEmailVerification: true,
+      });
+      clerkUserId = clerkUser.id;
+      logger.info(`[CLERK] Provisioned user ${email} for login.`);
+    } catch (err) {
+      // If user already exists in Clerk, we just need their ID
+      if (err.errors?.[0]?.code === 'form_identifier_exists' || err.status === 422) {
+        const existingClerkUsers = await clerkClient.users.getUserList({ emailAddress: [email] });
+        if (existingClerkUsers.length > 0) {
+          clerkUserId = existingClerkUsers[0].id;
+          logger.info(`[CLERK] User ${email} already exists in Clerk. Linked to ID: ${clerkUserId}`);
+        }
+      } else {
+        logger.error(`[CLERK] Failed to create user during provisioning: ${err.message}`);
+        // We continue anyway, the webhook might catch it or they might sign up manually later
+      }
+    }
+
     const newUser = await User.create({
       name: name || email.split('@')[0],
       email,
-      password: email,
+      password: 'CLERK_MANAGED',
+      clerkUserId,
       role: role || 'PROJECT_MEMBER',
       jobTitle: jobTitle || 'Software Engineer',
       assignedProjectId: projectId || null,
@@ -68,7 +100,10 @@ const bulkProvision = async (invites, workspaceId, user, isStrategicLead) => {
   const engineeringRecruiterRoles = ['PROJECT_MEMBER', 'RESTRICTED'];
   const isAdmin = user.role === 'WORKSPACE_ADMIN' || user.role === 'ADMIN';
 
-  for (const invite of invites) {
+  // Controlled concurrency helper
+  const CONCURRENCY_LIMIT = 3;
+  
+  const processInvite = async (invite) => {
     try {
       if (
         !isStrategicLead &&
@@ -99,19 +134,37 @@ const bulkProvision = async (invites, workspaceId, user, isStrategicLead) => {
         throw new Error('User already has an account');
       }
 
-      provisionedUsers.push({
-        email: result.user.email,
-        name: result.user.name,
-        role: result.user.role,
-        status: 'PROVISIONED',
-      });
+      return {
+        success: true,
+        data: {
+          email: result.user.email,
+          name: result.user.name,
+          role: result.user.role,
+          status: 'PROVISIONED',
+        }
+      };
     } catch (err) {
-      failedInvites.push({ email: invite.email, message: err.message });
+      return { success: false, email: invite.email, message: err.message };
+    }
+  };
+
+  // Process in batches to maintain controlled concurrency
+  for (let i = 0; i < invites.length; i += CONCURRENCY_LIMIT) {
+    const batch = invites.slice(i, i + CONCURRENCY_LIMIT);
+    const batchResults = await Promise.all(batch.map(invite => processInvite(invite)));
+    
+    for (const res of batchResults) {
+      if (res.success) {
+        provisionedUsers.push(res.data);
+      } else {
+        failedInvites.push({ email: res.email, message: res.message });
+      }
     }
   }
 
   return { provisionedUsers, failedInvites };
 };
+
 
 const getInviteByToken = async (token) => {
   const invitation = await Invitation.findOne({

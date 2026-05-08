@@ -61,6 +61,7 @@ const aiLogSchema = new mongoose.Schema(
   }
 );
 
+aiLogSchema.index({ eventType: 1, entityId: 1, timestamp: -1 });
 aiLogSchema.index({ workspaceId: 1, eventType: 1, timestamp: -1 });
 aiLogSchema.index({ workspaceId: 1, project: 1, timestamp: -1 });
 aiLogSchema.index({ timestamp: 1 }, { expiresAfterSeconds: 2592000 });

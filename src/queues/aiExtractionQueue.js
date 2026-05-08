@@ -72,7 +72,8 @@ const { runWithJobContext } = require('../utils/context');
   },
     { 
       connection, 
-      concurrency: parseInt(process.env.AI_WORKER_CONCURRENCY || '5') 
+      concurrency: parseInt(process.env.AI_WORKER_CONCURRENCY || '5'),
+      lockDuration: 120000
     }
   );
 

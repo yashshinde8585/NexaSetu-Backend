@@ -17,6 +17,23 @@ const { invalidateCache } = require('../middleware/cacheMiddleware');
 const { getStorageQueue } = require('../queues/storageQueue');
 const storageService = require('../services/storageService');
 const logger = require('../utils/logger');
+const { getRedisClient, isRedisConnected } = require('../config/redis');
+
+const invalidateTaskRelatedCaches = async (workspaceId, projectId) => {
+  try {
+    // 1. Invalidate task-specific views
+    await invalidateCache(workspaceId, `task:/api/tasks/my-tasks`);
+    await invalidateCache(workspaceId, `task:/api/tasks/project/${projectId}`);
+    
+    // 2. Invalidate dashboard stats (route entity)
+    await invalidateCache(workspaceId, `route:/api/dashboard/stats`);
+    
+    // 3. Invalidate project-specific analytics
+    await invalidateCache(workspaceId, `project:/api/projects/${projectId}/analytics`);
+  } catch (err) {
+    logger.warn('[CACHE] Granular invalidation partially failed: %s', err.message);
+  }
+};
 
 const { updateTaskTimeTracking } = require('./taskHelpers/TaskTimeTracker');
 const { validateTaskStorage } = require('./taskHelpers/TaskStorageHandler');
@@ -116,7 +133,7 @@ const updateTaskStatus = async (user, taskId, status, req) => {
     logger.info(`[STATE_TRANSITION] task.status: ${oldStatus} -> ${status} for task ${taskId}`);
     trackTaskTransition(user, taskId, oldStatus, status);
 
-    await invalidateCache(user.workspaceId, '*task*');
+    await invalidateTaskRelatedCaches(user.workspaceId, task.project);
 
     try {
       getIO().to(task.project.toString()).emit(EVENTS.TASK_UPDATED, { 
@@ -242,7 +259,7 @@ const createTask = async (user, data) => {
 
     trackTaskCreation(user, task._id, task.project);
 
-    await invalidateCache(user.workspaceId, '*task*');
+    await invalidateTaskRelatedCaches(user.workspaceId, task.project);
 
     try {
       getIO().to(task.project.toString()).emit(EVENTS.TASK_UPDATED, { 
@@ -516,8 +533,8 @@ const updateTask = async (user, id, data) => {
     payload: updatedTask,
   });
 
-  // Centralized Cache Invalidation
-  await invalidateCache(updatedTask.workspaceId, '*task*');
+  // Centralized Granular Invalidation
+  await invalidateTaskRelatedCaches(updatedTask.workspaceId, updatedTask.project);
 
   // Real-time Propagation
   try {
@@ -610,8 +627,8 @@ const toggleTaskBlockage = async (user, taskId, blocked, reason) => {
     blocked ? `MISSION BLOCKED: ${reason}` : 'MISSION UNBLOCKED'
   );
 
-  // Centralized Cache Invalidation
-  await invalidateCache(user.workspaceId, '*task*');
+  // Centralized Granular Invalidation
+  await invalidateTaskRelatedCaches(user.workspaceId, task.project);
 
   // Real-time Propagation
   try {
@@ -637,7 +654,7 @@ const updateTaskSteps = async (user, taskId, steps) => {
   task.steps = steps;
   await task.save();
 
-  await invalidateCache(user.workspaceId, '*task*');
+  await invalidateTaskRelatedCaches(user.workspaceId, task.project);
 
   try {
     getIO().to(task.project.toString()).emit(EVENTS.TASK_UPDATED, { 
@@ -687,8 +704,8 @@ const deleteTask = async (user, taskId) => {
     'MISSION TERMINATED (Deleted)'
   );
 
-  // Centralized Cache Invalidation
-  await invalidateCache(user.workspaceId, '*task*');
+  // Centralized Granular Invalidation
+  await invalidateTaskRelatedCaches(user.workspaceId, task.project);
 
   // Real-time Propagation
   try {
@@ -759,7 +776,7 @@ const submitTaskReview = async (user, taskId, result, notes) => {
     } catch (err) {}
   }
 
-  await invalidateCache(user.workspaceId, '*task*');
+  await invalidateTaskRelatedCaches(user.workspaceId, task.project);
 
   try {
     getIO().to(task.project.toString()).emit(EVENTS.TASK_UPDATED, { 

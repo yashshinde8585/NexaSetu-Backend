@@ -71,7 +71,10 @@ const initStorageWorker = () => {
         }
       });
     },
-    { connection }
+    { 
+      connection,
+      concurrency: parseInt(process.env.STORAGE_WORKER_CONCURRENCY || '10')
+    }
   );
 
   workerManager.registerWorker(storageWorker);

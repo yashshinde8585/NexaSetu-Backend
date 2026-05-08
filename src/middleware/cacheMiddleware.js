@@ -36,11 +36,10 @@ const cacheMiddleware = (entity = 'route', ttlSeconds = 60) => {
 };
 
 const invalidateCache = async (workspaceId, pattern = '*') => {
-  const cleanPattern = pattern.replace(/\*/g, '');
-  
+  // If pattern is '*', we invalidate everything for the workspace
+  // otherwise we invalidate exactly what was requested.
+  const cleanPattern = pattern === '*' ? '' : pattern.replace(/\*/g, '');
   await cacheManager.invalidate(workspaceId, cleanPattern);
-  
-  await cacheManager.invalidate(workspaceId, 'route');
 };
 
 module.exports = { cacheMiddleware, invalidateCache, cacheManager };
