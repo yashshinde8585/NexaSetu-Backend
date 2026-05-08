@@ -39,7 +39,14 @@ app.use(helmet({
   },
 }));
 
-app.use(express.json({ limit: '15kb' }));
+app.use(express.json({ 
+  limit: '15kb',
+  verify: (req, res, buf) => {
+    if (req.originalUrl.includes('/webhooks')) {
+      req.rawBody = buf;
+    }
+  }
+}));
 app.use((err, req, res, next) => {
   if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
     return res.status(400).json({
@@ -63,19 +70,31 @@ app.use(telemetry);
 app.use(normalizeUnicode);
 app.use(idempotency());
 
-// Enforce 15s server-side timeout for all API requests.
 app.use(timeoutHandler(15000));
 
+const { runWithContext } = require('./utils/context');
+
 app.use((req, res, next) => {
-  req.id = crypto.randomUUID();
+  const requestId = req.headers['x-request-id'] || crypto.randomUUID();
+  req.id = requestId;
   const start = Date.now();
   
-  res.on('finish', () => {
-    const duration = Date.now() - start;
-    logger.info(`[API] ${req.method} ${req.url} - ${res.statusCode} [${duration}ms]`);
+  runWithContext({ requestId }, () => {
+    let logged = false;
+    const logRequest = () => {
+      if (logged) return;
+      logged = true;
+      const duration = Date.now() - start;
+      const status = res.statusCode;
+      const finished = res.writableFinished || res.finished;
+      logger.info(`[API] ${req.method} ${req.url} - ${status} [${duration}ms]${finished ? '' : ' (aborted)'}`);
+    };
+
+    res.on('finish', logRequest);
+    res.on('close', logRequest);
+    
+    next();
   });
-  
-  next();
 });
 
 const createLimiter = (prefix, max, windowMs = 60 * 60 * 1000) => rateLimit({
@@ -95,10 +114,14 @@ const createLimiter = (prefix, max, windowMs = 60 * 60 * 1000) => rateLimit({
   skip: (req) => config.isTest,
 });
 
-app.use('/api', createLimiter('global', 1000, 15 * 60 * 1000));
-app.use('/api/auth/login', createLimiter('auth-login', 15, 5 * 60 * 1000));
+// Public health check (bypass global rate limit for monitoring)
+const healthRoutes = require('./routes/healthRoutes');
+app.use('/api/health', healthRoutes);
 
-// Health endpoints registered via healthRoutes below
+const isDev = config.env === 'development';
+app.use('/api', createLimiter('global', isDev ? 10000 : 5000, 15 * 60 * 1000));
+
+app.use('/api/auth/login', createLimiter('auth-login', 15, 5 * 60 * 1000));
 
 const v1Router = express.Router();
 
@@ -126,8 +149,10 @@ const rbacRoutes = require('./routes/rbacRoutes');
 const executionRoutes = require('./routes/executionRoutes');
 const observabilityRoutes = require('./routes/observabilityRoutes');
 const metricsRoutes = require('./routes/metricsRoutes');
-const healthRoutes = require('./routes/healthRoutes');
+const directiveRoutes = require('./routes/directiveRoutes');
+const webhookRoutes = require('./routes/webhookRoutes');
 
+v1Router.use('/webhooks', webhookRoutes);
 v1Router.use('/auth', authRoutes);
 v1Router.use('/projects', projectRoutes);
 v1Router.use('/tasks', taskRoutes);
@@ -149,19 +174,20 @@ v1Router.use('/rbac', rbacRoutes);
 v1Router.use('/execution', executionRoutes);
 v1Router.use('/observability', observabilityRoutes);
 v1Router.use('/metrics', metricsRoutes);
+v1Router.use('/directives', directiveRoutes);
 
 v1Router.use('/engineering', engineeringRoutes);
 v1Router.use('/leadership', leadershipRoutes);
 v1Router.use('/operations', operationsRoutes);
 v1Router.use('/admin', adminRoutes);
 
-app.use('/api/health', healthRoutes);
+// Mounted above rate limiter
 app.use(['/api/v1', '/api'], v1Router);
 
 app.use((req, res, next) => {
   res.status(404).json({
     status: 'fail',
-    message: `Can't find ${req.originalUrl} on this server!`
+    message: `Can't find ${req.method} ${req.originalUrl} on this server! Check route mounting.`
   });
 });
 

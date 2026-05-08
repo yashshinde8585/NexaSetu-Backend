@@ -1,8 +1,5 @@
 const express = require('express');
-/**
- * Project Orchestration Routes
- * Governs project lifecycle, analytics, and access-controlled modifications.
- */
+
 const {
   createProject,
   getProjects,
@@ -11,6 +8,7 @@ const {
   updateProject,
 } = require('../controllers/projectController');
 const { protect, requirePermission } = require('../middleware/authMiddleware');
+const { verifyOwnership } = require('../middleware/ownershipMiddleware');
 const { cacheMiddleware } = require('../middleware/cacheMiddleware');
 const { PERMISSIONS } = require('../config/permissions');
 
@@ -25,8 +23,6 @@ const router = express.Router();
 router.use(protect);
 router.use(validateWorkflow(['workspace']));
 
-// Apply billing limit check before project creation.
-// getUsage dynamically counts current active projects for the workspace.
 router.post('/', 
   requirePermission(PERMISSIONS.CREATE_PROJECT), 
   checkLimit('projects', async (req) => {
@@ -35,9 +31,9 @@ router.post('/',
   validate(createProjectSchema), 
   createProject
 );
-router.get('/', cacheMiddleware(60), getProjects);
-router.get('/:id', getProject);
-router.patch('/:id', validate(updateProjectSchema), updateProject);
-router.get('/:id/analytics', cacheMiddleware(30), getProjectAnalytics);
+router.get('/', cacheMiddleware('project', 60), getProjects);
+router.get('/:id', verifyOwnership(Project), cacheMiddleware('project', 60), getProject);
+router.patch('/:id', verifyOwnership(Project), validate(updateProjectSchema), updateProject);
+router.get('/:id/analytics', verifyOwnership(Project), cacheMiddleware('project', 30), getProjectAnalytics);
 
 module.exports = router;

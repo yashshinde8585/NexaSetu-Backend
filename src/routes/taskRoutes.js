@@ -1,8 +1,5 @@
 const express = require('express');
-/**
- * Task Execution & Ownership Routes
- * Manages atomic task operations, state transitions, and resource protection.
- */
+
 const {
   createTask,
   getTasks,
@@ -11,8 +8,10 @@ const {
   getTaskById,
   updateTaskStatus,
   toggleTaskBlockage,
+  updateTaskSteps,
   deleteTask,
   getSignedUploadUrl,
+  submitTaskReview,
 } = require('../controllers/taskController');
 const { protect, requirePermission } = require('../middleware/authMiddleware');
 const { PERMISSIONS } = require('../config/permissions');
@@ -23,12 +22,17 @@ const { verifyOwnership } = require('../middleware/ownershipMiddleware');
 const { validateWorkflow } = require('../middleware/workflowMiddleware');
 const Task = require('../models/Task');
 const rateLimit = require('express-rate-limit');
+const SmartRateLimitStore = require('../utils/SmartRateLimitStore');
+const { cacheMiddleware } = require('../middleware/cacheMiddleware');
 
-// Rate limit: 10 uploads per minute per user
 const uploadLimiter = rateLimit({
   windowMs: 1 * 60 * 1000,
   max: 10,
-  message: { status: 'fail', message: 'Too many upload requests. Please try again later.' }
+  message: { status: 'fail', message: 'Too many upload requests. Please try again later.' },
+  store: new SmartRateLimitStore({
+    prefix: 'rl:task-upload:',
+    windowMs: 1 * 60 * 1000
+  })
 });
 
 const router = express.Router();
@@ -36,10 +40,8 @@ const router = express.Router();
 router.use(protect);
 router.use(validateWorkflow(['workspace']));
 
-const { cacheMiddleware } = require('../middleware/cacheMiddleware');
-
-router.get('/my-tasks', cacheMiddleware(30), getMyTasks);
-router.get('/project/:projectId', cacheMiddleware(30), getTasks);
+router.get('/my-tasks', cacheMiddleware('task', 30), getMyTasks);
+router.get('/project/:projectId', cacheMiddleware('task', 30), getTasks);
 
 // Secure Signed URL Generation
 router.post('/attachments/upload-url', uploadLimiter, getSignedUploadUrl);
@@ -49,6 +51,8 @@ router.post('/', requirePermission(PERMISSIONS.CREATE_TASKS), validate(createTas
 router.patch('/:id', verifyOwnership(Task), validate(updateTaskSchema), updateTask);
 router.patch('/:id/status', verifyOwnership(Task), updateTaskStatus);
 router.patch('/:id/block', verifyOwnership(Task), toggleTaskBlockage);
+router.patch('/:id/steps', verifyOwnership(Task), updateTaskSteps);
+router.post('/:id/review', verifyOwnership(Task), submitTaskReview);
 router.delete('/:id', verifyOwnership(Task), deleteTask);
 
 module.exports = router;

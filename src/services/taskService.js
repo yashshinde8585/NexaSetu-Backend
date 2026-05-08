@@ -3,83 +3,148 @@ const Task = require('../models/Task');
 const Project = require('../models/Project');
 const Notification = require('../models/Notification');
 const TaskStatusHistory = require('../models/TaskStatusHistory');
+const Directive = require('../models/Directive');
 const AgentOrchestrator = require('../services/agentOrchestrator');
+const { getIO, EVENTS } = require('../socket');
 const { calculateDelayStatus } = require('../utils/taskUtils');
 const { isManagerOrAdmin } = require('../utils/authHelpers');
 const { getTaskAccessQuery, getProjectAccessQuery } = require('../utils/queryHelpers');
 const { formatDueDate } = require('../utils/dashboardHelpers');
 const AppError = require('../utils/appError');
-const commentController = require('../controllers/commentController');
+const commentService = require('../services/commentService');
 const { sanitizeHTML } = require('../utils/sanitizer');
-const { STORAGE_CONSTANTS } = require('../utils/constants');
-const storageQueue = require('../queues/storageQueue');
+const { invalidateCache } = require('../middleware/cacheMiddleware');
+const { getStorageQueue } = require('../queues/storageQueue');
 const storageService = require('../services/storageService');
-const metricsService = require('../services/metricsService');
-const auditService = require('../services/auditService');
 const logger = require('../utils/logger');
+const { getRedisClient, isRedisConnected } = require('../config/redis');
 
-const updateTaskTimeTracking = (task, newStatus) => {
-  const now = new Date();
-  const isCurrentlyActive = (task.status === 'in_progress' && !task.blocked);
-  const willBeActive = (newStatus === 'in_progress');
-
-  if (isCurrentlyActive && !willBeActive && task.lastStartedAt) {
-    const elapsedMinutes = Math.max(0, (now - task.lastStartedAt) / (1000 * 60));
-    task.remainingDuration = Math.max(0, (task.remainingDuration || task.estimatedDuration) - elapsedMinutes);
-    task.lastStartedAt = null;
-  }
-  
-  if (willBeActive && !isCurrentlyActive) {
-    task.lastStartedAt = now;
-    if (task.remainingDuration === undefined || task.remainingDuration === null) {
-      task.remainingDuration = task.estimatedDuration;
-    }
-  }
-
-  if (newStatus === 'done') {
-    task.remainingDuration = 0;
-    task.completedAt = now;
+const invalidateTaskRelatedCaches = async (workspaceId, projectId) => {
+  try {
+    // 1. Invalidate task-specific views
+    await invalidateCache(workspaceId, `task:/api/tasks/my-tasks`);
+    await invalidateCache(workspaceId, `task:/api/tasks/project/${projectId}`);
     
-    const start = task.startedAt || task.createdAt;
-    task.actualDuration = Math.round((now - start) / (1000 * 60));
+    // 2. Invalidate dashboard stats (route entity)
+    await invalidateCache(workspaceId, `route:/api/dashboard/stats`);
+    
+    // 3. Invalidate project-specific analytics
+    await invalidateCache(workspaceId, `project:/api/projects/${projectId}/analytics`);
+  } catch (err) {
+    logger.warn('[CACHE] Granular invalidation partially failed: %s', err.message);
   }
 };
 
+const { updateTaskTimeTracking } = require('./taskHelpers/TaskTimeTracker');
+const { validateTaskStorage } = require('./taskHelpers/TaskStorageHandler');
+const { trackTaskTransition, trackTaskCreation } = require('./taskHelpers/TaskMetricsHandler');
+const { logTaskUpdate, logTaskCreation } = require('./taskHelpers/TaskAuditLogger');
+
+
 const updateTaskStatus = async (user, taskId, status, req) => {
   try {
+    if (!status) {
+      throw new AppError('Mission Status is required.', 400);
+    }
+
     const task = await Task.findById(taskId);
     if (!task) {
       throw new AppError('No mission found with that ID', 404);
     }
 
     const oldStatus = task.status;
+    
+    // If status hasn't changed, return early to save resources
     if (oldStatus === status) return task;
 
+    const isManager = isManagerOrAdmin(user);
+    
+    // --- DIRECTIVE ENFORCEMENT LAYER ---
+    const activeStabilize = await Directive.findOne({
+      workspaceId: user.workspaceId,
+      status: 'issued',
+      type: 'STABILIZE',
+      $or: [
+        { 'scope.type': 'WORKSPACE' },
+        { 'scope.type': 'PROJECT', 'scope.targetId': task.project }
+      ]
+    });
+
+    if (activeStabilize && !['in_review', 'done', 'blocked'].includes(status) && !isManager) {
+      throw new AppError(`Action Blocked: Project is under a STABILIZE directive. Focus on completing or reviewing current missions only.`, 403);
+    }
+
+    // --- OWNERSHIP & STATE TRANSITION LAYER ---
+    
+    // 1. Mandatory Review Check
+    if (status === 'done' && oldStatus !== 'approved' && task.reviewers?.length > 0 && !isManager) {
+      throw new AppError('Action Denied: Mission requires lead approval.', 403);
+    }
+
+    // 2. Ownership Shift: IN_REVIEW -> TL Owns
+    if (status === 'in_review') {
+      task.reviewStatus = 'pending';
+      if (task.reviewers?.length > 0) {
+        task.assignedUser = task.reviewers[0]; // Shift ownership to lead reviewer
+      }
+    }
+
+    // 4. Blocked Handling: Assign Escalation
+    if (status === 'blocked') {
+      if (!task.blockedReason) throw new AppError('Blockage reason required.', 400);
+      const projectDoc = await Project.findById(task.project);
+      if (projectDoc) {
+        task.escalationOwner = projectDoc.createdBy; // Escalate to Project Owner
+        task.isEscalated = true;
+      }
+    } else {
+      task.isEscalated = false;
+      task.escalationOwner = null;
+    }
+
     const terminalStates = ['done', 'archived'];
-    if (terminalStates.includes(oldStatus) && !['todo', 'in_progress'].includes(status) && !isManagerOrAdmin(user)) {
+    if (terminalStates.includes(oldStatus) && !['todo', 'in_progress', 'blocked'].includes(status) && !isManager) {
       throw new AppError(`Action Denied: Cannot move a mission from ${oldStatus} to ${status} without manager approval.`, 403);
     }
 
     updateTaskTimeTracking(task, status);
     task.status = status;
-    task.timelineHistory.push({
-      status,
-      timestamp: Date.now(),
-      reason: `System: Status transitioned from ${oldStatus || 'unknown'} to ${status} by ${user?.name || 'Authorized Performer'}`,
+    
+    // Use timelineHistory ONLY for schema-compliant events (due dates)
+    // For status, use the TaskStatusHistory model
+    await TaskStatusHistory.create({
+      task: taskId,
+      fromStatus: oldStatus,
+      toStatus: status,
+      changedBy: user._id,
+      timestamp: new Date()
     });
 
     await task.save();
 
-    await auditService.logUpdate(user, 'TASK', task._id, { status: oldStatus }, { status: status }, req);
+    await logTaskUpdate(user, task._id, { status: oldStatus }, { status: status }, req);
 
-    await commentController.logActivity(
+    await commentService.logActivity(
       taskId,
       user._id,
       `Status transitioned from ${oldStatus} to ${status}`
     );
 
     logger.info(`[STATE_TRANSITION] task.status: ${oldStatus} -> ${status} for task ${taskId}`);
-    metricsService.trackEvent(user, 'task_state_transition', { taskId, from: oldStatus, to: status });
+    trackTaskTransition(user, taskId, oldStatus, status);
+
+    await invalidateTaskRelatedCaches(user.workspaceId, task.project);
+
+    try {
+      getIO().to(task.project.toString()).emit(EVENTS.TASK_UPDATED, { 
+        type: 'UPDATE', 
+        taskId: task._id, 
+        status: task.status,
+        updatedBy: user._id 
+      });
+    } catch (err) {
+      logger.warn('[SOCKET] Failed to broadcast state transition');
+    }
 
     return task;
   } catch (error) {
@@ -100,6 +165,28 @@ const createTask = async (user, data) => {
     if (!projectDoc) {
       throw new AppError('Project not found or you are not a member', 404);
     }
+
+    // --- DIRECTIVE ENFORCEMENT ---
+    const activeStabilize = await Directive.findOne({
+      workspaceId: user.workspaceId,
+      status: 'issued',
+      type: 'STABILIZE',
+      $or: [
+        { 'scope.type': 'WORKSPACE' },
+        { 'scope.type': 'PROJECT', 'scope.targetId': project }
+      ]
+    });
+
+    if (activeStabilize && !isManagerOrAdmin(user)) {
+      throw new AppError(`New Mission Denied: Project is under a STABILIZE directive. No new tasks allowed until stabilization is complete.`, 403);
+    }
+
+    const totalNewSize = await validateTaskStorage(
+      projectDoc.workspaceId, 
+      project, 
+      'new', 
+      attachments
+    );
 
     const taskData = {
       title: sanitizeHTML(title),
@@ -122,27 +209,6 @@ const createTask = async (user, data) => {
       attachments: attachments || [],
     };
 
-    const totalNewSize = taskData.attachments.reduce((acc, a) => acc + a.size, 0);
-    const hasQuota = await storageService.checkQuota(taskData.workspaceId, totalNewSize);
-    if (!hasQuota) {
-      throw new AppError('Storage quota exceeded for this workspace.', 403);
-    }
-
-    if (taskData.attachments.length > 0) {
-      for (const file of taskData.attachments) {
-        storageService.validateAttachment(file, {
-          workspaceId: projectDoc.workspaceId.toString(),
-          projectId: project,
-          taskId: 'new' 
-        });
-
-        const isVerified = await storageService.verifyAttachment(file.storagePath, file.size);
-        if (!isVerified) {
-          throw new AppError(`Integrity Failure: File ${file.name} could not be verified in storage.`, 400);
-        }
-      }
-    }
-
     if (taskData.status === 'in_progress') {
       taskData.startedAt = new Date();
       taskData.lastStartedAt = new Date();
@@ -154,13 +220,7 @@ const createTask = async (user, data) => {
 
     const task = await Task.create(taskData);
 
-    await auditService.log({
-      action: 'CREATE_TASK',
-      user,
-      entityType: 'TASK',
-      entityId: task._id,
-      details: taskData
-    });
+    await logTaskCreation(user, task._id, taskData);
 
     await storageService.updateStorageUsage(task.workspaceId, totalNewSize);
 
@@ -182,7 +242,7 @@ const createTask = async (user, data) => {
 
     if (task.assignedUser && task.assignedUser.toString() !== user._id.toString()) {
       const ticketId = `${projectDoc.key || 'NEXA'}-${task.taskNumber || 'NEW'}`;
-      await Notification.create({
+      const notification = await Notification.create({
         recipient: task.assignedUser,
         sender: user._id,
         type: 'TASK_ASSIGNED',
@@ -191,12 +251,25 @@ const createTask = async (user, data) => {
         link: `/task/${task._id}`,
         workspaceId: task.workspaceId
       });
+
+      try {
+        getIO().to(task.assignedUser.toString()).emit(EVENTS.NOTIFICATION_RECEIVED, notification);
+      } catch (err) {}
     }
 
-    metricsService.trackEvent(user, 'task_created', { 
-      taskId: task._id, 
-      projectId: task.project 
-    }).catch(err => logger.error(`[METRICS] Failed to track task creation: ${err.message}`));
+    trackTaskCreation(user, task._id, task.project);
+
+    await invalidateTaskRelatedCaches(user.workspaceId, task.project);
+
+    try {
+      getIO().to(task.project.toString()).emit(EVENTS.TASK_UPDATED, { 
+        type: 'CREATE', 
+        task: task,
+        projectId: task.project
+      });
+    } catch (err) {
+      logger.warn('[SOCKET] Failed to broadcast task creation');
+    }
 
     return task;
   } catch (error) {
@@ -235,37 +308,44 @@ const getTasks = async (user, projectId, sprintId, page = 1, limit = 50) => {
     pipeline.push({ $match: sprintMatch });
   }
 
-  pipeline.push(
-    { $sort: { createdAt: -1 } },
-    { $skip: skip },
-    { $limit: limitValue },
-    {
-      $lookup: {
-        from: 'users',
-        localField: 'assignedUser',
-        foreignField: '_id',
-        as: 'assignedUserData',
-      },
+  pipeline.push({
+    $facet: {
+      metadata: [{ $count: 'totalTasks' }],
+      data: [
+        { $sort: { createdAt: -1 } },
+        { $skip: skip },
+        { $limit: limitValue },
+        {
+          $lookup: {
+            from: 'users',
+            localField: 'assignedUser',
+            foreignField: '_id',
+            as: 'assignedUserData',
+          },
+        },
+        {
+          $lookup: {
+            from: 'sprints',
+            localField: 'sprint',
+            foreignField: '_id',
+            as: 'sprintData',
+          },
+        },
+        {
+          $addFields: {
+            assignedUser: { $arrayElemAt: ['$assignedUserData', 0] },
+            projectKey: project.key || 'NEXA',
+            sprintInfo: { $arrayElemAt: ['$sprintData', 0] },
+          },
+        },
+        { $project: { assignedUserData: 0, sprintData: 0 } },
+      ],
     },
-    {
-      $lookup: {
-        from: 'sprints',
-        localField: 'sprint',
-        foreignField: '_id',
-        as: 'sprintData',
-      },
-    },
-    {
-      $addFields: {
-        assignedUser: { $arrayElemAt: ['$assignedUserData', 0] },
-        projectKey: project.key || 'NEXA',
-        sprintInfo: { $arrayElemAt: ['$sprintData', 0] },
-      },
-    },
-    { $project: { assignedUserData: 0, sprintData: 0 } }
-  );
+  });
 
-  const tasks = await Task.aggregate(pipeline);
+  const [result] = await Task.aggregate(pipeline);
+  const tasks = result.data || [];
+  const totalTasks = result.metadata[0]?.totalTasks || 0;
 
   const enrichedTasks = tasks.map((t) => {
     const delayStatus = calculateDelayStatus(t);
@@ -275,8 +355,6 @@ const getTasks = async (user, projectId, sprintId, page = 1, limit = 50) => {
       createdFormatted: formatDueDate(t.createdAt)
     };
   });
-
-  const totalTasks = await Task.countDocuments({ project: projectId, ...(sprintId ? { sprint: sprintId } : {}) });
 
   return { tasks: enrichedTasks, totalTasks, page: parseInt(page), limit: limitValue };
 };
@@ -341,24 +419,12 @@ const updateTask = async (user, id, data) => {
   });
 
   if (updateData.attachments) {
-    const totalNewSize = updateData.attachments.reduce((acc, a) => acc + a.size, 0);
-    const hasQuota = await storageService.checkQuota(project.workspaceId, totalNewSize);
-    if (!hasQuota) {
-      throw new AppError('Storage quota exceeded.', 403);
-    }
-
-    for (const file of updateData.attachments) {
-      storageService.validateAttachment(file, {
-        workspaceId: project.workspaceId.toString(),
-        projectId: task.project.toString(),
-        taskId: task._id.toString()
-      });
-
-      const isVerified = await storageService.verifyAttachment(file.storagePath, file.size);
-      if (!isVerified) {
-        throw new AppError(`Integrity Failure: File ${file.name} could not be verified in storage.`, 400);
-      }
-    }
+    const totalNewSize = await validateTaskStorage(
+      project.workspaceId, 
+      task.project, 
+      task._id, 
+      updateData.attachments
+    );
     
     await storageService.updateStorageUsage(project.workspaceId, totalNewSize);
   }
@@ -379,6 +445,11 @@ const updateTask = async (user, id, data) => {
     }
 
     if (status === 'done') {
+      // ENFORCEMENT: No task can be closed without approval if reviewers are assigned
+      if (task.reviewers?.length > 0 && task.reviewStatus !== 'approved' && !isManagerOrAdmin(user)) {
+         throw new AppError('Execution Violation: Mandatory Lead Approval required before closure.', 403);
+      }
+      
       updateData.completedAt = new Date();
       const start = task.startedAt || task.createdAt;
       updateData.actualDuration = Math.round((new Date() - start) / (1000 * 60));
@@ -398,11 +469,11 @@ const updateTask = async (user, id, data) => {
     throw new AppError('Conflict Detected: This task has been modified by another session.', 409);
   }
 
-  await auditService.logUpdate(user, 'TASK', updatedTask._id, task.toObject(), updatedTask.toObject());
+  await logTaskUpdate(user, updatedTask._id, task.toObject(), updatedTask.toObject());
 
   if (updateData.assignedUser && updateData.assignedUser.toString() !== task.assignedUser?.toString()) {
     const ticketId = `${project.key || 'NEXA'}-${updatedTask.taskNumber || 'MEMO'}`;
-    await Notification.create({
+    const notification = await Notification.create({
       recipient: updateData.assignedUser,
       sender: user._id,
       type: 'TASK_ASSIGNED',
@@ -411,6 +482,11 @@ const updateTask = async (user, id, data) => {
       link: `/task/${updatedTask._id}`,
       workspaceId: user.workspaceId
     });
+
+    // Push real-time alert to the recipient
+    try {
+      getIO().to(updateData.assignedUser.toString()).emit(EVENTS.NOTIFICATION_RECEIVED, notification);
+    } catch (err) {}
   }
 
   if (status && status !== task.status) {
@@ -422,7 +498,30 @@ const updateTask = async (user, id, data) => {
     });
 
     logger.info(`[STATE_TRANSITION] task.status: ${task.status} -> ${status} for task ${updatedTask._id}`);
-    metricsService.trackEvent(user, 'task_state_transition', { taskId: updatedTask._id, from: task.status, to: status });
+    trackTaskTransition(user, updatedTask._id, task.status, status);
+
+    // --- EXECUTION TRIGGER LAYER ---
+    if (status === 'blocked') {
+      await AgentOrchestrator.handleEvent({
+        type: 'TASK_BLOCKED',
+        entityId: updatedTask._id,
+        entityType: 'task',
+        project: updatedTask.project,
+        workspaceId: updatedTask.workspaceId,
+        payload: updatedTask
+      });
+    }
+
+    if (status === 'in_review') {
+      await AgentOrchestrator.handleEvent({
+        type: 'TASK_REVIEW_PENDING',
+        entityId: updatedTask._id,
+        entityType: 'task',
+        project: updatedTask.project,
+        workspaceId: updatedTask.workspaceId,
+        payload: updatedTask
+      });
+    }
   }
 
   await AgentOrchestrator.handleEvent({
@@ -433,6 +532,20 @@ const updateTask = async (user, id, data) => {
     workspaceId: updatedTask.workspaceId,
     payload: updatedTask,
   });
+
+  // Centralized Granular Invalidation
+  await invalidateTaskRelatedCaches(updatedTask.workspaceId, updatedTask.project);
+
+  // Real-time Propagation
+  try {
+    getIO().to(updatedTask.project.toString()).emit(EVENTS.TASK_UPDATED, { 
+      type: 'UPDATE', 
+      task: updatedTask,
+      projectId: updatedTask.project
+    });
+  } catch (err) {
+    logger.warn('[SOCKET] Failed to broadcast task update');
+  }
 
   return updatedTask;
 };
@@ -508,11 +621,50 @@ const toggleTaskBlockage = async (user, taskId, blocked, reason) => {
 
   await task.save();
 
-  await commentController.logActivity(
+  await commentService.logActivity(
     taskId,
     user._id,
     blocked ? `MISSION BLOCKED: ${reason}` : 'MISSION UNBLOCKED'
   );
+
+  // Centralized Granular Invalidation
+  await invalidateTaskRelatedCaches(user.workspaceId, task.project);
+
+  // Real-time Propagation
+  try {
+    getIO().to(task.project.toString()).emit(EVENTS.TASK_UPDATED, { 
+      type: 'UPDATE', 
+      taskId: task._id, 
+      blocked: task.blocked,
+      projectId: task.project
+    });
+  } catch (err) {
+    logger.warn('[SOCKET] Failed to broadcast blockage state');
+  }
+
+  return task;
+};
+
+const updateTaskSteps = async (user, taskId, steps) => {
+  const task = await Task.findById(taskId);
+  if (!task) {
+    throw new AppError('No mission found with that ID', 404);
+  }
+
+  task.steps = steps;
+  await task.save();
+
+  await invalidateTaskRelatedCaches(user.workspaceId, task.project);
+
+  try {
+    getIO().to(task.project.toString()).emit(EVENTS.TASK_UPDATED, { 
+      type: 'UPDATE', 
+      taskId: task._id, 
+      projectId: task.project
+    });
+  } catch (err) {
+    logger.warn('[SOCKET] Failed to broadcast steps update');
+  }
 
   return task;
 };
@@ -536,19 +688,107 @@ const deleteTask = async (user, taskId) => {
     const storagePaths = task.attachments.map(a => a.storagePath);
     const totalDeletedSize = task.attachments.reduce((acc, a) => acc + a.size, 0);
     
-    await storageQueue.add('cleanup-orphans', { storagePaths });
+    const { getJobMetadata } = require('../utils/context');
+    await getStorageQueue().add('cleanup-orphans', { 
+      storagePaths,
+      ...getJobMetadata()
+    });
     await storageService.updateStorageUsage(task.workspaceId, -totalDeletedSize);
   }
 
   await Task.findByIdAndDelete(taskId);
 
-  await commentController.logActivity(
+  await commentService.logActivity(
     taskId,
     user._id,
     'MISSION TERMINATED (Deleted)'
   );
 
+  // Centralized Granular Invalidation
+  await invalidateTaskRelatedCaches(user.workspaceId, task.project);
+
+  // Real-time Propagation
+  try {
+    getIO().to(task.project.toString()).emit(EVENTS.TASK_UPDATED, { 
+      type: 'DELETE', 
+      taskId: taskId,
+      projectId: task.project
+    });
+  } catch (err) {
+    logger.warn('[SOCKET] Failed to broadcast task deletion');
+  }
+
   return true;
+};
+
+const submitTaskReview = async (user, taskId, result, notes) => {
+  const task = await Task.findById(taskId);
+  if (!task) {
+    throw new AppError('Task not found', 404);
+  }
+
+  // Permission check: User must be a reviewer or a Lead/Admin
+  const isReviewer = task.reviewers.some(r => r.toString() === user._id.toString());
+  const isManager = isManagerOrAdmin(user);
+
+  if (!isReviewer && !isManager) {
+    throw new AppError('Action Denied: You are not authorized to review this task.', 403);
+  }
+
+  const oldStatus = task.status;
+  task.reviewStatus = result; // 'approved' or 'rejected'
+  task.reviewNotes = sanitizeHTML(notes);
+
+  if (result === 'approved') {
+    task.status = 'done';
+    task.completedAt = new Date();
+  } else {
+    task.status = 'in_progress'; // Rework loop
+  }
+
+  task.timelineHistory.push({
+    reason: `Review Result: ${result.toUpperCase()} by ${user.name}. Notes: ${notes}`,
+    timestamp: new Date()
+  });
+
+  await task.save();
+
+  await commentService.logActivity(
+    taskId,
+    user._id,
+    `REVIEW ${result.toUpperCase()}: ${notes}`
+  );
+
+  // Notify the assigned user
+  if (task.assignedUser) {
+    const notification = await Notification.create({
+      recipient: task.assignedUser,
+      sender: user._id,
+      type: result === 'approved' ? 'TASK_COMPLETED' : 'TASK_REJECTED',
+      title: `Task ${result === 'approved' ? 'Approved' : 'Needs Rework'}`,
+      message: `[Review] ${task.title}`,
+      link: `/task/${task._id}`,
+      workspaceId: task.workspaceId
+    });
+
+    try {
+      getIO().to(task.assignedUser.toString()).emit(EVENTS.NOTIFICATION_RECEIVED, notification);
+    } catch (err) {}
+  }
+
+  await invalidateTaskRelatedCaches(user.workspaceId, task.project);
+
+  try {
+    getIO().to(task.project.toString()).emit(EVENTS.TASK_UPDATED, { 
+      type: 'UPDATE', 
+      taskId: task._id, 
+      status: task.status,
+      reviewStatus: task.reviewStatus,
+      projectId: task.project
+    });
+  } catch (err) {}
+
+  return task;
 };
 
 module.exports = {
@@ -559,5 +799,7 @@ module.exports = {
   updateTask,
   getMyTasks,
   toggleTaskBlockage,
+  updateTaskSteps,
   deleteTask,
+  submitTaskReview,
 };

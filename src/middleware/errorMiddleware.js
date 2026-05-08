@@ -8,28 +8,26 @@ const globalErrorHandler = (err, req, res, next) => {
   err.statusCode = err.statusCode || 500;
   err.status = err.status || 'error';
 
+  let error = Object.assign(err);
+  error.message = err.message;
+
+  // Map technical DB/JWT signals to user-friendly messages.
+  if (err.name === 'CastError') error = handleCastErrorDB(err);
+  else if (err.code === 11000) error = handleDuplicateFieldsDB(err);
+  else if (err.name === 'ValidationError') error = handleValidationErrorDB(err);
+  else if (err.name === 'JsonWebTokenError') error = handleJWTError();
+  else if (err.name === 'TokenExpiredError') error = handleJWTExpiredError();
+
   if (config.isProduction) {
-    let error = err;
-
-    // Map technical DB/JWT signals to user-friendly messages.
-    if (err.name === 'CastError') error = handleCastErrorDB(err);
-    else if (err.code === 11000) error = handleDuplicateFieldsDB(err);
-    else if (err.name === 'ValidationError') error = handleValidationErrorDB(err);
-    else if (err.name === 'JsonWebTokenError') error = handleJWTError();
-    else if (err.name === 'TokenExpiredError') error = handleJWTExpiredError();
-
     sendErrorProd(error, req, res);
   } else {
-    if (err.code === 11000) err.statusCode = 400;
-    if (err.name === 'ValidationError') err.statusCode = 400;
-    if (err.name === 'CastError') err.statusCode = 400;
-    
-    sendErrorDev(err, req, res);
+    sendErrorDev(error, req, res);
   }
 };
 
 const handleCastErrorDB = (err) => {
-  return new AppError(`Invalid ${err.path}: ${err.value}`, 400);
+  const message = `The value '${err.value}' is not valid for ${err.path}. Please check your input.`;
+  return new AppError(message, 400);
 };
 
 const handleDuplicateFieldsDB = (err) => {

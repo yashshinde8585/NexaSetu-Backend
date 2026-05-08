@@ -42,7 +42,7 @@ const rolesDef = {
   
   // Management Layer
   'Engineering Manager': ['create:sprint', 'update:sprint', 'view:metrics', 'view:reports', 'manage:teams', 'create:task', 'update:task', 'assign:task'],
-  'People Ops': ['manage:teams', 'view:reports'],
+  'HR': ['manage:teams', 'view:reports'],
   
   // Technical Leadership
   'Tech Lead': ['create:sprint', 'update:sprint', 'create:task', 'update:task', 'assign:task', 'view:metrics'],

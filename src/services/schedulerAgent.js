@@ -2,73 +2,69 @@ const Task = require('../models/Task');
 const taskUtils = require('../utils/taskUtils');
 const logger = require('../utils/logger');
 
-// Automatically calculates dependency impacts and adjusts cascaded task timelines proactively.
-class SchedulerAgent {
-  constructor() {
-    this.name = 'Scheduler';
-  }
+const handleTaskDelay = async (eventData) => {
+  try {
+    const { entityId, project } = eventData;
+    const delayedTask = await Task.findById(entityId);
 
-  async handleTaskDelay(eventData) {
-    try {
-      const { entityId, project } = eventData;
-      const delayedTask = await Task.findById(entityId);
-
-      if (!delayedTask || !delayedTask.dueDate)
-        return {
-          status: 'skipped',
-          reason: 'Task has no deadline to shift from',
-        };
-
-      // Execute graph traversal to map direct dependent downstream nodes.
-      const dependents = await Task.find({
-        project,
-        dependencies: entityId,
-        status: { $ne: 'done' },
-      });
-
-      if (dependents.length === 0) {
-        return {
-          status: 'stable',
-          reason: 'No dependent tasks impacted by this delay',
-        };
-      }
-
-      const actions = [];
-      const now = new Date();
-
-      // Algorithmically cascade deadline shifts avoiding structural failure loops.
-      for (const t of dependents) {
-        const baseDate = t.dueDate && t.dueDate > now ? t.dueDate : now;
-        const newDueDate = taskUtils.addBusinessDays(baseDate, 2);
-
-        actions.push({
-          type: 'UPDATE_TASK_DEADLINE',
-          targetId: t._id,
-          targetType: 'Task',
-          payload: {
-            newDate: newDueDate,
-            daysShifted: 2,
-          },
-          reason: `Cascade shift (2 business days) due to delay of upstream task: "${delayedTask.title}"`,
-          agent: this.name,
-        });
-      }
-
+    if (!delayedTask || !delayedTask.dueDate)
       return {
-        status: 'executed',
-        action: `Shifted deadlines for ${actions.length} dependent tasks`,
-        actions, // Array of structured action requests for the Executor
-        reason: `Impact assessment from delay of "${delayedTask.title}"`,
+        status: 'skipped',
+        reason: 'Task has no deadline to shift from',
       };
-    } catch (error) {
-      logger.error('[SchedulerAgent] Cascade Error: %o', error);
-      throw error;
+
+    // Execute graph traversal to map direct dependent downstream nodes.
+    const dependents = await Task.find({
+      project,
+      dependencies: entityId,
+      status: { $ne: 'done' },
+    });
+
+    if (dependents.length === 0) {
+      return {
+        status: 'stable',
+        reason: 'No dependent tasks impacted by this delay',
+      };
     }
-  }
 
-  async optimizeProjectTimeline(projectId) {
-    return { status: 'monitoring', reason: 'Timeline optimization complete' };
-  }
-}
+    const actions = [];
+    const now = new Date();
 
-module.exports = new SchedulerAgent();
+    // Algorithmically cascade deadline shifts avoiding structural failure loops.
+    for (const t of dependents) {
+      const baseDate = t.dueDate && t.dueDate > now ? t.dueDate : now;
+      const newDueDate = taskUtils.addBusinessDays(baseDate, 2);
+
+      actions.push({
+        type: 'UPDATE_TASK_DEADLINE',
+        targetId: t._id,
+        targetType: 'Task',
+        payload: {
+          newDate: newDueDate,
+          daysShifted: 2,
+        },
+        reason: `Cascade shift (2 business days) due to delay of upstream task: "${delayedTask.title}"`,
+        agent: 'Scheduler',
+      });
+    }
+
+    return {
+      status: 'executed',
+      action: `Shifted deadlines for ${actions.length} dependent tasks`,
+      actions, // Array of structured action requests for the Executor
+      reason: `Impact assessment from delay of "${delayedTask.title}"`,
+    };
+  } catch (error) {
+    logger.error('[SchedulerAgent] Cascade Error: %o', error);
+    throw error;
+  }
+};
+
+const optimizeProjectTimeline = async (projectId) => {
+  return { status: 'monitoring', reason: 'Timeline optimization complete' };
+};
+
+module.exports = {
+  handleTaskDelay,
+  optimizeProjectTimeline
+};

@@ -8,4 +8,6 @@ const metricSchema = new mongoose.Schema({
   timestamp: { type: Date, default: Date.now }
 }, { timestamps: true });
 
+metricSchema.index({ workspaceId: 1, type: 1, timestamp: -1 });
+
 module.exports = mongoose.model('Metric', metricSchema);

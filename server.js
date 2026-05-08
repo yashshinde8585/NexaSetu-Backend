@@ -1,7 +1,12 @@
 const config = require('./src/config/config');
 const logger = require('./src/utils/logger');
 const { connectRedis, getRedisClient } = require('./src/config/redis');
-const { initOrchestratorQueue } = require('./src/queues/orchestratorQueue');
+const { initOrchestratorQueue, initOrchestratorWorker } = require('./src/queues/orchestratorQueue');
+const { initAiExtractionQueue, initAiExtractionWorker } = require('./src/queues/aiExtractionQueue');
+const { initStorageQueue, initStorageWorker } = require('./src/queues/storageQueue');
+const { initMagicBarQueue, initMagicBarWorker } = require('./src/queues/magicBarQueue');
+const { initCronQueue, initCronWorker } = require('./src/queues/cronQueue');
+const workerManager = require('./src/utils/workerManager');
 const http = require('http');
 const mongoose = require('mongoose');
 
@@ -16,9 +21,24 @@ async function bootstrap() {
     ]);
 
     initOrchestratorQueue();
+    initAiExtractionQueue();
+    initMagicBarQueue();
+    initCronQueue();
+    await initStorageQueue();
+
+    if (process.env.RUN_WORKERS === 'true') {
+      logger.info('[BOOTSTRAP] Initializing Workers in API process (RUN_WORKERS=true)');
+      initOrchestratorWorker();
+      initAiExtractionWorker();
+      initStorageWorker();
+      initMagicBarWorker();
+      initCronWorker();
+    }
+
     logger.info('[BOOTSTRAP] Redis & Queue Services initialized');
 
     await infraPromise;
+
     logger.info('[BOOTSTRAP] Database & Cache Connectivity established');
 
     const app = require('./src/app');
@@ -27,7 +47,6 @@ async function bootstrap() {
 
     const server = http.createServer(app);
     
-    // Network safeguards to prevent resource exhaustion.
     server.timeout = 30000;
     server.headersTimeout = 31000;
     server.keepAliveTimeout = 5000;
@@ -41,12 +60,14 @@ async function bootstrap() {
       logger.info(`[NEXA-SETU] API Server listening on port ${config.port} [${config.env}]`);
     });
 
-    // Graceful termination handler to ensure clean shutdown.
     const shutdown = async (signal) => {
       logger.info(`[SHUTDOWN] Signal ${signal} detected. Purging resources...`);
       
       server.close(async () => {
         try {
+          await socketIO.close();
+          await workerManager.shutdown();
+          
           await mongoose.connection.close();
           const redis = getRedisClient();
           if (redis) await redis.quit();
@@ -74,13 +95,17 @@ async function bootstrap() {
   }
 }
 
-// Global exception handlers for system stability.
+const { notify } = require('./src/utils/notify');
+
 process.on('unhandledRejection', (reason, promise) => {
-  logger.error('[FATAL] Unhandled Rejection', { reason, promise });
+  notify('CRITICAL', 'Unhandled Rejection detected', { reason: reason?.message || reason, stack: reason?.stack });
+  if (config.isProduction) {
+    process.emit('SIGTERM');
+  }
 });
 
-process.on('uncaughtException', (err) => {
-  logger.error(`[FATAL] Uncaught Exception: ${err.message}`, { stack: err.stack });
+process.on('uncaughtException', async (err) => {
+  await notify('CRITICAL', `Uncaught Exception: ${err.message}`, { stack: err.stack });
   process.exit(1);
 });
 

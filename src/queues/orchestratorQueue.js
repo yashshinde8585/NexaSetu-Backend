@@ -1,69 +1,94 @@
 const { Queue, Worker } = require('bullmq');
 const { getBullRedisClient } = require('../config/redis');
 const logger = require('../utils/logger');
+const workerManager = require('../utils/workerManager');
 
 let orchestratorQueue;
 let orchestratorWorker;
 
-// Initializes the background orchestration queue and worker
 const initOrchestratorQueue = () => {
   const connection = getBullRedisClient();
-  
-  if (!connection) {
-    logger.error('[QUEUE] Redis connection failed. Background jobs are offline.');
-    return;
-  }
+  if (!connection) return;
 
-  // Define the main orchestration queue with robust retry policies
   orchestratorQueue = new Queue('agent-orchestrator', {
     connection,
     defaultJobOptions: {
-      attempts: 5, // Increased attempts for higher reliability
-      backoff: {
-        type: 'exponential',
-        delay: 2000,
-      },
-      removeOnComplete: { count: 100 }, // Keep history of last 100 successful jobs
-      removeOnFail: { count: 500 }, // Keep history of last 500 failed jobs for audit
+      attempts: 5,
+      backoff: { type: 'exponential', delay: 2000 },
+      removeOnComplete: { count: 100 },
+      removeOnFail: { count: 500 },
     },
   });
+  workerManager.registerQueue(orchestratorQueue);
+  logger.info('[QUEUE] Orchestrator Queue initialized.');
+};
 
-  // Worker implementation for processing background tasks
+const initOrchestratorWorker = () => {
+  const connection = getBullRedisClient();
+  if (!connection) return;
+
   const agentOrchestrator = require('../services/agentOrchestrator');
+  const FailedJob = require('../models/FailedJob');
+
+const { runWithJobContext } = require('../utils/context');
 
   orchestratorWorker = new Worker(
     'agent-orchestrator',
     async (job) => {
-      const { event } = job.data;
-      try {
-        await agentOrchestrator.processEvent(event);
-      } catch (err) {
-        logger.error(`[WORKER] Critical failure in job ${job.id}: ${err.message}`);
-        throw err; // Re-throw to trigger BullMQ retry logic
-      }
+      return runWithJobContext(job, async () => {
+        const { event } = job.data;
+        try {
+          logger.info(`[WORKER] Starting job ${job.id} | Event: ${event.type}`);
+          await agentOrchestrator.processEvent(event);
+          logger.info(`[WORKER] Completed job ${job.id}`);
+        } catch (err) {
+          logger.error(`[WORKER] Critical failure in job ${job.id}: ${err.message}`);
+          throw err;
+        }
+      });
     },
     { 
       connection,
-      concurrency: 10, // Scaled up concurrency for higher throughput
+      concurrency: parseInt(process.env.WORKER_CONCURRENCY || '10'),
       limiter: {
-        max: 100, // Process max 100 jobs per 5 seconds
+        max: 100,
         duration: 5000
       }
     }
   );
 
-  // Global worker event listeners
-  orchestratorWorker.on('failed', (job, err) => {
+  workerManager.registerWorker(orchestratorWorker);
+
+  orchestratorWorker.on('failed', async (job, err) => {
     logger.error(`[QUEUE] Job ${job?.id} failed after ${job?.attemptsMade} attempts: ${err.message}`);
+    
+    if (job && job.attemptsMade >= 5) {
+      try {
+        await FailedJob.create({
+          jobId: job.id,
+          queueName: 'agent-orchestrator',
+          payload: job.data,
+          error: err.message,
+          stack: err.stack,
+          timestamp: new Date()
+        });
+        const { notify } = require('../utils/notify');
+        await notify('ERROR', `Job ${job.id} moved to DLQ`, { queue: 'agent-orchestrator', error: err.message });
+        logger.info(`[DLQ] Job ${job.id} moved to failed_jobs collection.`);
+      } catch (dlqErr) {
+        logger.error(`[DLQ] Failed to record job failure: ${dlqErr.message}`);
+      }
+    }
   });
 
   orchestratorWorker.on('completed', (job) => {
     logger.debug(`[QUEUE] Job ${job.id} completed successfully.`);
   });
 
-  logger.info('[QUEUE] Background Orchestration Service operational.');
+  logger.info('[QUEUE] Orchestrator Worker operational.');
 };
 
 const getOrchestratorQueue = () => orchestratorQueue;
 
-module.exports = { initOrchestratorQueue, getOrchestratorQueue };
+module.exports = { initOrchestratorQueue, initOrchestratorWorker, getOrchestratorQueue };
+

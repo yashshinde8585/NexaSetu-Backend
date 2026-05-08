@@ -18,5 +18,6 @@ router.get('/roles', teamController.getWorkspaceRoles);
 router.post('/invite', requirePermission(PERMISSIONS.INVITE_USERS), teamController.inviteUser);
 router.post('/invite-bulk', requirePermission(PERMISSIONS.INVITE_USERS), teamController.inviteMultipleUsers);
 router.delete('/invites/:id', requirePermission(PERMISSIONS.INVITE_USERS), teamController.removeInvitation);
+router.patch('/members/:id/project', requirePermission(PERMISSIONS.INVITE_USERS), teamController.updateMemberProject);
 
 module.exports = router;
