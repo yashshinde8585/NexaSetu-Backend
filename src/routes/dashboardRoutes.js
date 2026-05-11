@@ -8,6 +8,6 @@ router.use(protect);
 
 const { cacheMiddleware } = require('../middleware/cacheMiddleware');
 
-router.get('/stats', cacheMiddleware(60), dashboardController.getDashboardStats);
+router.get('/stats', cacheMiddleware('route', 60), dashboardController.getDashboardStats);
 
 module.exports = router;

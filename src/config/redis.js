@@ -81,11 +81,32 @@ const isQueueConnected = () => {
     return bullRedisClient && bullRedisClient.status === 'ready';
 };
 
+const withTimeout = async (promise, timeoutMs = 2000, fallback = null) => {
+    let timeout;
+    const timeoutPromise = new Promise((resolve) => {
+        timeout = setTimeout(() => {
+            logger.warn(`[REDIS-TIMEOUT] Operation timed out after ${timeoutMs}ms. Falling back.`);
+            resolve(fallback);
+        }, timeoutMs);
+    });
+
+    try {
+        const result = await Promise.race([promise, timeoutPromise]);
+        clearTimeout(timeout);
+        return result;
+    } catch (err) {
+        clearTimeout(timeout);
+        logger.error(`[REDIS-ERROR] Operation failed: ${err.message}`);
+        return fallback;
+    }
+};
+
 module.exports = { 
     connectRedis, 
     createClient,
     getRedisClient, 
     getBullRedisClient,
     isRedisConnected,
-    isQueueConnected
+    isQueueConnected,
+    withTimeout
 };

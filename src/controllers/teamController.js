@@ -10,6 +10,16 @@ exports.inviteUser = catchAsync(async (req, res, next) => {
   if (!email || !role)
     return ResponseBuilder.error(res, 'Missing fields', 'MISSING_FIELDS', 400);
 
+  // Security Hardening: Ensure non-admins can only invite to projects they belong to
+  const isAdmin = req.user.role === 'WORKSPACE_ADMIN' || req.user.role === 'ADMIN';
+  if (!isAdmin && projectId) {
+    const { canAccessResource } = require('../utils/authHelpers');
+    const hasAccess = await canAccessResource(req.user, projectId, 'project');
+    if (!hasAccess) {
+      return ResponseBuilder.error(res, 'Unauthorized project assignment. Managers can only invite to their own sectors.', 'UNAUTHORIZED_PROJECT', 403);
+    }
+  }
+
   const isLeadOrAdmin = isStrategicLead(req.user);
   if (!isLeadOrAdmin) {
     const allowedRoles = ['PROJECT_MEMBER', 'RESTRICTED'];
@@ -67,7 +77,7 @@ exports.inviteMultipleUsers = catchAsync(async (req, res, next) => {
   const { provisionedUsers, failedInvites } = await teamService.bulkProvision(
     invites,
     req.user.workspaceId,
-    req.user._id,
+    req.user,
     isStrategicLead(req.user)
   );
 
@@ -116,4 +126,31 @@ exports.getWorkspaceRoles = catchAsync(async (req, res, next) => {
 exports.removeInvitation = catchAsync(async (req, res, next) => {
   await teamService.removeInvitation(req.user, req.params.id);
   return ResponseBuilder.success(res, null, 204);
+});
+
+exports.updateMemberProject = catchAsync(async (req, res, next) => {
+  const { projectId } = req.body;
+  const { id: memberId } = req.params;
+
+  // Security: Strategic leads can move anyone, others must have project access
+  const isAdmin = req.user.role === 'WORKSPACE_ADMIN' || req.user.role === 'ADMIN';
+  if (!isAdmin && projectId) {
+    const { canAccessResource } = require('../utils/authHelpers');
+    const hasAccess = await canAccessResource(req.user, projectId, 'project');
+    if (!hasAccess) {
+      return ResponseBuilder.error(res, 'Unauthorized sector allocation.', 'UNAUTHORIZED_ALLOCATION', 403);
+    }
+  }
+
+  const updatedMember = await teamService.updateMemberProject(req.user, memberId, projectId);
+
+  await auditService.log({
+    action: 'MEMBER_REASSIGN',
+    req,
+    entityType: 'USER',
+    entityId: memberId,
+    details: { newProjectId: projectId },
+  });
+
+  return ResponseBuilder.success(res, { member: updatedMember });
 });

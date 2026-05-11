@@ -1,94 +1,39 @@
-const axios = require('axios');
+const aiClient = require('../utils/aiClient');
+const CircuitBreaker = require('opossum');
 const aiHelpers = require('../utils/aiHelpers');
 const prompts = require('../config/prompts.json');
-const { getRedisClient, isRedisConnected } = require('../config/redis');
+const { isRedisConnected } = require('../config/redis');
 const logger = require('../utils/logger');
 
-const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
-const DEFAULT_TIMEOUT = 25000;
 const CACHE_EXPIRATION = 86400;
-const BACKOFF_MULTIPLIER = 1000;
-const MAX_RETRIES = 2;
 
-// Tiered fallback models to ensure service availability during upstream outages.
-const MODEL_FALLBACK_LIST = [
-  'llama-3.1-8b-instant',
-  'llama-3.3-70b-versatile',
-  'llama3-8b-8192',
-  'mixtral-8x7b-32768',
-];
+const { cacheManager } = require('../middleware/cacheMiddleware');
 
-
-const getCachedIntent = async (hash) => {
+const getCachedIntent = async (hash, workspaceId = 'global') => {
   if (!isRedisConnected()) return null;
-  const cacheKey = `ai:extract:${hash}`;
-  const redis = getRedisClient();
-  try {
-    const cached = await redis.get(cacheKey);
-    return cached ? JSON.parse(cached) : null;
-  } catch (err) {
-    logger.warn('[AI-Cache] Retrieval failed, falling back to LLM.');
-    return null;
-  }
+  const cacheKey = cacheManager.generateKey(workspaceId, 'ai', `extract:${hash}`);
+  const legacyKey = `ai:extract:${hash}`;
+  
+  return await cacheManager.getWithFallback(cacheKey, legacyKey);
 };
 
-const executeWithRetry = async (models, systemPrompt, userPrompt) => {
-  const apiKey = process.env.GROQ_API_KEY;
-  let lastError = null;
-
-  for (const currentModel of models) {
-    let retryCount = 0;
-    while (retryCount < MAX_RETRIES) {
-      try {
-        const response = await axios.post(
-          GROQ_URL,
-          {
-            model: currentModel,
-            messages: [
-              { role: 'system', content: systemPrompt },
-              { role: 'user', content: userPrompt },
-            ],
-            max_tokens: 600,
-            temperature: 0.1,
-          },
-          {
-            headers: {
-              Authorization: `Bearer ${apiKey}`,
-              'Content-Type': 'application/json',
-            },
-            timeout: DEFAULT_TIMEOUT,
-          }
-        );
-        return response.data.choices[0].message.content;
-      } catch (error) {
-        lastError = error;
-        const res = error.response;
-        const data = res?.data;
-
-        if (
-          data?.error?.message &&
-          (data.error.message.includes('not supported') ||
-            data.error.message.includes('is not available'))
-        ) {
-          break;
-        }
-
-        if (
-          res?.status === 429 ||
-          res?.status === 503 ||
-          (data?.error?.message && data.error.message.includes('loading'))
-        ) {
-          const backoff = Math.pow(2, retryCount) * BACKOFF_MULTIPLIER + Math.random() * 1000;
-          await new Promise((resolve) => setTimeout(resolve, backoff));
-          retryCount++;
-          continue;
-        }
-        break;
-      }
-    }
-  }
-  throw new Error(`AI Processing Error: ${lastError?.message || 'All models failed'}`);
+const breakerOptions = {
+  timeout: 30000,
+  errorThresholdPercentage: 50,
+  resetTimeout: 30000
 };
+
+const aiBreaker = new CircuitBreaker(
+  (messages, options) => aiClient.generateCompletion(messages, options), 
+  breakerOptions
+);
+
+aiBreaker.fallback(() => {
+  throw new Error('AI Service is currently throttled or unavailable. Please try again later.');
+});
+
+aiBreaker.on('open', () => logger.warn('[AI-Breaker] Circuit opened - pivoting to fallback mode'));
+aiBreaker.on('close', () => logger.info('[AI-Breaker] Circuit closed - AI services restored'));
 
 const parseAndFormatAIResponse = (text) => {
   const parsed = aiHelpers.extractAndParseJSON(text);
@@ -110,99 +55,88 @@ const parseAndFormatAIResponse = (text) => {
   };
 };
 
-exports.extractTaskFromText = async (text) => {
-  const apiKey = process.env.GROQ_API_KEY;
-  if (!apiKey) {
-    throw new Error('Groq API key is missing. Ensure GROQ_API_KEY is set in .env');
-  }
+const trackUsage = async (workspaceId, usage) => {
+  if (!isRedisConnected() || !usage) return;
+  
+  const date = new Date().toISOString().split('T')[0];
+  const key = `ai_usage:${workspaceId}:${date}`;
+  
+  try {
+    const { getRedisClient } = require('../config/redis');
+    const redis = getRedisClient();
+    const tokens = await redis.hincrby(key, 'total_tokens', usage.total_tokens || 0);
+    await redis.hincrby(key, 'call_count', 1);
+    await redis.expire(key, 172800);
 
+    if (tokens > 50000 && tokens - (usage.total_tokens || 0) <= 50000) {
+      logger.warn(`[AI-Cost] Soft limit exceeded for workspace ${workspaceId}: ${tokens} tokens today.`);
+    }
+  } catch (err) {
+    logger.warn('[AI-Cost] Failed to track usage: %s', err.message);
+  }
+};
+
+exports.extractTaskFromText = async (text, signal = null) => {
   const cleanInput = aiHelpers.sanitizeInput(text);
   const chunkedInput = aiHelpers.truncateToWindow(cleanInput, 400);
-  const intentHash = aiHelpers.generateHash(chunkedInput);
+  
+  const intentHash = aiHelpers.generateHash(`${chunkedInput}|len:${text.length}`);
 
   const cachedResult = await getCachedIntent(intentHash);
   if (cachedResult) return cachedResult;
 
-  const systemPrompt = `
-    ${prompts.system.TASK_EXTRACTOR}
-    
-    ### SCHEMA
-    Return ONLY JSON that adheres to this schema exactly:
-    ${prompts.templates.TASK_EXTRACTION_SCHEMA}
-    
-    ### EXAMPLES
-    ${prompts.templates.FEW_SHOT_TASKS}
-  `.trim();
+  const messages = [
+    { 
+      role: 'system', 
+      content: `${prompts.system.TASK_EXTRACTOR}\n\n### SCHEMA\nReturn ONLY JSON:\n${prompts.templates.TASK_EXTRACTION_SCHEMA}\n\n### EXAMPLES\n${prompts.templates.FEW_SHOT_TASKS}`
+    },
+    { 
+      role: 'user', 
+      content: `Context: [${chunkedInput}]\n\nAction: Synthesize task JSON.` 
+    }
+  ];
 
-  const userPrompt = `
-    [USER_CONTEXT_START]
-    ${chunkedInput}
-    [USER_CONTEXT_END]
-    
-    Action: Analyze the context within [USER_CONTEXT] and synthesize a task JSON as per the schema.
-  `.trim();
-
-  const rawResponse = await executeWithRetry(MODEL_FALLBACK_LIST, systemPrompt, userPrompt);
-  const result = parseAndFormatAIResponse(rawResponse);
+  const response = await aiBreaker.fire(messages, { signal });
+  const result = parseAndFormatAIResponse(response.content);
 
   if (!result) {
     throw new Error('AI Processing Error: Failed to parse mission parameters');
   }
 
-  // Handle caching as a side-effect to keep the main flow flat.
   if (isRedisConnected()) {
-    const cacheKey = `ai:extract:${intentHash}`;
-    getRedisClient().set(cacheKey, JSON.stringify(result), 'EX', CACHE_EXPIRATION)
-      .catch(e => logger.warn('[AI-Cache] Failed to store result: %s', e.message));
+    const cacheKey = cacheManager.generateKey('global', 'ai', `extract:${intentHash}`);
+    cacheManager.set(cacheKey, result, CACHE_EXPIRATION).catch(() => {});
+    trackUsage('global', response.usage);
   }
 
   return result;
 };
 
 exports.processPrompt = async (systemPrompt, userPrompt, config = {}) => {
-  const apiKey = process.env.GROQ_API_KEY;
-  if (!apiKey) throw new Error('GROQ_API_KEY is not set');
-
   const {
     highReasoning = false,
     temperature = 0.5,
     max_tokens = 800,
-    timeout = 15000
+    timeout = 15000,
+    workspaceId = 'global'
   } = config;
 
   const primaryModel = highReasoning ? 'llama-3.3-70b-versatile' : 'llama-3.1-8b-instant';
-  const models = [primaryModel, ...MODEL_FALLBACK_LIST.filter(m => m !== primaryModel)];
+  const models = [primaryModel, ...aiClient.getFallbackModels().filter(m => m !== primaryModel)];
 
-  for (const model of models) {
-    const start = Date.now();
-    try {
-      const response = await axios.post(
-        GROQ_URL,
-        {
-          model,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userPrompt }
-          ],
-          temperature,
-          max_tokens,
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-            'Content-Type': 'application/json',
-          },
-          timeout,
-        }
-      );
+  const messages = [
+    { role: 'system', content: systemPrompt },
+    { role: 'user', content: userPrompt }
+  ];
 
-      const latency = Date.now() - start;
-      logger.info(`[AI-Performance] Model: ${model} | Latency: ${latency}ms | Tokens: ${response.data.usage?.total_tokens}`);
+  const response = await aiClient.generateCompletion(messages, {
+    models,
+    temperature,
+    max_tokens,
+    timeout
+  });
 
-      return response.data.choices[0].message.content;
-    } catch (error) {
-      logger.warn(`[AI-Fallback] Routing failure on model ${model}, pivoting...`);
-      if (model === models[models.length - 1]) throw error;
-    }
-  }
+  trackUsage(workspaceId, response.usage);
+  return response.content;
 };
+

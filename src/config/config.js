@@ -27,14 +27,12 @@ if (missingVars.length > 0) {
 }
 
 const config = {
-  // Application Info
   env,
   isProduction,
   isDevelopment: env === 'development',
   isTest: env === 'test',
   port: parseInt(process.env.PORT, 10) || 5000,
   
-  // Security & Authentication
   clientUrl: process.env.CLIENT_URL || 'http://localhost:5173',
   jwt: {
     secret: process.env.JWT_SECRET,
@@ -45,41 +43,35 @@ const config = {
       httpOnly: true,
       secure: isProduction,
       sameSite: isProduction ? 'none' : 'lax',
-      maxAge: 8 * 60 * 60 * 1000 // 8 hours
+      maxAge: 8 * 60 * 60 * 1000 
     }
   },
 
-  // Database
   db: {
     uri: isProduction ? process.env.DB_ATLAS_URI : process.env.DB_LOCAL_URI,
     options: {
-      // Add any specific mongoose options here if needed
     }
   },
 
-  // Redis & Caching
   redis: {
     url: isProduction ? process.env.REDIS_INTERNAL_URL : process.env.REDIS_LOCAL_URL,
   },
 
-  // AI & External Services
   ai: {
     hfKey: process.env.HUGGINGFACE_API_KEY,
     groqKey: process.env.GROQ_API_KEY,
   },
 
-  // Logging Configuration
   logging: {
     level: process.env.LOG_LEVEL || (isProduction ? 'info' : 'debug'),
   },
 
-  // Security Policy
   security: {
-    encryptionKey: process.env.ENCRYPTION_KEY,
+    encryptionKey: process.env.ENCRYPTION_KEY?.trim(),
     failedLoginLimit: parseInt(process.env.FAILED_LOGIN_LIMIT, 10) || 5,
-    lockoutDuration: parseInt(process.env.LOCKOUT_DURATION_MINS, 10) || 30, // in minutes
+    lockoutDuration: parseInt(process.env.LOCKOUT_DURATION_MINS, 10) || 30, 
     sessionLimit: parseInt(process.env.SESSION_LIMIT, 10) || 5,
-    sessionDurationMs: 30 * 24 * 60 * 60 * 1000, // 30 days
+    sessionDurationMs: 30 * 24 * 60 * 60 * 1000, 
   }
 };
 

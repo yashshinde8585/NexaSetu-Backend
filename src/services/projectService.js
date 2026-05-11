@@ -8,6 +8,7 @@ const { isManagerOrAdmin, hasLeadRestriction } = require('../utils/authHelpers')
 const AppError = require('../utils/appError');
 const metricsService = require('./metricsService');
 const logger = require('../utils/logger');
+const { invalidateCache } = require('../middleware/cacheMiddleware');
 
 const createProject = async (user, data) => {
   const { name, sprint } = data;
@@ -61,7 +62,9 @@ const createProject = async (user, data) => {
     projectId: project._id, 
     type: project.type 
   }).catch(err => logger.error(`[METRICS] Failed to track project creation: ${err.message}`));
-
+  
+  await invalidateCache(user.workspaceId, 'project');
+  
   return project;
 };
 
@@ -206,10 +209,17 @@ const updateProject = async (user, id, updateData) => {
     throw new AppError('You do not have permission to update tactical settings for this mission.', 403);
   }
 
+  // Sanitize: Convert empty strings or invalid IDs to null for the sprint field
+  if (updateData.sprint === '' || updateData.sprint === 'null') {
+    updateData.sprint = null;
+  }
+
   const updatedProject = await Project.findByIdAndUpdate(id, updateData, {
     new: true,
     runValidators: true,
   }).populate('members', 'name email role profilePicture');
+
+  await invalidateCache(user.workspaceId, 'project');
 
   return updatedProject;
 };

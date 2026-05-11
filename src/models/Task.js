@@ -27,7 +27,7 @@ const taskSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ['todo', 'in_progress', 'in_review', 'done'],
+      enum: ['todo', 'in_progress', 'blocked', 'in_review', 'approved', 'rejected', 'done'],
       default: 'todo',
       index: true,
     },
@@ -83,7 +83,7 @@ const taskSchema = new mongoose.Schema(
       {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'Task',
-        index: true, // Multikey index for dependency chains
+        index: true, 
       },
     ],
     parentId: {
@@ -169,6 +169,40 @@ const taskSchema = new mongoose.Schema(
         completed: { type: Boolean, default: false },
       },
     ],
+    reviewers: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User',
+      },
+    ],
+    reviewStatus: {
+      type: String,
+      enum: ['pending', 'code_review', 'test_validation', 'approved', 'rejected'],
+      default: 'pending',
+    },
+    escalationOwner: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      index: true,
+    },
+    isEscalated: {
+      type: Boolean,
+      default: false,
+    },
+    reviewNotes: {
+      type: String,
+      trim: true,
+    },
+    strategicDirective: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Directive',
+      index: true,
+    },
+    category: {
+      type: String,
+      enum: ['backend', 'frontend', 'qa', 'design', 'other'],
+      index: true,
+    },
     attachments: [
       {
         name: {
@@ -203,16 +237,17 @@ const taskSchema = new mongoose.Schema(
   }
 );
 
-// Optimized indexes for Efficient Search & Retrieval (ESR) patterns
 taskSchema.index({ workspaceId: 1, project: 1, status: 1, type: 1 });
 taskSchema.index({ workspaceId: 1, assignedUser: 1, status: 1 });
-taskSchema.index({ workspaceId: 1, status: 1, dueDate: 1 }); // For overdue tracking
+taskSchema.index({ workspaceId: 1, status: 1, dueDate: 1 });
 taskSchema.index({ workspaceId: 1, type: 1, status: 1 });
-taskSchema.index({ project: 1, taskNumber: 1 }, { unique: true }); // Fast lookup by project task number
+taskSchema.index({ project: 1, taskNumber: 1 }, { unique: true }); 
 
-// Distributed auto-increment for project-specific task numbering.
-// Utilizes Redis for atomic speed with MongoDB as a durable secondary store.
 taskSchema.pre('save', async function () {
+  if (this.timelineHistory && this.timelineHistory.length > 100) {
+    this.timelineHistory = this.timelineHistory.slice(-100);
+  }
+
   if (this.isNew) {
     const { getRedisClient, isRedisConnected } = require('../config/redis');
     const redis = getRedisClient();
@@ -223,11 +258,11 @@ taskSchema.pre('save', async function () {
         const nextNumber = await redis.incr(projectKey);
         this.taskNumber = nextNumber;
         
-        // Persist the sequence to MongoDB in the background to ensure eventual durability
         const Project = mongoose.model('Project');
-        Project.updateOne({ _id: this.project }, { lastTaskNumber: nextNumber }).catch(() => {});
+        Project.updateOne({ _id: this.project }, { lastTaskNumber: nextNumber }).catch(err => {
+          logger.error(err);
+        });
       } else {
-        // Fallback to legacy atomic increment if Redis is offline
         const Project = mongoose.model('Project');
         const project = await Project.findByIdAndUpdate(
           this.project,
@@ -236,12 +271,22 @@ taskSchema.pre('save', async function () {
         );
         if (project) {
           this.taskNumber = project.lastTaskNumber;
+        } else {
+          throw new Error('Project not found');
         }
       }
     } catch (err) {
-      logger.warn('[TASK-NUMBER] Sequence generation failed, using timestamp fallback');
+      logger.error(err);
+      if (err.code === 11000) throw err; 
       this.taskNumber = Date.now();
     }
+  }
+});
+
+taskSchema.pre(/^find/, async function () {
+  const query = this.getQuery();
+  if (query.workspaceId === undefined && !this.getOptions().bypassTenantSafety) {
+    logger.warn(`[TENANT-SAFETY] Query executed without workspaceId filter on Task collection: %o`, query);
   }
 });
 

@@ -9,7 +9,6 @@ const { monitorClientStatus } = require('../utils/requestGuard');
 
 const cookieOptions = config.jwt.cookieOptions;
 
-// Generates tokens, creates a session, and sets secure HTTP-only cookies.
 const sendAuthResponse = async (user, statusCode, req, res) => {
   const { accessToken, refreshToken } = authService.generateTokens(user._id);
 
@@ -18,7 +17,6 @@ const sendAuthResponse = async (user, statusCode, req, res) => {
     ipAddress: req.ip,
   });
 
-  // Clear maxAge from generic options to avoid conflicts with explicit expires
   const baseOptions = { ...cookieOptions };
   delete baseOptions.maxAge;
 
@@ -71,7 +69,6 @@ exports.logoutUser = catchAsync(async (req, res, next) => {
   return ResponseBuilder.success(res, null, 200, 'Logged out successfully');
 });
 
-// Rotates access tokens to maintain session continuity without requiring re-login.
 exports.refreshAccessToken = catchAsync(async (req, res, next) => {
   const { refreshToken } = req.cookies;
   if (!refreshToken) return ResponseBuilder.error(res, 'Session expired', 'SESSION_EXPIRED', 401);
@@ -141,12 +138,8 @@ exports.updateAvatar = catchAsync(async (req, res, next) => {
       logger.error(`[AVATAR_CLEANUP_ERROR]: ${err.message}`);
     });
   }
-
-  const updatedUser = await User.findByIdAndUpdate(
-    req.user._id,
-    { profilePicture: publicUrl },
-    { new: true, runValidators: true }
-  ).select('-password');
+  
+  const updatedUser = await authService.updateAvatar(req.user, publicUrl);
 
   return ResponseBuilder.success(res, { user: updatedUser }, 200, 'Profile picture updated successfully');
 });

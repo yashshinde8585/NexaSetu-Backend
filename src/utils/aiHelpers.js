@@ -1,7 +1,6 @@
 const crypto = require('crypto');
 
 
-// Extract and parse JSON from unstructured AI text responses
 exports.extractAndParseJSON = (text) => {
   if (!text || typeof text !== 'string') return null;
 
@@ -21,11 +20,10 @@ exports.extractAndParseJSON = (text) => {
 
     if (!jsonStr) return null;
 
-    // Sanitize the potential JSON string
     const cleanStr = jsonStr
       .replace(/```json/g, '')
       .replace(/```/g, '')
-      .replace(/,\s*([\]}])/g, '$1') // Fix trailing commas
+      .replace(/,\s*([\]}])/g, '$1') 
       .trim();
 
     return JSON.parse(cleanStr);
@@ -35,7 +33,6 @@ exports.extractAndParseJSON = (text) => {
 };
 
 
-// Truncate text to fit within AI model context windows
 exports.truncateToWindow = (text, maxTokens = 4000) => {
   if (!text) return '';
   const maxChars = maxTokens * 4;
@@ -43,7 +40,6 @@ exports.truncateToWindow = (text, maxTokens = 4000) => {
 };
 
 
-// Sanitize input to prevent prompt injection and control character issues
 exports.sanitizeInput = (text) => {
   if (!text || typeof text !== 'string') return '';
   return text
@@ -54,7 +50,6 @@ exports.sanitizeInput = (text) => {
 };
 
 
-// Generate a deterministic SHA-256 hash for data identification
 exports.generateHash = (text) => {
   if (!text) return '';
   return crypto.createHash('sha256').update(text).digest('hex');

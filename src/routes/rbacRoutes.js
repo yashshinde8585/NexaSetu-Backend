@@ -1,14 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const rbacController = require('../controllers/rbacController');
-const { protect } = require('./authRoutes'); // Assuming authRoutes exports protect middleware or similar, let's just use placeholder
+const { protect } = require('../middleware/authMiddleware');
 const { checkRole } = require('../services/rbac/permissionGuard');
 
-// Mock protect for now if not imported properly. The system already has auth middleware, I'll assume req.user is set upstream
-router.use((req, res, next) => {
-  // If not protected by parent router, we should protect here.
-  next();
-});
+router.use(protect);
 
 router.get('/roles', rbacController.getRoles);
 router.post('/roles', checkRole('ADMIN'), rbacController.createRole);

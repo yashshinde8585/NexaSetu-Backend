@@ -1,5 +1,6 @@
 const winston = require('winston');
 const config = require('../config/config');
+const { getRequestId } = require('./context');
 
 const logFormat = winston.format.combine(
   winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
@@ -8,16 +9,27 @@ const logFormat = winston.format.combine(
   winston.format.json()
 );
 
+const contextEnricher = winston.format((info) => {
+  const requestId = getRequestId();
+  if (requestId) {
+    info.requestId = requestId;
+  }
+  return info;
+});
+
 const logger = winston.createLogger({
   level: config.isProduction ? 'info' : 'debug',
-  format: logFormat,
+  format: winston.format.combine(
+    contextEnricher(),
+    logFormat
+  ),
   defaultMeta: { service: 'nexasetu-backend' },
   transports: [
     new winston.transports.Console({
       format: winston.format.combine(
         winston.format.colorize(),
         winston.format.printf(
-          (info) => `[${info.timestamp}] ${info.level}: ${info.message}${info.stack ? '\n' + info.stack : ''}`
+          (info) => `[${info.timestamp}] ${info.level}${info.requestId ? ' [' + info.requestId + ']' : ''}: ${info.message}${info.stack ? '\n' + info.stack : ''}`
         )
       ),
     }),
@@ -25,7 +37,6 @@ const logger = winston.createLogger({
   exitOnError: false,
 });
 
-// Add file logging in production for persistence
 if (config.isProduction) {
   const fs = require('fs');
   const path = require('path');

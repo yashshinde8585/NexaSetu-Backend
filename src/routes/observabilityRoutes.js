@@ -1,7 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const observabilityController = require('../controllers/observabilityController');
+const { protect } = require('../middleware/authMiddleware');
 const { checkPermission } = require('../services/rbac/permissionGuard');
+
+router.use(protect);
 
 router.get('/metrics', checkPermission('view:metrics'), observabilityController.getMetrics);
 router.get('/health', checkPermission('view:health'), observabilityController.getHealth);
