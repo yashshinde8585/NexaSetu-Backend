@@ -49,6 +49,8 @@ exports.calculateProgress = (total, completed) => {
 // Transform task document to dashboard-optimized object
 exports.mapTaskToDashboard = (t, now = new Date()) => {
   const dueDate = parseDate(t.dueDate);
+  const projectKey = t.project?.key || 'NC';
+  const taskNumber = t.taskNumber || parseInt(t._id?.toString().slice(-4), 16) || 1001;
   return {
     id: t._id,
     title: t.title,
@@ -58,6 +60,10 @@ exports.mapTaskToDashboard = (t, now = new Date()) => {
     isOverdue: dueDate && dueDate < now && t.status !== 'done',
     blocked: t.blocked || (t.dependencies && t.dependencies.length > 0),
     createdAt: t.createdAt,
-    createdFormatted: exports.formatDueDate(t.createdAt, {}, now)
+    createdFormatted: exports.formatDueDate(t.createdAt, {}, now),
+    taskKey: `${projectKey}-${taskNumber}`,
+    category: t.category || 'backend',
+    projectId: t.project?._id || t.project || null,
+    sprintId: t.sprint?._id || t.sprint || null
   };
 };
