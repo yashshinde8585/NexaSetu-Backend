@@ -1,6 +1,10 @@
 const Task = require('../models/Task');
 const Service = require('../models/Service');
 const AuditLog = require('../models/AuditLog');
+const Sprint = require('../models/Sprint');
+const TestCase = require('../models/TestCase');
+const User = require('../models/User');
+const Project = require('../models/Project');
 const { calculateProgress, mapTaskToDashboard, formatDueDate, formatTimeAgo } = require('../utils/dashboardHelpers');
 
 const _getDefaultSteps = () => [
@@ -39,7 +43,7 @@ const _getActivityCounts = async (userId, workspaceId, startOfDay) => {
 
   return { 
     commitsToday: commits, 
-    filesChanged: commits * 2 + 1, // Simulated based on task updates
+    filesChanged: 0, 
     prsMerged: merged 
   };
 };
@@ -171,6 +175,49 @@ const getWorkspaceData = async (userId, workspaceId, subRole) => {
   const today = new Date();
   today.setHours(23, 59, 59, 999);
 
+  // Fetch active projects for this workspace
+  const projects = await Project.find({ workspaceId }).select('name key').lean();
+
+  // 1. Core user tasks query
+  const userTasks = await Task.find({ workspaceId, assignedUser: userId }).populate('project').lean();
+  const totalTasks = userTasks.length;
+  const doneTasksCount = userTasks.filter(t => t.status === 'done').length;
+  const inProgressTasksCount = userTasks.filter(t => t.status === 'in_progress').length;
+  const inReviewTasksCount = userTasks.filter(t => t.status === 'in_review').length;
+  const blockedTasksCount = userTasks.filter(t => t.blocked || t.status === 'blocked').length;
+  const todoTasksCount = userTasks.filter(t => t.status === 'todo').length;
+
+  const workItemsStatus = {
+    done: doneTasksCount,
+    inProgress: inProgressTasksCount,
+    inReview: inReviewTasksCount,
+    blocked: blockedTasksCount,
+    todo: todoTasksCount,
+    total: totalTasks
+  };
+
+  const inProgressTasks = userTasks.filter(t => t.status === 'in_progress').map(t => mapTaskToDashboard(t));
+  const inReviewTasks = userTasks.filter(t => t.status === 'in_review').map(t => mapTaskToDashboard(t));
+  const doneTasks = userTasks.filter(t => t.status === 'done').map(t => mapTaskToDashboard(t));
+
+  // 2. Active Sprint calculations
+  const activeSprint = await Sprint.findOne({ workspaceId, status: 'active' }).lean();
+  let sprintDaysLeft = 0;
+  let sprintName = 'No Active Sprint';
+  let sprintProgress = 0;
+
+  if (activeSprint) {
+    sprintName = activeSprint.name;
+    const days = Math.ceil((new Date(activeSprint.endDate) - today) / (1000 * 60 * 60 * 24));
+    sprintDaysLeft = Math.max(0, days);
+
+    const sprintTasks = userTasks.filter(t => t.sprint && t.sprint.toString() === activeSprint._id.toString());
+    const sprintTotal = sprintTasks.length;
+    const sprintDone = sprintTasks.filter(t => t.status === 'done').length;
+    sprintProgress = sprintTotal > 0 ? Math.round((sprintDone / sprintTotal) * 100) : 0;
+  }
+
+  // 3. Common metrics and tasks
   const [dayMetrics, myTasks, progress] = await Promise.all([
     _getCommonMetrics(userId, workspaceId, today),
     _getFilteredTasks(userId, workspaceId, subRole),
@@ -247,8 +294,228 @@ const getWorkspaceData = async (userId, workspaceId, subRole) => {
     };
   });
 
+  // 4. Code Quality & Code Health calculations
+  const services = await Service.find({ workspaceId }).lean();
+  let codeHealthScore = 100;
+  if (services.length > 0) {
+    const avgDebt = services.reduce((acc, s) => acc + (s.technicalDebt?.score || 0), 0) / services.length;
+    codeHealthScore = Math.max(0, Math.round(100 - avgDebt - (blockedTasksCount * 2)));
+  } else {
+    codeHealthScore = blockedTasksCount > 0 ? Math.max(0, 100 - (blockedTasksCount * 5)) : 100;
+  }
+
+  const testCases = await TestCase.find({ workspaceId }).lean();
+  const passedTests = testCases.filter(t => t.status === 'passed').length;
+  const totalTests = testCases.length;
+  const coverage = totalTests > 0 ? Math.round((passedTests / totalTests) * 100) : 0;
+
+  const eslintIssues = services.reduce((acc, s) => acc + (s.eslintIssues || 0), 0);
+  const securityIssues = services.reduce((acc, s) => acc + (s.securityIssues || 0), 0);
+  const techDebt = services.reduce((acc, s) => acc + ((s.technicalDebt?.score || 0) * 0.05), 0);
+
+  const codeQuality = {
+    coverage,
+    coverageDiff: 0,
+    eslint: eslintIssues,
+    eslintDiff: 0,
+    security: securityIssues,
+    securityDiff: 0,
+    techDebt: parseFloat(techDebt.toFixed(1)),
+    techDebtDiff: 0
+  };
+
+  // 5. Code Impact metrics
+  const commitCount = await AuditLog.countDocuments({ performer: userId, workspaceId, action: { $regex: /COMMIT|PR_MERGE/i } });
+  const prsMerged = await AuditLog.countDocuments({ performer: userId, workspaceId, action: 'PR_MERGED' });
+
+  const topFilesChanged = [];
+
+  const myCodeImpact = {
+    commits: commitCount,
+    commitsDiff: 0,
+    linesChanged: 0,
+    linesChangedDiff: 0,
+    filesChanged: 0,
+    filesChangedDiff: 0,
+    prsMerged: prsMerged,
+    prsMergedDiff: 0,
+    topFilesChanged
+  };
+
+  // 6. PRs Assigned metrics
+  const prOpen = userTasks.filter(t => t.source === 'github' && t.status !== 'done').length;
+  const prMerged = userTasks.filter(t => t.source === 'github' && t.status === 'done').length;
+  const prReview = userTasks.filter(t => t.status === 'in_review').length;
+  const pullRequestMetrics = { open: prOpen, review: prReview, merged: prMerged };
+
+  const pullRequestsList = userTasks.filter(t => t.source === 'github').map((t) => ({
+    number: t.githubId ? `#${t.githubId}` : 'N/A',
+    title: t.title,
+    comments: t.comments?.length || 0,
+    status: t.status === 'done' ? 'Merged' : t.status === 'in_review' ? 'In Review' : 'Open',
+    link: t.githubUrl || '#'
+  }));
+
+  // 7. My Velocity history
+  const pastSprints = await Sprint.find({ workspaceId, status: { $ne: 'upcoming' } }).sort('startDate').limit(6).lean();
+  const velocitySpark = [];
+  for (const s of pastSprints) {
+    const completed = await Task.countDocuments({ workspaceId, assignedUser: userId, sprint: s._id, status: 'done' });
+    velocitySpark.push(completed); 
+  }
+  const currentVelocity = velocitySpark[velocitySpark.length - 1] || 0;
+  const prevVelocity = velocitySpark[velocitySpark.length - 2] || 0;
+  const velocityDiff = prevVelocity > 0 ? Math.round(((currentVelocity - prevVelocity) / prevVelocity) * 100) : 0;
+  
+  const myVelocity = {
+    points: currentVelocity,
+    diff: Math.abs(velocityDiff),
+    direction: velocityDiff >= 0 ? 'up' : 'down',
+    sparkline: velocitySpark.map((v, i) => ({ sprint: pastSprints[i]?.name || `S${i + 1}`, val: v }))
+  };
+
+  // 8. Burndown Data
+  const burndownData = [];
+  if (activeSprint) {
+    const sprintStartDate = new Date(activeSprint.startDate);
+    const sprintEndDate = new Date(activeSprint.endDate);
+    const sprintDays = Math.max(1, Math.round((sprintEndDate - sprintStartDate) / (1000 * 60 * 60 * 24)));
+    const sprintTasksForUser = userTasks.filter(t => t.sprint && t.sprint.toString() === activeSprint._id.toString());
+    const sprintTotalPoints = sprintTasksForUser.length;
+
+    for (let i = 0; i <= sprintDays; i++) {
+      const currentDate = new Date(sprintStartDate);
+      currentDate.setDate(sprintStartDate.getDate() + i);
+      const dateStr = currentDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      
+      const ideal = Math.max(0, Math.round(sprintTotalPoints - (sprintTotalPoints / sprintDays) * i));
+      const isPast = currentDate <= new Date();
+      let remaining = undefined;
+      let completed = undefined;
+      
+      if (isPast) {
+        const endOfDay = new Date(currentDate);
+        endOfDay.setHours(23, 59, 59, 999);
+        const doneOnOrBefore = sprintTasksForUser.filter(t => t.completedAt && new Date(t.completedAt) <= endOfDay).length;
+        remaining = Math.max(0, sprintTotalPoints - doneOnOrBefore);
+        completed = doneOnOrBefore;
+      }
+      
+      burndownData.push({
+        date: dateStr,
+        ideal,
+        remaining,
+        completed
+      });
+    }
+  }
+
+  // 9. Deployments
+  const deployLogs = await AuditLog.find({ workspaceId, action: { $regex: /DEPLOY|RELEASE/i } })
+    .sort('-timestamp')
+    .limit(5)
+    .populate('performer', 'name')
+    .lean();
+  const deployments = deployLogs.map(l => ({
+    environment: l.details?.environment || 'Default',
+    version: l.details?.version || 'N/A',
+    deployedBy: l.performer?.name || 'System',
+    time: formatTimeAgo(l.timestamp),
+    status: l.action === 'DEPLOY_SUCCESS' ? 'Healthy' : (l.action === 'DEPLOY_FAILURE' ? 'Failed' : 'Success')
+  }));
+
+  // 10. AI Insights
+  const aiInsights = [];
+  const blockedTasks = userTasks.filter(t => t.blocked || t.status === 'blocked');
+  blockedTasks.forEach(t => {
+    aiInsights.push({
+      title: `Blocker on "${t.title}"`,
+      text: t.blockedReason ? `Reason: ${t.blockedReason}` : 'Identify blocked dependencies or credentials to resume progress.',
+      type: 'Action'
+    });
+  });
+
+  const unhealthyServices = services.filter(s => s.status !== 'healthy');
+  unhealthyServices.forEach(s => {
+    aiInsights.push({
+      title: `Service Degraded: ${s.name}`,
+      text: `Status is currently '${s.status}'. Technical debt score is ${s.technicalDebt?.score || 0}.`,
+      type: 'Action'
+    });
+  });
+
+  if (totalTests > 0 && coverage < 80) {
+    aiInsights.push({
+      title: 'Increase test coverage',
+      text: `Current test coverage is ${coverage}%. Add unit/integration tests to reach the 80% baseline.`,
+      type: 'Suggestion'
+    });
+  }
+
+  if (blockedTasksCount === 0 && (totalTests === 0 || coverage >= 80)) {
+    aiInsights.push({
+      title: 'Pipeline Healthy',
+      text: 'All local services are functional, and there are no blocked tasks assigned to you.',
+      type: 'Positive'
+    });
+  }
+
+  // 11. Upcoming Deadlines
+  const upcomingDeadlines = userTasks
+    .filter(t => t.dueDate && t.status !== 'done' && new Date(t.dueDate) > new Date())
+    .sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate))
+    .slice(0, 3)
+    .map(t => ({
+      title: t.title,
+      date: t.dueDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+      daysLeft: Math.ceil((new Date(t.dueDate) - new Date()) / (1000 * 60 * 60 * 24))
+    }));
+
+  // 12. Recent activity logs
+  const auditLogs = await AuditLog.find({ performer: userId, workspaceId }).sort('-timestamp').limit(8).lean();
+  const recentActivity = auditLogs.map(l => {
+    let type = 'commit';
+    if (l.action.includes('PR_MERGE')) type = 'pr_merge';
+    else if (l.action.includes('DEPLOY')) type = 'deploy';
+    else if (l.action.includes('PR_OPEN')) type = 'pr_open';
+    else if (l.action.includes('FAIL')) type = 'build_fail';
+
+    return {
+      type,
+      title: l.action.replace(/_/g, ' '),
+      desc: l.details?.message || `Executed ${l.action.replace(/_/g, ' ')}`,
+      time: formatTimeAgo(l.timestamp)
+    };
+  });
+
+  // 13. Learn & Grow
+  const learnAndGrow = [];
+
   // Harmonize naming for all IC dashboards (SWE, JRE, Intern, SE)
   const baseResponse = {
+    projects: projects.map(p => ({ id: p._id, name: p.name, key: p.key })),
+    pastSprints: pastSprints.map(s => ({ id: s._id, name: s.name })),
+    sprintName,
+    sprintId: activeSprint?._id || null,
+    sprintDaysLeft,
+    sprintProgress,
+    workItemsStatus,
+    inProgressTasks,
+    inReviewTasks,
+    doneTasks,
+    pullRequestMetrics,
+    pullRequestsList,
+    codeHealthScore,
+    myVelocity,
+    burndownData,
+    recentActivity,
+    codeQuality,
+    myCodeImpact,
+    learnAndGrow,
+    deployments,
+    aiInsights,
+    upcomingDeadlines,
+
     // Metrics Redundancy
     dayMetrics: {
       ...dayMetrics,
@@ -267,16 +534,11 @@ const getWorkspaceData = async (userId, workspaceId, subRole) => {
     
     // Blockers Redundancy
     blockers: myTasks.filter(t => t.blocked).map(t => ({ 
+      id: t.id,
       issue: t.title, 
       contact: t.mentor?.name || 'Lead' 
     })),
-    stuckGuidance: stuckGuidance.length > 0 ? stuckGuidance : [
-      { 
-        issue: 'Awaiting Mission Assignment', 
-        suggestedAction: 'Sync with Team Lead for next tactical objective.', 
-        suggestedPerson: 'Lead' 
-      }
-    ],
+    stuckGuidance: stuckGuidance.length > 0 ? stuckGuidance : [],
     blockerOptions: [
       { label: 'Requirements Unclear' },
       { label: 'Technical Blocker' },
