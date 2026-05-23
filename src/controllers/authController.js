@@ -143,3 +143,23 @@ exports.updateAvatar = catchAsync(async (req, res, next) => {
 
   return ResponseBuilder.success(res, { user: updatedUser }, 200, 'Profile picture updated successfully');
 });
+
+exports.changePassword = catchAsync(async (req, res, next) => {
+  const { currentPassword, newPassword, confirmPassword } = req.body;
+
+  if (!currentPassword || !newPassword || !confirmPassword) {
+    return ResponseBuilder.error(res, 'All fields are required.', 'MISSING_FIELDS', 400);
+  }
+
+  if (newPassword !== confirmPassword) {
+    return ResponseBuilder.error(res, 'New passwords do not match.', 'PASSWORD_MISMATCH', 400);
+  }
+
+  if (newPassword.length < 8) {
+    return ResponseBuilder.error(res, 'New password must be at least 8 characters.', 'PASSWORD_TOO_SHORT', 400);
+  }
+
+  await authService.changePassword(req.user._id, currentPassword, newPassword);
+
+  return ResponseBuilder.success(res, null, 200, 'Password updated successfully.');
+});

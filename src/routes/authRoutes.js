@@ -14,6 +14,7 @@ const {
   forgotPassword,
   resetPassword,
   updateAvatar,
+  changePassword,
 } = require('../controllers/authController');
 const multer = require('multer');
 
@@ -45,5 +46,6 @@ router.patch('/reset-password/:token', resetPassword);
 router.get('/me', protect, getMe);
 router.patch('/complete-tour', protect, completeTour);
 router.patch('/avatar', protect, upload.single('avatar'), updateAvatar);
+router.patch('/change-password', protect, changePassword);
 
 module.exports = router;
