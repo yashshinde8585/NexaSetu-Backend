@@ -240,6 +240,19 @@ const updateAvatar = async (user, publicUrl) => {
   return updatedUser;
 };
 
+const changePassword = async (userId, currentPassword, newPassword) => {
+  const user = await User.findById(userId).select('+password');
+  if (!user) throw new AppError('User not found.', 404);
+
+  const isMatch = await user.comparePassword(currentPassword);
+  if (!isMatch) throw new AppError('Current password is incorrect.', 401);
+
+  user.password = newPassword;
+  user.passwordChangedAt = Date.now();
+  await user.save();
+  return user;
+};
+
 module.exports = {
   registerUser,
   loginUser,
@@ -252,4 +265,5 @@ module.exports = {
   resetPassword,
   completeTour,
   updateAvatar,
+  changePassword,
 };
