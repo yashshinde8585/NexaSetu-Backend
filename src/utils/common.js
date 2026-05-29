@@ -14,7 +14,7 @@ exports.getDateDiff = (date1, date2, unit = 'days') => {
     days: 1000 * 60 * 60 * 24,
     hours: 1000 * 60 * 60,
     minutes: 1000 * 60,
-    seconds: 1000
+    seconds: 1000,
   };
   return diffMs / (conversions[unit] || 1);
 };

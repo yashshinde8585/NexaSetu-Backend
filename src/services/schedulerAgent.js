@@ -66,5 +66,5 @@ const optimizeProjectTimeline = async (projectId) => {
 
 module.exports = {
   handleTaskDelay,
-  optimizeProjectTimeline
+  optimizeProjectTimeline,
 };

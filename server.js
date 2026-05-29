@@ -1,11 +1,23 @@
 const config = require('./src/config/config');
 const logger = require('./src/utils/logger');
 const { connectRedis, getRedisClient } = require('./src/config/redis');
-const { initOrchestratorQueue, initOrchestratorWorker } = require('./src/queues/orchestratorQueue');
-const { initAiExtractionQueue, initAiExtractionWorker } = require('./src/queues/aiExtractionQueue');
-const { initStorageQueue, initStorageWorker } = require('./src/queues/storageQueue');
-const { initMagicBarQueue, initMagicBarWorker } = require('./src/queues/magicBarQueue');
-const { initCronQueue, initCronWorker } = require('./src/queues/cronQueue');
+const {
+  initOrchestratorQueue,
+  initOrchestratorWorker,
+} = require('./src/jobs/orchestratorQueue');
+const {
+  initAiExtractionQueue,
+  initAiExtractionWorker,
+} = require('./src/jobs/aiExtractionQueue');
+const {
+  initStorageQueue,
+  initStorageWorker,
+} = require('./src/jobs/storageQueue');
+const {
+  initMagicBarQueue,
+  initMagicBarWorker,
+} = require('./src/jobs/magicBarQueue');
+const { initCronQueue, initCronWorker } = require('./src/jobs/cronQueue');
 const workerManager = require('./src/utils/workerManager');
 const http = require('http');
 const mongoose = require('mongoose');
@@ -15,10 +27,7 @@ async function bootstrap() {
     logger.info(`[BOOTSTRAP] Initializing services in ${config.env} mode...`);
 
     const connectDB = require('./src/config/db');
-    const infraPromise = Promise.all([
-      connectRedis(),
-      connectDB(),
-    ]);
+    const infraPromise = Promise.all([connectRedis(), connectDB()]);
 
     initOrchestratorQueue();
     initAiExtractionQueue();
@@ -27,7 +36,9 @@ async function bootstrap() {
     await initStorageQueue();
 
     if (process.env.RUN_WORKERS === 'true') {
-      logger.info('[BOOTSTRAP] Initializing Workers in API process (RUN_WORKERS=true)');
+      logger.info(
+        '[BOOTSTRAP] Initializing Workers in API process (RUN_WORKERS=true)'
+      );
       initOrchestratorWorker();
       initAiExtractionWorker();
       initStorageWorker();
@@ -46,7 +57,7 @@ async function bootstrap() {
     const cronService = require('./src/services/cronService');
 
     const server = http.createServer(app);
-    
+
     server.timeout = 30000;
     server.headersTimeout = 31000;
     server.keepAliveTimeout = 5000;
@@ -57,21 +68,23 @@ async function bootstrap() {
     logger.info('[BOOTSTRAP] Real-time & Scheduled services synchronized');
 
     server.listen(config.port, () => {
-      logger.info(`[NEXA-SETU] API Server listening on port ${config.port} [${config.env}]`);
+      logger.info(
+        `[NEXA-SETU] API Server listening on port ${config.port} [${config.env}]`
+      );
     });
 
     const shutdown = async (signal) => {
       logger.info(`[SHUTDOWN] Signal ${signal} detected. Purging resources...`);
-      
+
       server.close(async () => {
         try {
           await socketIO.close();
           await workerManager.shutdown();
-          
+
           await mongoose.connection.close();
           const redis = getRedisClient();
           if (redis) await redis.quit();
-          
+
           logger.info('[SHUTDOWN] All connections terminated. Goodbye.');
           process.exit(0);
         } catch (err) {
@@ -88,7 +101,6 @@ async function bootstrap() {
 
     process.on('SIGTERM', () => shutdown('SIGTERM'));
     process.on('SIGINT', () => shutdown('SIGINT'));
-
   } catch (err) {
     logger.error(`[FATAL] Bootstrap failed: ${err.message}`);
     process.exit(1);
@@ -98,14 +110,19 @@ async function bootstrap() {
 const { notify } = require('./src/utils/notify');
 
 process.on('unhandledRejection', (reason, promise) => {
-  notify('CRITICAL', 'Unhandled Rejection detected', { reason: reason?.message || reason, stack: reason?.stack });
+  notify('CRITICAL', 'Unhandled Rejection detected', {
+    reason: reason?.message || reason,
+    stack: reason?.stack,
+  });
   if (config.isProduction) {
     process.emit('SIGTERM');
   }
 });
 
 process.on('uncaughtException', async (err) => {
-  await notify('CRITICAL', `Uncaught Exception: ${err.message}`, { stack: err.stack });
+  await notify('CRITICAL', `Uncaught Exception: ${err.message}`, {
+    stack: err.stack,
+  });
   process.exit(1);
 });
 

@@ -12,13 +12,14 @@ const cacheGet = async (key) => {
   }
 };
 
-
 const cacheSet = async (key, value, ttl = 3600) => {
   if (!isRedisConnected()) return;
   try {
     await getRedisClient().set(key, JSON.stringify(value), 'EX', ttl);
   } catch {
-    logger.warn('[CACHE] Signal write failure, data persisted in database only.');
+    logger.warn(
+      '[CACHE] Signal write failure, data persisted in database only.'
+    );
   }
 };
 
@@ -28,7 +29,9 @@ const cacheDel = async (key) => {
     await getRedisClient().del(key);
     logger.info(`[MEMORY GRID] Cache invalidated: ${key}`);
   } catch {
-    logger.warn('[MEMORY GRID] Signal synchronization failed, moving to next transmission.');
+    logger.warn(
+      '[MEMORY GRID] Signal synchronization failed, moving to next transmission.'
+    );
   }
 };
 

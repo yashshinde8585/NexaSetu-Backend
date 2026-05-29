@@ -10,7 +10,10 @@ const logger = require('../utils/logger');
 const AppError = require('../utils/appError');
 const CircuitBreaker = require('../utils/circuitBreaker');
 
-const githubBreaker = new CircuitBreaker('GitHub_API', { failureThreshold: 3, resetTimeout: 30000 });
+const githubBreaker = new CircuitBreaker('GitHub_API', {
+  failureThreshold: 3,
+  resetTimeout: 30000,
+});
 
 const getOctokit = (accessToken) => {
   const token = accessToken.includes(':') ? decrypt(accessToken) : accessToken;
@@ -24,17 +27,16 @@ const connectGithub = async (user, accessToken) => {
 
   try {
     const octokit = getOctokit(accessToken);
-    const { data: githubUser } = await githubBreaker.execute(() => octokit.rest.users.getAuthenticated());
-
-    await Workspace.findByIdAndUpdate(
-      user.workspaceId,
-      {
-        'integrations.github.connected': true,
-        'integrations.github.accessToken': encrypt(accessToken),
-        'integrations.github.githubId': githubUser.id.toString(),
-        'integrations.github.lastSync': new Date()
-      }
+    const { data: githubUser } = await githubBreaker.execute(() =>
+      octokit.rest.users.getAuthenticated()
     );
+
+    await Workspace.findByIdAndUpdate(user.workspaceId, {
+      'integrations.github.connected': true,
+      'integrations.github.accessToken': encrypt(accessToken),
+      'integrations.github.githubId': githubUser.id.toString(),
+      'integrations.github.lastSync': new Date(),
+    });
 
     return {
       githubId: githubUser.id,
@@ -42,19 +44,33 @@ const connectGithub = async (user, accessToken) => {
     };
   } catch (error) {
     logger.error('[GitHub Connection Error]: %s', error.message);
-    const statusCode = error.status || (error.response && error.response.status);
-    
+    const statusCode =
+      error.status || (error.response && error.response.status);
+
     if (statusCode === 401) {
-      throw new AppError('Invalid Personal Access Token. Please check your token and try again.', 401);
+      throw new AppError(
+        'Invalid Personal Access Token. Please check your token and try again.',
+        401
+      );
     }
     if (statusCode === 403) {
-      throw new AppError('Insufficient permissions or rate limited. Ensure your token has the required scopes.', 403);
+      throw new AppError(
+        'Insufficient permissions or rate limited. Ensure your token has the required scopes.',
+        403
+      );
     }
     if (error.code === 11000) {
-      throw new AppError('This GitHub account is already linked to another workspace.', 409);
+      throw new AppError(
+        'This GitHub account is already linked to another workspace.',
+        409
+      );
     }
 
-    throw new AppError(error.message || 'Failed to connect GitHub account. Please verify your network and token.', statusCode || 500);
+    throw new AppError(
+      error.message ||
+        'Failed to connect GitHub account. Please verify your network and token.',
+      statusCode || 500
+    );
   }
 };
 
@@ -65,10 +81,16 @@ const getUserRepositories = async (user) => {
   }
 
   const octokit = getOctokit(userDoc.githubAccessToken);
-  const { data } = await githubBreaker.execute(() => octokit.rest.repos.listForAuthenticatedUser({
-    sort: 'updated',
-    per_page: 50,
-  }), () => { throw new AppError('GitHub API is temporarily unavailable', 503); });
+  const { data } = await githubBreaker.execute(
+    () =>
+      octokit.rest.repos.listForAuthenticatedUser({
+        sort: 'updated',
+        per_page: 50,
+      }),
+    () => {
+      throw new AppError('GitHub API is temporarily unavailable', 503);
+    }
+  );
   return data.map((repo) => ({
     id: repo.id,
     name: repo.name,
@@ -84,7 +106,12 @@ const linkProject = async (user, projectId, repoInfo) => {
     throw new AppError('Project ID and Repository info are required', 400);
   }
 
-  const isAdminOrManager = ['WORKSPACE_ADMIN', 'WORKSPACE_MANAGER', 'ADMIN', 'MANAGER'].includes(user.role);
+  const isAdminOrManager = [
+    'WORKSPACE_ADMIN',
+    'WORKSPACE_MANAGER',
+    'ADMIN',
+    'MANAGER',
+  ].includes(user.role);
 
   const filter = { _id: projectId, workspaceId: user.workspaceId };
   if (!isAdminOrManager) {
@@ -111,7 +138,11 @@ const getRepositoryActivity = async (accessToken, owner, repo) => {
     try {
       return await fn();
     } catch (error) {
-      if (retries <= 0 || (error.status && error.status < 500 && error.status !== 429)) throw error;
+      if (
+        retries <= 0 ||
+        (error.status && error.status < 500 && error.status !== 429)
+      )
+        throw error;
       await new Promise((resolve) => setTimeout(resolve, delay));
       return retry(fn, retries - 1, delay * 2);
     }
@@ -119,27 +150,41 @@ const getRepositoryActivity = async (accessToken, owner, repo) => {
 
   let commits = [];
   try {
-    const { data } = await githubBreaker.execute(() => retry(() => octokit.rest.repos.listCommits({
-      owner,
-      repo,
-      per_page: 20,
-    })));
+    const { data } = await githubBreaker.execute(() =>
+      retry(() =>
+        octokit.rest.repos.listCommits({
+          owner,
+          repo,
+          per_page: 20,
+        })
+      )
+    );
     commits = data;
   } catch (err) {
-    logger.warn(`[GITHUB RECON] Commits unreachable for ${owner}/${repo}: %s`, err.message);
+    logger.warn(
+      `[GITHUB RECON] Commits unreachable for ${owner}/${repo}: %s`,
+      err.message
+    );
   }
 
   let prs = [];
   try {
-    const { data } = await githubBreaker.execute(() => retry(() => octokit.rest.repos.listPullRequests({
-      owner,
-      repo,
-      state: 'all',
-      per_page: 20,
-    })));
+    const { data } = await githubBreaker.execute(() =>
+      retry(() =>
+        octokit.rest.repos.listPullRequests({
+          owner,
+          repo,
+          state: 'all',
+          per_page: 20,
+        })
+      )
+    );
     prs = data;
   } catch (err) {
-    logger.warn(`[GITHUB RECON] PRs unreachable for ${owner}/${repo}: %s`, err.message);
+    logger.warn(
+      `[GITHUB RECON] PRs unreachable for ${owner}/${repo}: %s`,
+      err.message
+    );
   }
 
   const activity = [
@@ -218,21 +263,27 @@ const generateTaskSuggestions = async (activity, projectId) => {
           isAiGenerated: true,
         };
       } catch (error) {
-        logger.error(`AI Task Extraction failed for item ${item.id}: ${error.message}`);
+        logger.error(
+          `AI Task Extraction failed for item ${item.id}: ${error.message}`
+        );
         return null;
       }
     })
   );
 
   const filteredTasks = taskCreations.filter((t) => t !== null);
-  
+
   if (filteredTasks.length > 0) {
     const createdTasks = await Task.insertMany(filteredTasks);
-    
+
     for (const task of createdTasks) {
-      resourceService.autoAssignTask(task._id).catch(err => 
-        logger.warn(`Auto-assignment failed for task ${task._id}: ${err.message}`)
-      );
+      resourceService
+        .autoAssignTask(task._id)
+        .catch((err) =>
+          logger.warn(
+            `Auto-assignment failed for task ${task._id}: ${err.message}`
+          )
+        );
     }
     return createdTasks;
   }
@@ -241,7 +292,12 @@ const generateTaskSuggestions = async (activity, projectId) => {
 };
 
 const getActivitySuggestions = async (user, projectId) => {
-  const isAdminOrManager = ['WORKSPACE_ADMIN', 'WORKSPACE_MANAGER', 'ADMIN', 'MANAGER'].includes(user.role);
+  const isAdminOrManager = [
+    'WORKSPACE_ADMIN',
+    'WORKSPACE_MANAGER',
+    'ADMIN',
+    'MANAGER',
+  ].includes(user.role);
 
   const projectFilter = { _id: projectId, workspaceId: user.workspaceId };
   if (!isAdminOrManager) {
@@ -251,7 +307,10 @@ const getActivitySuggestions = async (user, projectId) => {
   const project = await Project.findOne(projectFilter);
 
   if (!project || !project.githubRepo) {
-    throw new AppError('Project not found, not linked to GitHub, or access denied', 403);
+    throw new AppError(
+      'Project not found, not linked to GitHub, or access denied',
+      403
+    );
   }
 
   const userDoc = await User.findById(user._id);
@@ -296,7 +355,12 @@ const approveTasks = async (user, projectId, tasks) => {
     throw new AppError('Project ID and tasks array are required', 400);
   }
 
-  const isAdminOrManager = ['WORKSPACE_ADMIN', 'WORKSPACE_MANAGER', 'ADMIN', 'MANAGER'].includes(user.role);
+  const isAdminOrManager = [
+    'WORKSPACE_ADMIN',
+    'WORKSPACE_MANAGER',
+    'ADMIN',
+    'MANAGER',
+  ].includes(user.role);
   const projectFilter = { _id: projectId, workspaceId: user.workspaceId };
   if (!isAdminOrManager) {
     projectFilter.members = user._id;
@@ -320,7 +384,8 @@ const approveTasks = async (user, projectId, tasks) => {
     .filter((t) => t && t.githubId && !existingSet.has(t.githubId))
     .map((t) => ({
       title: t.title,
-      description: t.description || `Imported from GitHub ${t.type}: ${t.originalMessage}`,
+      description:
+        t.description || `Imported from GitHub ${t.type}: ${t.originalMessage}`,
       project: projectId,
       status: t.status,
       source: 'github',

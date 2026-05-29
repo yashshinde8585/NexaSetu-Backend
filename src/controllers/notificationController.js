@@ -14,7 +14,10 @@ exports.getMyNotifications = catchAsync(async (req, res, next) => {
 
 // Update notification state to 'read' for processed system events.
 exports.markAsRead = catchAsync(async (req, res, next) => {
-  const notification = await notificationService.markAsRead(req.user, req.params.id);
+  const notification = await notificationService.markAsRead(
+    req.user,
+    req.params.id
+  );
 
   res.status(200).json({
     status: 'success',

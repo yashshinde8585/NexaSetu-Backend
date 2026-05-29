@@ -2,7 +2,7 @@ const Directive = require('../models/Directive');
 const AppError = require('../utils/appError');
 const { getIO, EVENTS } = require('../socket');
 const logger = require('../utils/logger');
-const { invalidateCache } = require('../middleware/cacheMiddleware');
+const { invalidateCache } = require('../middlewares/cacheMiddleware');
 
 const createDirective = async (user, data) => {
   const { type, title, description, priority, scope } = data;
@@ -45,7 +45,9 @@ const acknowledgeDirective = async (user, directiveId) => {
   const directive = await Directive.findById(directiveId);
   if (!directive) throw new AppError('Directive not found', 404);
 
-  const alreadyAck = directive.acknowledgments.some(ack => ack.user.toString() === user._id.toString());
+  const alreadyAck = directive.acknowledgments.some(
+    (ack) => ack.user.toString() === user._id.toString()
+  );
   if (!alreadyAck) {
     directive.acknowledgments.push({ user: user._id });
     await directive.save();

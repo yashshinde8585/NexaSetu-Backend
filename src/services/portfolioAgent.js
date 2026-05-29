@@ -60,5 +60,5 @@ const performAudit = async (projects, resources) => {
 };
 
 module.exports = {
-  performAudit
+  performAudit,
 };

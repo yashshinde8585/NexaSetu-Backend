@@ -8,11 +8,10 @@ const generateDashboardReport = async (workspaceId, teamId) => {
   return {
     metrics,
     systemHealth: health,
-    generatedAt: new Date()
+    generatedAt: new Date(),
   };
 };
 
 module.exports = {
   generateDashboardReport,
 };
-

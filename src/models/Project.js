@@ -91,8 +91,14 @@ projectSchema.index({ workspaceId: 1, members: 1 });
 
 projectSchema.pre(/^find/, async function () {
   const query = this.getQuery();
-  if (query.workspaceId === undefined && !this.getOptions().bypassTenantSafety) {
-    logger.warn(`[TENANT-SAFETY] Query executed without workspaceId filter on Project collection: %o`, query);
+  if (
+    query.workspaceId === undefined &&
+    !this.getOptions().bypassTenantSafety
+  ) {
+    logger.warn(
+      `[TENANT-SAFETY] Query executed without workspaceId filter on Project collection: %o`,
+      query
+    );
   }
 });
 

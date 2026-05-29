@@ -7,8 +7,13 @@ exports.createSprint = catchAsync(async (req, res, next) => {
 });
 
 exports.getAllSprints = catchAsync(async (req, res, next) => {
-  const sprints = await sprintService.getAllSprints(req.user, req.query.project);
-  res.status(200).json({ status: 'success', results: sprints.length, data: { sprints } });
+  const sprints = await sprintService.getAllSprints(
+    req.user,
+    req.query.project
+  );
+  res
+    .status(200)
+    .json({ status: 'success', results: sprints.length, data: { sprints } });
 });
 
 exports.getSprint = catchAsync(async (req, res, next) => {

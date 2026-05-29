@@ -24,7 +24,9 @@ const isManagerOrAdmin = (user) => {
 const isStrategicLead = (user) => {
   const effectiveRole = mapRole(user.role);
   const isLead = normalizeJobTitle(user.jobTitle).includes('LEAD');
-  return ['WORKSPACE_ADMIN', 'WORKSPACE_MANAGER'].includes(effectiveRole) || isLead;
+  return (
+    ['WORKSPACE_ADMIN', 'WORKSPACE_MANAGER'].includes(effectiveRole) || isLead
+  );
 };
 
 const hasLeadRestriction = (user) => {
@@ -32,12 +34,14 @@ const hasLeadRestriction = (user) => {
 };
 
 const mapRole = (roleName) => {
-  return ROLE_MAPPING[normalizeRole(roleName)] || ROLE_MAPPING['PROJECT_MEMBER'];
+  return (
+    ROLE_MAPPING[normalizeRole(roleName)] || ROLE_MAPPING['PROJECT_MEMBER']
+  );
 };
 
 const canAccessResource = async (user, resourceId, type) => {
   if (!user || !resourceId || !user.workspaceId) return false;
-  
+
   if (user.role === 'WORKSPACE_ADMIN') return true;
 
   try {

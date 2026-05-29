@@ -8,9 +8,15 @@ const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
 const logger = require('../utils/logger');
 const { createClerkClient } = require('@clerk/clerk-sdk-node');
-const clerkClient = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY });
+const clerkClient = createClerkClient({
+  secretKey: process.env.CLERK_SECRET_KEY,
+});
 
-const { getRedisClient, withTimeout, isRedisConnected } = require('../config/redis');
+const {
+  getRedisClient,
+  withTimeout,
+  isRedisConnected,
+} = require('../config/redis');
 
 // Middleware to protect routes and ensure user is authenticated
 exports.protect = catchAsync(async (req, res, next) => {
@@ -33,7 +39,7 @@ exports.protect = catchAsync(async (req, res, next) => {
   // 1. Attempt to resolve from Session Cache (Redis)
   const redis = getRedisClient();
   const cacheKey = `session:user:${token.substring(token.length - 20)}`;
-  
+
   if (isRedisConnected()) {
     const cachedUser = await withTimeout(redis.get(cacheKey), 500);
     if (cachedUser) {
@@ -45,19 +51,19 @@ exports.protect = catchAsync(async (req, res, next) => {
     try {
       const decodedToken = await clerkClient.verifyToken(token);
       const userId = decodedToken.sub;
-      
+
       user = await User.findOne({ clerkUserId: userId }).select('-password');
-      
+
       if (!user) {
         const clerkUser = await clerkClient.users.getUser(userId);
         const email = clerkUser.emailAddresses[0]?.emailAddress;
         user = await User.findOne({ email }).select('-password');
-        
+
         if (user) {
           user.clerkUserId = userId;
           await user.save();
         } else {
-           return next(new AppError('User not found in local database.', 401));
+          return next(new AppError('User not found in local database.', 401));
         }
       }
     } catch (err) {
@@ -73,13 +79,23 @@ exports.protect = catchAsync(async (req, res, next) => {
 
     user = await User.findById(decoded.id).select('-password');
     if (!user) {
-      return next(new AppError('The user belonging to this token no longer exists.', 401));
+      return next(
+        new AppError('The user belonging to this token no longer exists.', 401)
+      );
     }
 
     if (user.passwordChangedAt) {
-      const changedTimestamp = parseInt(user.passwordChangedAt.getTime() / 1000, 10);
+      const changedTimestamp = parseInt(
+        user.passwordChangedAt.getTime() / 1000,
+        10
+      );
       if (decoded.iat < changedTimestamp) {
-        return next(new AppError('User recently changed password! Please log in again.', 401));
+        return next(
+          new AppError(
+            'User recently changed password! Please log in again.',
+            401
+          )
+        );
       }
     }
   }
@@ -89,7 +105,7 @@ exports.protect = catchAsync(async (req, res, next) => {
     const workspace = await Workspace.findOne({
       $or: [{ admin: user._id }, { owner: user._id }],
     }).select('_id');
-    
+
     if (workspace) {
       user.workspaceId = workspace._id;
       await User.updateOne({ _id: user._id }, { workspaceId: workspace._id });
@@ -111,26 +127,38 @@ exports.requirePermission = (requiredPermission) => (req, res, next) => {
   const permissions = ROLE_PERMISSIONS[effectiveRole] || [];
 
   if (permissions.includes('*') || permissions.includes(requiredPermission)) {
-    logger.info(`[AUTH] Permission granted: user=${req.user._id} role=${req.user.role} permission=${requiredPermission}`);
+    logger.info(
+      `[AUTH] Permission granted: user=${req.user._id} role=${req.user.role} permission=${requiredPermission}`
+    );
     return next();
   }
 
-  logger.warn(`[AUTH] Permission denied: user=${req.user._id} role=${req.user.role} required=${requiredPermission}`);
+  logger.warn(
+    `[AUTH] Permission denied: user=${req.user._id} role=${req.user.role} required=${requiredPermission}`
+  );
   next(new AppError('You lack the required permissions for this action.', 403));
 };
 
 // Middleware for role-based authorization
-exports.restrictTo = (...roles) => (req, res, next) => {
-  const hasRole = roles.includes(req.user.role);
-  const hasJobTitle = roles.some(role => 
-    req.user.jobTitle?.replace(' ', '_').toUpperCase() === role
-  );
+exports.restrictTo =
+  (...roles) =>
+  (req, res, next) => {
+    const hasRole = roles.includes(req.user.role);
+    const hasJobTitle = roles.some(
+      (role) => req.user.jobTitle?.replace(' ', '_').toUpperCase() === role
+    );
 
-  if (!hasRole && !hasJobTitle) {
-    logger.warn(`[AUTH] Role denied: user=${req.user._id} role=${req.user.role} jobTitle=${req.user.jobTitle} allowed=${roles.join(',')}`);
-    return next(new AppError('You do not have permission to perform this action', 403));
-  }
-  
-  logger.info(`[AUTH] Role granted: user=${req.user._id} role=${req.user.role} endpoint=${req.originalUrl}`);
-  next();
-};
+    if (!hasRole && !hasJobTitle) {
+      logger.warn(
+        `[AUTH] Role denied: user=${req.user._id} role=${req.user.role} jobTitle=${req.user.jobTitle} allowed=${roles.join(',')}`
+      );
+      return next(
+        new AppError('You do not have permission to perform this action', 403)
+      );
+    }
+
+    logger.info(
+      `[AUTH] Role granted: user=${req.user._id} role=${req.user.role} endpoint=${req.originalUrl}`
+    );
+    next();
+  };

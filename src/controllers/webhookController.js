@@ -10,7 +10,9 @@ exports.handleClerkWebhook = catchAsync(async (req, res, next) => {
   const WEBHOOK_SECRET = process.env.CLERK_WEBHOOK_SECRET;
 
   if (!WEBHOOK_SECRET) {
-    throw new Error('Please add CLERK_WEBHOOK_SECRET from Clerk Dashboard to .env');
+    throw new Error(
+      'Please add CLERK_WEBHOOK_SECRET from Clerk Dashboard to .env'
+    );
   }
 
   // Get the headers
@@ -24,7 +26,9 @@ exports.handleClerkWebhook = catchAsync(async (req, res, next) => {
   }
 
   // Get the body (use rawBody if available, fallback to stringified body)
-  const payload = req.rawBody ? req.rawBody.toString() : JSON.stringify(req.body);
+  const payload = req.rawBody
+    ? req.rawBody.toString()
+    : JSON.stringify(req.body);
 
   // Create a new Svix instance with your secret.
   const wh = new Webhook(WEBHOOK_SECRET);
@@ -49,23 +53,35 @@ exports.handleClerkWebhook = catchAsync(async (req, res, next) => {
   logger.info(`Webhook received. ID: ${id}, Type: ${eventType}`);
 
   if (eventType === 'user.created') {
-    const { id: clerkUserId, email_addresses, first_name, last_name, unsafe_metadata } = evt.data;
+    const {
+      id: clerkUserId,
+      email_addresses,
+      first_name,
+      last_name,
+      unsafe_metadata,
+    } = evt.data;
     const email = email_addresses[0].email_address;
     const name = `${first_name || ''} ${last_name || ''}`.trim();
-    
-    logger.info(`[CLERK WEBHOOK] Processing user.created for ${email} (${clerkUserId})`);
-    
+
+    logger.info(
+      `[CLERK WEBHOOK] Processing user.created for ${email} (${clerkUserId})`
+    );
+
     // Check if user already exists
     let user = await User.findOne({ email });
-    
+
     if (user) {
-      logger.info(`[CLERK WEBHOOK] User ${email} already exists, updating clerkUserId`);
+      logger.info(
+        `[CLERK WEBHOOK] User ${email} already exists, updating clerkUserId`
+      );
       user.clerkUserId = clerkUserId;
       await user.save();
     } else {
-      logger.info(`[CLERK WEBHOOK] Creating new user and workspace for ${email}`);
+      logger.info(
+        `[CLERK WEBHOOK] Creating new user and workspace for ${email}`
+      );
       const { workspaceName, admin, plan } = unsafe_metadata || {};
-      
+
       const newUserData = {
         name: name || email.split('@')[0],
         email,
@@ -74,12 +90,14 @@ exports.handleClerkWebhook = catchAsync(async (req, res, next) => {
         role: 'WORKSPACE_ADMIN',
         workspaceName,
         admin,
-        plan
+        plan,
       };
 
       const authService = require('../services/authService');
       await authService.registerUser(newUserData);
-      logger.info(`[CLERK WEBHOOK] Successfully registered user and provisioned workspace for ${email}`);
+      logger.info(
+        `[CLERK WEBHOOK] Successfully registered user and provisioned workspace for ${email}`
+      );
     }
   }
 
@@ -87,9 +105,9 @@ exports.handleClerkWebhook = catchAsync(async (req, res, next) => {
     const { id: clerkUserId, first_name, last_name, image_url } = evt.data;
     await User.findOneAndUpdate(
       { clerkUserId },
-      { 
+      {
         name: `${first_name || ''} ${last_name || ''}`.trim(),
-        profilePicture: image_url 
+        profilePicture: image_url,
       }
     );
   }

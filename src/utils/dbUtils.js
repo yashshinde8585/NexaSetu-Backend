@@ -5,14 +5,16 @@ const runInTransaction = async (fn) => {
   const client = mongoose.connection.getClient();
   const description = client?.topology?.description;
   const topologyType = description?.type;
-  
-  const supportsTransactions = 
-    topologyType === 'ReplicaSetWithPrimary' || 
-    topologyType === 'ReplicaSetNoPrimary' || 
+
+  const supportsTransactions =
+    topologyType === 'ReplicaSetWithPrimary' ||
+    topologyType === 'ReplicaSetNoPrimary' ||
     topologyType === 'Sharded';
-  
+
   if (!supportsTransactions) {
-    logger.debug(`[DB-UTILS] Running without transaction (Topology: ${topologyType || 'Unknown'})`);
+    logger.debug(
+      `[DB-UTILS] Running without transaction (Topology: ${topologyType || 'Unknown'})`
+    );
     return await fn(null);
   }
 
@@ -32,5 +34,5 @@ const runInTransaction = async (fn) => {
 };
 
 module.exports = {
-  runInTransaction
+  runInTransaction,
 };

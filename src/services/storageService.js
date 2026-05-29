@@ -16,7 +16,7 @@ const uploadFile = async (fileBuffer, originalName, bucket = 'avatars') => {
       .upload(filePath, fileBuffer, {
         contentType: `image/${fileExt}`,
         cacheControl: '3600',
-        upsert: false
+        upsert: false,
       });
 
     if (error) {
@@ -38,16 +38,14 @@ const uploadFile = async (fileBuffer, originalName, bucket = 'avatars') => {
 const deleteFile = async (publicUrl, bucket = 'avatars') => {
   try {
     if (!publicUrl) return;
-    
+
     // Extract path from URL: https://.../storage/v1/object/public/avatars/avatars/filename.jpg
     const urlParts = publicUrl.split(`${bucket}/`);
     if (urlParts.length < 2) return;
-    
+
     const filePath = urlParts[1];
 
-    const { error } = await supabase.storage
-      .from(bucket)
-      .remove([filePath]);
+    const { error } = await supabase.storage.from(bucket).remove([filePath]);
 
     if (error) {
       logger.error(`[STORAGE_DELETE_ERROR]: ${error.message}`);
@@ -65,7 +63,8 @@ const checkQuota = async (workspaceId, fileSize) => {
   if (!workspace) return false;
 
   const used = workspace.subscription.storageUsed || 0;
-  const quota = workspace.subscription.storageQuota || STORAGE_CONSTANTS.DEFAULT_QUOTA;
+  const quota =
+    workspace.subscription.storageQuota || STORAGE_CONSTANTS.DEFAULT_QUOTA;
 
   return used + fileSize <= quota;
 };
@@ -79,7 +78,10 @@ const validateAttachment = (file, context) => {
   }
 
   if (file.size > STORAGE_CONSTANTS.MAX_FILE_SIZE) {
-    throw new AppError(`File too large. Max size: ${STORAGE_CONSTANTS.MAX_FILE_SIZE / (1024 * 1024)}MB`, 400);
+    throw new AppError(
+      `File too large. Max size: ${STORAGE_CONSTANTS.MAX_FILE_SIZE / (1024 * 1024)}MB`,
+      400
+    );
   }
 
   // Basic path validation - ensuring it belongs to the right workspace
@@ -107,7 +109,7 @@ const verifyAttachment = async (storagePath, expectedSize) => {
     }
 
     // Supabase list returns metadata including size
-    const file = data.find(f => f.name === storagePath.split('/').pop());
+    const file = data.find((f) => f.name === storagePath.split('/').pop());
     return file && file.metadata.size === expectedSize;
   } catch (err) {
     logger.error(`[STORAGE_VERIFY_ERROR]: ${err.message}`);
@@ -120,7 +122,7 @@ const verifyAttachment = async (storagePath, expectedSize) => {
  */
 const updateStorageUsage = async (workspaceId, sizeDelta) => {
   await Workspace.findByIdAndUpdate(workspaceId, {
-    $inc: { 'subscription.storageUsed': sizeDelta }
+    $inc: { 'subscription.storageUsed': sizeDelta },
   });
 };
 
@@ -143,7 +145,14 @@ const getSignedDownloadUrl = async (storagePath) => {
 /**
  * Generates a signed upload URL for direct-to-cloud uploads.
  */
-const getSignedUploadUrl = async (workspaceId, projectId, taskId, fileName, fileType, fileSize) => {
+const getSignedUploadUrl = async (
+  workspaceId,
+  projectId,
+  taskId,
+  fileName,
+  fileType,
+  fileSize
+) => {
   const fileExt = fileName.split('.').pop();
   const storagePath = `${workspaceId}/${projectId}/${taskId}/${uuidv4()}.${fileExt}`;
 
@@ -159,7 +168,7 @@ const getSignedUploadUrl = async (workspaceId, projectId, taskId, fileName, file
   return {
     uploadUrl: data.signedUrl,
     storagePath,
-    token: data.token
+    token: data.token,
   };
 };
 

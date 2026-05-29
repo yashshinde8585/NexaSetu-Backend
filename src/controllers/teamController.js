@@ -11,12 +11,18 @@ exports.inviteUser = catchAsync(async (req, res, next) => {
     return ResponseBuilder.error(res, 'Missing fields', 'MISSING_FIELDS', 400);
 
   // Security Hardening: Ensure non-admins can only invite to projects they belong to
-  const isAdmin = req.user.role === 'WORKSPACE_ADMIN' || req.user.role === 'ADMIN';
+  const isAdmin =
+    req.user.role === 'WORKSPACE_ADMIN' || req.user.role === 'ADMIN';
   if (!isAdmin && projectId) {
     const { canAccessResource } = require('../utils/authHelpers');
     const hasAccess = await canAccessResource(req.user, projectId, 'project');
     if (!hasAccess) {
-      return ResponseBuilder.error(res, 'Unauthorized project assignment. Managers can only invite to their own sectors.', 'UNAUTHORIZED_PROJECT', 403);
+      return ResponseBuilder.error(
+        res,
+        'Unauthorized project assignment. Managers can only invite to their own sectors.',
+        'UNAUTHORIZED_PROJECT',
+        403
+      );
     }
   }
 
@@ -24,7 +30,12 @@ exports.inviteUser = catchAsync(async (req, res, next) => {
   if (!isLeadOrAdmin) {
     const allowedRoles = ['PROJECT_MEMBER', 'RESTRICTED'];
     if (!allowedRoles.includes(role)) {
-      return ResponseBuilder.error(res, 'Unauthorized role assignment.', 'UNAUTHORIZED_ROLE', 403);
+      return ResponseBuilder.error(
+        res,
+        'Unauthorized role assignment.',
+        'UNAUTHORIZED_ROLE',
+        403
+      );
     }
   }
 
@@ -36,7 +47,12 @@ exports.inviteUser = catchAsync(async (req, res, next) => {
   );
 
   if (result.status === 'EXISTING') {
-    return ResponseBuilder.error(res, 'User already has an account', 'USER_EXISTS', 400);
+    return ResponseBuilder.error(
+      res,
+      'User already has an account',
+      'USER_EXISTS',
+      400
+    );
   }
 
   await auditService.log({
@@ -71,7 +87,12 @@ exports.getInviteByToken = catchAsync(async (req, res, next) => {
 exports.inviteMultipleUsers = catchAsync(async (req, res, next) => {
   const { invites } = req.body;
   if (!invites || !Array.isArray(invites) || invites.length === 0) {
-    return ResponseBuilder.error(res, 'No invitations provided', 'MISSING_INVITES', 400);
+    return ResponseBuilder.error(
+      res,
+      'No invitations provided',
+      'MISSING_INVITES',
+      400
+    );
   }
 
   const { provisionedUsers, failedInvites } = await teamService.bulkProvision(
@@ -96,30 +117,34 @@ exports.inviteMultipleUsers = catchAsync(async (req, res, next) => {
 });
 
 exports.getWorkspaceTeam = catchAsync(async (req, res, next) => {
-  const { page = 1, limit = 20 } = req.query;
-  const result = await teamService.getWorkspaceTeam(req.user, isStrategicLead(req.user), page, limit);
+  const { page = 1, limit = 20, search = '', projectId } = req.query;
+  const result = await teamService.getWorkspaceTeam(
+    req.user,
+    isStrategicLead(req.user),
+    page,
+    limit,
+    search,
+    projectId
+  );
 
   return ResponseBuilder.success(res, {
     pagination: {
-      members: {
-        total: result.totalMembers,
-        page: result.page,
-        limit: result.limit,
-        pages: Math.ceil(result.totalMembers / result.limit),
-      },
-      invitations: {
-        total: result.totalInvitations,
-        page: result.page,
-        limit: result.limit,
-        pages: Math.ceil(result.totalInvitations / result.limit),
-      },
+      total: result.total,
+      page: result.page,
+      limit: result.limit,
+      pages: result.pages,
     },
-    data: { members: result.members, invitations: result.invitations },
+    data: {
+      items: result.items,
+      stats: result.stats,
+    },
   });
 });
 
 exports.getWorkspaceRoles = catchAsync(async (req, res, next) => {
-  const roleDefinitions = await adminService.getRoleDefinitions(req.user.workspaceId);
+  const roleDefinitions = await adminService.getRoleDefinitions(
+    req.user.workspaceId
+  );
   return ResponseBuilder.success(res, { roles: roleDefinitions });
 });
 
@@ -133,16 +158,26 @@ exports.updateMemberProject = catchAsync(async (req, res, next) => {
   const { id: memberId } = req.params;
 
   // Security: Strategic leads can move anyone, others must have project access
-  const isAdmin = req.user.role === 'WORKSPACE_ADMIN' || req.user.role === 'ADMIN';
+  const isAdmin =
+    req.user.role === 'WORKSPACE_ADMIN' || req.user.role === 'ADMIN';
   if (!isAdmin && projectId) {
     const { canAccessResource } = require('../utils/authHelpers');
     const hasAccess = await canAccessResource(req.user, projectId, 'project');
     if (!hasAccess) {
-      return ResponseBuilder.error(res, 'Unauthorized sector allocation.', 'UNAUTHORIZED_ALLOCATION', 403);
+      return ResponseBuilder.error(
+        res,
+        'Unauthorized sector allocation.',
+        'UNAUTHORIZED_ALLOCATION',
+        403
+      );
     }
   }
 
-  const updatedMember = await teamService.updateMemberProject(req.user, memberId, projectId);
+  const updatedMember = await teamService.updateMemberProject(
+    req.user,
+    memberId,
+    projectId
+  );
 
   await auditService.log({
     action: 'MEMBER_REASSIGN',

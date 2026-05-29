@@ -102,10 +102,16 @@ userSchema.index({ workspaceId: 1, githubId: 1 }, { sparse: true });
 
 userSchema.pre(/^find/, async function () {
   const query = this.getQuery();
-  const isGlobalLookup = query.email !== undefined || query._id !== undefined || this.getOptions().bypassTenantSafety;
-  
+  const isGlobalLookup =
+    query.email !== undefined ||
+    query._id !== undefined ||
+    this.getOptions().bypassTenantSafety;
+
   if (query.workspaceId === undefined && !isGlobalLookup) {
-    logger.warn(`[TENANT-SAFETY] Query executed without workspaceId filter on User collection: %o`, query);
+    logger.warn(
+      `[TENANT-SAFETY] Query executed without workspaceId filter on User collection: %o`,
+      query
+    );
   }
 });
 

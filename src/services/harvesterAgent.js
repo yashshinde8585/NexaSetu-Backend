@@ -41,7 +41,7 @@ const processGithubActivity = async (eventData) => {
       isAiGenerated: true,
       githubId: githubId,
       priority: validatedData.priority || 'medium',
-      estimatedDuration: validatedData.estimatedDuration || 30
+      estimatedDuration: validatedData.estimatedDuration || 30,
     });
 
     return {
@@ -57,5 +57,5 @@ const processGithubActivity = async (eventData) => {
 };
 
 module.exports = {
-  processGithubActivity
+  processGithubActivity,
 };

@@ -28,8 +28,8 @@ const testCaseSchema = new mongoose.Schema(
     steps: [
       {
         text: String,
-        isPassed: { type: Boolean, default: false }
-      }
+        isPassed: { type: Boolean, default: false },
+      },
     ],
     lastRunAt: {
       type: Date,
@@ -55,7 +55,7 @@ const testCaseSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Project',
       required: true,
-    }
+    },
   },
   {
     timestamps: true,

@@ -14,7 +14,6 @@ const MODEL_FALLBACK_LIST = [
   'mixtral-8x7b-32768',
 ];
 
-
 const apiKey = process.env.GROQ_API_KEY;
 const baseUrl = GROQ_URL;
 
@@ -60,12 +59,14 @@ const generateCompletion = async (messages, options = {}) => {
           }
         );
 
-        logger.info(`[AI-Client] Success | Model: ${currentModel} | Tokens: ${response.data.usage?.total_tokens}`);
-        
+        logger.info(
+          `[AI-Client] Success | Model: ${currentModel} | Tokens: ${response.data.usage?.total_tokens}`
+        );
+
         return {
           content: response.data.choices[0].message.content,
           usage: response.data.usage,
-          model: currentModel
+          model: currentModel,
         };
       } catch (error) {
         lastError = error;
@@ -74,7 +75,8 @@ const generateCompletion = async (messages, options = {}) => {
           throw new Error('AI request cancelled');
         }
 
-        const isTimeout = error.code === 'ECONNABORTED' || error.message.includes('timeout');
+        const isTimeout =
+          error.code === 'ECONNABORTED' || error.message.includes('timeout');
         const res = error.response;
         const data = res?.data;
 
@@ -83,7 +85,7 @@ const generateCompletion = async (messages, options = {}) => {
           (data.error.message.includes('not supported') ||
             data.error.message.includes('is not available'))
         ) {
-          break; 
+          break;
         }
 
         if (
@@ -92,8 +94,11 @@ const generateCompletion = async (messages, options = {}) => {
           res?.status === 503 ||
           (data?.error?.message && data.error.message.includes('loading'))
         ) {
-          const backoff = Math.pow(2, retryCount) * BACKOFF_MULTIPLIER + Math.random() * 1000;
-          logger.warn(`[AI-Client-Retry] ${currentModel} failed (${isTimeout ? 'Timeout' : res?.status}). Retrying in ${Math.round(backoff)}ms...`);
+          const backoff =
+            Math.pow(2, retryCount) * BACKOFF_MULTIPLIER + Math.random() * 1000;
+          logger.warn(
+            `[AI-Client-Retry] ${currentModel} failed (${isTimeout ? 'Timeout' : res?.status}). Retrying in ${Math.round(backoff)}ms...`
+          );
 
           await new Promise((resolve) => {
             const timer = setTimeout(resolve, backoff);
@@ -108,12 +113,14 @@ const generateCompletion = async (messages, options = {}) => {
     }
   }
 
-  throw new Error(`AI Provider Error: ${lastError?.message || 'All models failed'}`);
+  throw new Error(
+    `AI Provider Error: ${lastError?.message || 'All models failed'}`
+  );
 };
 
 const getFallbackModels = () => MODEL_FALLBACK_LIST;
 
 module.exports = {
   generateCompletion,
-  getFallbackModels
+  getFallbackModels,
 };

@@ -2,7 +2,7 @@ const { MemoryStore } = require('express-rate-limit');
 const { getRedisClient, isRedisConnected } = require('../config/redis');
 const logger = require('./logger');
 
-const createSmartRateLimitStore = function(options = {}) {
+const createSmartRateLimitStore = function (options = {}) {
   const prefix = options.prefix || 'rl:';
   const windowMs = options.windowMs || 60000;
   const localStore = new MemoryStore();
@@ -19,21 +19,28 @@ const createSmartRateLimitStore = function(options = {}) {
 
   const increment = async (key) => {
     const fullKey = `${prefix}${key}`;
-    
+
     if (isRedisConnected()) {
       try {
         const redis = getRedisClient();
-        const [totalHits, pttl] = await redis.eval(luaIncrement, 1, fullKey, windowMs);
-        
+        const [totalHits, pttl] = await redis.eval(
+          luaIncrement,
+          1,
+          fullKey,
+          windowMs
+        );
+
         return {
           totalHits,
-          resetTime: new Date(Date.now() + pttl)
+          resetTime: new Date(Date.now() + pttl),
         };
       } catch (err) {
-        logger.warn(`[RATE-LIMIT] Redis increment failed for ${key}, falling back to memory: ${err.message}`);
+        logger.warn(
+          `[RATE-LIMIT] Redis increment failed for ${key}, falling back to memory: ${err.message}`
+        );
       }
     }
-    
+
     return await localStore.increment(key);
   };
 
@@ -67,7 +74,7 @@ const createSmartRateLimitStore = function(options = {}) {
   return {
     increment,
     decrement,
-    resetKey
+    resetKey,
   };
 };
 

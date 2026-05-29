@@ -18,8 +18,8 @@ const initAiExtractionQueue = () => {
       attempts: 3,
       backoff: { type: 'exponential', delay: 3000 },
       removeOnComplete: true,
-      removeOnFail: { count: 100 }
-    }
+      removeOnFail: { count: 100 },
+    },
   });
   workerManager.registerQueue(aiExtractionQueue);
   logger.info('[QUEUE] AI Extraction Queue initialized.');
@@ -31,49 +31,57 @@ const initAiExtractionWorker = () => {
 
   const FailedJob = require('../models/FailedJob');
 
-const { runWithJobContext } = require('../utils/context');
+  const { runWithJobContext } = require('../utils/context');
 
   aiExtractionWorker = new Worker(
     'ai-extraction',
     async (job) => {
       return runWithJobContext(job, async () => {
         const { text, userId, socketId } = job.data;
-      try {
-        logger.info(`[AI-WORKER] Processing extraction for job ${job.id}`);
-        const suggestion = await aiService.extractTaskFromText(text);
-        
         try {
-          const { getEmitter, EVENTS } = require('../socket');
-          getEmitter().to(socketId || userId).emit(EVENTS.AI_EXTRACTION_COMPLETE, {
-            jobId: job.id,
-            status: 'success',
-            data: { suggestion }
-          });
-        } catch (socketErr) {
-          logger.warn(`[AI-WORKER] Failed to notify client via socket: ${socketErr.message}`);
+          logger.info(`[AI-WORKER] Processing extraction for job ${job.id}`);
+          const suggestion = await aiService.extractTaskFromText(text);
+
+          try {
+            const { getEmitter, EVENTS } = require('../socket');
+            getEmitter()
+              .to(socketId || userId)
+              .emit(EVENTS.AI_EXTRACTION_COMPLETE, {
+                jobId: job.id,
+                status: 'success',
+                data: { suggestion },
+              });
+          } catch (socketErr) {
+            logger.warn(
+              `[AI-WORKER] Failed to notify client via socket: ${socketErr.message}`
+            );
+          }
+
+          return suggestion;
+        } catch (err) {
+          logger.error(
+            `[AI-WORKER] Extraction failed for job ${job.id}: ${err.message}`
+          );
+
+          try {
+            const { getEmitter, EVENTS } = require('../socket');
+            getEmitter()
+              .to(socketId || userId)
+              .emit(EVENTS.AI_EXTRACTION_COMPLETE, {
+                jobId: job.id,
+                status: 'error',
+                message: err.message,
+              });
+          } catch (socketErr) {}
+
+          throw err;
         }
-        
-        return suggestion;
-      } catch (err) {
-        logger.error(`[AI-WORKER] Extraction failed for job ${job.id}: ${err.message}`);
-        
-        try {
-          const { getEmitter, EVENTS } = require('../socket');
-          getEmitter().to(socketId || userId).emit(EVENTS.AI_EXTRACTION_COMPLETE, {
-            jobId: job.id,
-            status: 'error',
-            message: err.message
-          });
-        } catch (socketErr) {}
-        
-        throw err;
-      }
-    });
-  },
-    { 
-      connection, 
+      });
+    },
+    {
+      connection,
       concurrency: parseInt(process.env.AI_WORKER_CONCURRENCY || '5'),
-      lockDuration: 120000
+      lockDuration: 120000,
     }
   );
 
@@ -88,11 +96,13 @@ const { runWithJobContext } = require('../utils/context');
           payload: job.data,
           error: err.message,
           stack: err.stack,
-          timestamp: new Date()
+          timestamp: new Date(),
         });
         logger.info(`[DLQ] AI Extraction Job ${job.id} moved to failed_jobs.`);
       } catch (dlqErr) {
-        logger.error(`[DLQ] Failed to record AI job failure: ${dlqErr.message}`);
+        logger.error(
+          `[DLQ] Failed to record AI job failure: ${dlqErr.message}`
+        );
       }
     }
   });
@@ -102,5 +112,8 @@ const { runWithJobContext } = require('../utils/context');
 
 const getAiExtractionQueue = () => aiExtractionQueue;
 
-module.exports = { initAiExtractionQueue, initAiExtractionWorker, getAiExtractionQueue };
-
+module.exports = {
+  initAiExtractionQueue,
+  initAiExtractionWorker,
+  getAiExtractionQueue,
+};

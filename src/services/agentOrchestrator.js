@@ -10,26 +10,34 @@ const logger = require('../utils/logger');
 
 const handleEvent = async (event) => {
   try {
-    const { getOrchestratorQueue } = require('../queues/orchestratorQueue');
+    const { getOrchestratorQueue } = require('../jobs/orchestratorQueue');
     const { isQueueConnected } = require('../config/redis');
     const { getJobMetadata } = require('../utils/context');
     const queue = getOrchestratorQueue();
 
     if (queue && isQueueConnected()) {
-      await queue.add(`event:${event.type}`, { 
-        event,
-        ...getJobMetadata()
-      }, {
-        jobId: event.entityId ? `${event.type}:${event.entityId}` : undefined,
-        removeOnComplete: true
-      });
+      await queue.add(
+        `event:${event.type}`,
+        {
+          event,
+          ...getJobMetadata(),
+        },
+        {
+          jobId: event.entityId ? `${event.type}:${event.entityId}` : undefined,
+          removeOnComplete: true,
+        }
+      );
       return { status: 'queued', eventType: event.type };
     }
 
-    logger.error(`[ORCHESTRATOR] Queue Service Offline. Event ${event.type} for ${event.entityId} could not be dispatched.`);
+    logger.error(
+      `[ORCHESTRATOR] Queue Service Offline. Event ${event.type} for ${event.entityId} could not be dispatched.`
+    );
     return { status: 'failed', reason: 'Queue Service Offline' };
   } catch (err) {
-    logger.error(`[ORCHESTRATOR] Failed to dispatch event ${event.type}: ${err.message}`);
+    logger.error(
+      `[ORCHESTRATOR] Failed to dispatch event ${event.type}: ${err.message}`
+    );
     return { status: 'failed', error: err.message };
   }
 };
@@ -39,7 +47,9 @@ const processEvent = async (event) => {
     const { type, payload, project, entityId, entityType } = event;
     let workspaceId = event.workspaceId;
 
-    logger.info(`[ORCHESTRATOR] Processing ${type} for ${entityType}:${entityId}`);
+    logger.info(
+      `[ORCHESTRATOR] Processing ${type} for ${entityType}:${entityId}`
+    );
 
     if (!workspaceId && project) {
       const projectDoc = await Project.findById(project).select('workspaceId');
@@ -49,7 +59,9 @@ const processEvent = async (event) => {
     }
 
     if (!workspaceId) {
-      logger.warn(`[ORCHESTRATOR] Missing workspaceId for event ${type}. Skipping AILog creation.`);
+      logger.warn(
+        `[ORCHESTRATOR] Missing workspaceId for event ${type}. Skipping AILog creation.`
+      );
       return { status: 'incomplete', reason: 'Missing workspaceId' };
     }
 
@@ -63,7 +75,8 @@ const processEvent = async (event) => {
       case 'TASK_DELAYED':
         agent = 'Scheduler';
         const sResult = await schedulerAgent.handleTaskDelay(event);
-        decision = sResult.status === 'executed' ? 'cascade shift' : 'monitoring only';
+        decision =
+          sResult.status === 'executed' ? 'cascade shift' : 'monitoring only';
         actionTaken = sResult.action || sResult.reason;
         reason = 'Task deadline passed without completion';
         actionsToExecute = sResult.actions || [];
@@ -72,7 +85,10 @@ const processEvent = async (event) => {
       case 'GITHUB_ACTIVITY':
         agent = 'Harvester';
         const result = await harvesterAgent.processGithubActivity(payload);
-        decision = result.status === 'created' ? 'autonomous creation' : 'duplicate ignored';
+        decision =
+          result.status === 'created'
+            ? 'autonomous creation'
+            : 'duplicate ignored';
         actionTaken = result.action || result.reason;
         reason = 'New code activity detected in linked repository';
         break;
@@ -82,7 +98,10 @@ const processEvent = async (event) => {
         agent = 'Portfolio';
         decision = 'metric updated';
         actionTaken = 're-calculated project health score';
-        reason = type === 'TASK_CREATED' ? 'New entry impact assessment' : 'Status/Assignment change impact';
+        reason =
+          type === 'TASK_CREATED'
+            ? 'New entry impact assessment'
+            : 'Status/Assignment change impact';
         break;
 
       case 'TASK_BLOCKED':
@@ -115,14 +134,16 @@ const processEvent = async (event) => {
       await actionExecutor.processDecision(actionReq);
     }
 
-    const existingLog = await AILog.findOne({ 
-      eventType: type, 
+    const existingLog = await AILog.findOne({
+      eventType: type,
       entityId,
-      timestamp: { $gt: new Date(Date.now() - 5000) } 
+      timestamp: { $gt: new Date(Date.now() - 5000) },
     });
 
     if (existingLog) {
-      logger.info(`[ORCHESTRATOR] Duplicate event ${type} for ${entityId} suppressed.`);
+      logger.info(
+        `[ORCHESTRATOR] Duplicate event ${type} for ${entityId} suppressed.`
+      );
       return existingLog;
     }
 
@@ -146,13 +167,17 @@ const processEvent = async (event) => {
         getEmitter().to(projectId).emit(EVENTS.AGENT_ACTIVITY, log);
       }
     } catch (err) {
-      logger.warn(`[ORCHESTRATOR] Real-time broadcast failed for event ${type}`);
+      logger.warn(
+        `[ORCHESTRATOR] Real-time broadcast failed for event ${type}`
+      );
     }
 
     return log;
   } catch (error) {
-    logger.error(`[ORCHESTRATOR] Event processing failed for ${event.type}: ${error.message}`);
-    throw error; 
+    logger.error(
+      `[ORCHESTRATOR] Event processing failed for ${event.type}: ${error.message}`
+    );
+    throw error;
   }
 };
 

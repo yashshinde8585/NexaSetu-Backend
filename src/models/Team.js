@@ -5,40 +5,40 @@ const teamSchema = new mongoose.Schema(
     name: {
       type: String,
       required: [true, 'Team name is required'],
-      trim: true
+      trim: true,
     },
     description: {
       type: String,
-      trim: true
+      trim: true,
     },
     workspaceId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Workspace',
-      required: true
+      required: true,
     },
     lead: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
-      required: [true, 'Team must have a designated lead']
+      required: [true, 'Team must have a designated lead'],
     },
     members: [
       {
         type: mongoose.Schema.Types.ObjectId,
-        ref: 'User'
-      }
+        ref: 'User',
+      },
     ],
     status: {
       type: String,
       enum: ['Active', 'On Hold', 'Archived'],
-      default: 'Active'
+      default: 'Active',
     },
     sprintsPerMonth: {
       type: Number,
-      default: 2
-    }
+      default: 2,
+    },
   },
   {
-    timestamps: true
+    timestamps: true,
   }
 );
 

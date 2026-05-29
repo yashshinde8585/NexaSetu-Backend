@@ -20,15 +20,15 @@ const runStorageCleanup = async () => {
     for (const ws of workspaces) {
       if (!ws.id) continue;
       logger.debug(`[STORAGE-AUDIT] Auditing workspace folder: ${ws.name}`);
-      
     }
 
     logger.info('[STORAGE-AUDIT] Storage Cleanup audit completed.');
   } catch (error) {
-    logger.error(`[STORAGE-AUDIT] Storage Cleanup audit failed: ${error.message}`);
+    logger.error(
+      `[STORAGE-AUDIT] Storage Cleanup audit failed: ${error.message}`
+    );
     throw error;
   }
 };
 
 module.exports = { runStorageCleanup };
-

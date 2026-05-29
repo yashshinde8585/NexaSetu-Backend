@@ -9,7 +9,9 @@ const monitorClientStatus = (req, cleanup) => {
 
   req.on('close', () => {
     isAborted = true;
-    logger.warn(`[REQUEST-GUARD] Client disconnected prematurely: ${req.method} ${req.url}`);
+    logger.warn(
+      `[REQUEST-GUARD] Client disconnected prematurely: ${req.method} ${req.url}`
+    );
     if (cleanup) cleanup();
   });
 
@@ -23,7 +25,7 @@ const monitorClientStatus = (req, cleanup) => {
         error.isClientDisconnected = true;
         throw error;
       }
-    }
+    },
   };
 };
 

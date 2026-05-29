@@ -267,7 +267,7 @@ const getDashboardStats = async (user, sprintId) => {
 
     const pendingTasks = pStat.todo + pStat.inProgress;
     const pendingScore =
-      pStat.total > 0 ? (1 - pendingTasks / pStat.total) * 100 * 0.3 : 30; 
+      pStat.total > 0 ? (1 - pendingTasks / pStat.total) * 100 * 0.3 : 30;
 
     const delayImpact = (pStat.delayed + pStat.atRisk * 0.5) / pStat.total;
     const delayScore = pStat.total > 0 ? (1 - delayImpact) * 100 * 0.2 : 20;
@@ -314,7 +314,6 @@ const getDashboardStats = async (user, sprintId) => {
       sprint: p.sprint,
     };
   });
-
 
   return {
     summary: stats,

@@ -8,8 +8,8 @@ const cacheMiddleware = (entity = 'route', ttlSeconds = 60) => {
     }
 
     const key = cacheManager.generateKey(
-      req.user?.workspaceId || 'global', 
-      entity, 
+      req.user?.workspaceId || 'global',
+      entity,
       req.originalUrl || req.url
     );
 
@@ -22,8 +22,7 @@ const cacheMiddleware = (entity = 'route', ttlSeconds = 60) => {
       const originalJson = res.json;
       res.json = function (body) {
         if (res.statusCode >= 200 && res.statusCode < 300) {
-          cacheManager.set(key, body, ttlSeconds).catch(err => {
-          });
+          cacheManager.set(key, body, ttlSeconds).catch((err) => {});
         }
         return originalJson.call(this, body);
       };

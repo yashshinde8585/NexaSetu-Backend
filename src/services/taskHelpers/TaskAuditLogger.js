@@ -10,11 +10,11 @@ const logTaskCreation = async (user, taskId, data) => {
     user,
     entityType: 'TASK',
     entityId: taskId,
-    details: data
+    details: data,
   });
 };
 
 module.exports = {
   logTaskUpdate,
-  logTaskCreation
+  logTaskCreation,
 };

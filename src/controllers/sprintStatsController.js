@@ -12,6 +12,9 @@ exports.getSprintStats = catchAsync(async (req, res, next) => {
 });
 
 exports.getSprintReportData = catchAsync(async (req, res, next) => {
-  const data = await sprintStatsService.getSprintReportData(req.user, req.params.id);
+  const data = await sprintStatsService.getSprintReportData(
+    req.user,
+    req.params.id
+  );
   res.status(200).json({ status: 'success', data });
 });

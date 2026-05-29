@@ -29,5 +29,5 @@ module.exports = {
   getContext,
   getRequestId,
   getJobMetadata,
-  runWithJobContext
+  runWithJobContext,
 };

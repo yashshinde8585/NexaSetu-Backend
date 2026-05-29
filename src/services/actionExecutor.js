@@ -54,7 +54,14 @@ const processDecision = async (decision) => {
   }
 };
 
-const executeImmediately = async (type, targetId, targetType, payload, reason, agent) => {
+const executeImmediately = async (
+  type,
+  targetId,
+  targetType,
+  payload,
+  reason,
+  agent
+) => {
   let result = null;
   let oldValue = null;
   let newValue = null;
@@ -72,7 +79,7 @@ const executeImmediately = async (type, targetId, targetType, payload, reason, a
       case 'UPDATE_TASK_DEADLINE':
         oldValue = await Task.findById(targetId, 'dueDate');
         if (!oldValue) throw new Error('Task not found');
-        
+
         result = await Task.findByIdAndUpdate(
           targetId,
           {
@@ -93,7 +100,7 @@ const executeImmediately = async (type, targetId, targetType, payload, reason, a
       case 'STATUS_CHANGE':
         oldValue = await Task.findById(targetId, 'status');
         if (!oldValue) throw new Error('Task not found');
-        
+
         result = await Task.findByIdAndUpdate(
           targetId,
           { status: payload.status },
@@ -105,7 +112,7 @@ const executeImmediately = async (type, targetId, targetType, payload, reason, a
       case 'REASSIGN_TASK':
         oldValue = await Task.findById(targetId, 'assignedUser');
         if (!oldValue) throw new Error('Task not found');
-        
+
         result = await Task.findByIdAndUpdate(
           targetId,
           { assignedUser: payload.newUserId },
@@ -158,7 +165,7 @@ const approveRequest = async (requestId, userId) => {
     request.executedAt = new Date();
     request.createdBy = userId;
     await request.save();
-    
+
     return result;
   } catch (error) {
     logger.error(`[ActionExecutor] Approval failed: ${error.message}`);
@@ -169,5 +176,5 @@ const approveRequest = async (requestId, userId) => {
 module.exports = {
   processDecision,
   executeImmediately,
-  approveRequest
+  approveRequest,
 };

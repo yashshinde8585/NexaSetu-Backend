@@ -3,7 +3,6 @@ const { normalizeRole } = require('./common');
 
 const ADMIN_ROLES = ['WORKSPACE_ADMIN', 'WORKSPACE_MANAGER', 'TECH_LEAD'];
 
-
 // Check if user has administrative permissions
 const hasAdminAccess = (user) => {
   const role = normalizeRole(user.role);
@@ -11,7 +10,6 @@ const hasAdminAccess = (user) => {
   if (role === 'WORKSPACE_MANAGER' && hasLeadRestriction(user)) return false;
   return true;
 };
-
 
 // Generate filters for role-based project access
 const getProjectAccessQuery = (user) => {
@@ -29,7 +27,6 @@ const getProjectAccessQuery = (user) => {
 
   return query;
 };
-
 
 // Generate filters for role-based task access
 const getTaskAccessQuery = (user, projectListIds = []) => {

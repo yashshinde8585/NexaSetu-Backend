@@ -23,10 +23,14 @@ const initStorageQueue = async () => {
   });
 
   try {
-    await storageQueue.add('cleanup-orphans', {}, {
-      repeat: { cron: '0 3 * * *' },
-      jobId: 'daily-orphan-cleanup'
-    });
+    await storageQueue.add(
+      'cleanup-orphans',
+      {},
+      {
+        repeat: { cron: '0 3 * * *' },
+        jobId: 'daily-orphan-cleanup',
+      }
+    );
     logger.info('[QUEUE] Storage Cleanup Repeatable Job scheduled.');
   } catch (err) {
     logger.error(`[QUEUE] Failed to schedule repeatable job: ${err.message}`);
@@ -64,16 +68,20 @@ const initStorageWorker = () => {
             .remove(storagePaths);
 
           if (error) throw error;
-          logger.info(`[STORAGE-CLEANUP] Successfully deleted ${storagePaths.length} files.`);
+          logger.info(
+            `[STORAGE-CLEANUP] Successfully deleted ${storagePaths.length} files.`
+          );
         } catch (error) {
-          logger.error(`[STORAGE-CLEANUP] Failed to delete files: ${error.message}`);
+          logger.error(
+            `[STORAGE-CLEANUP] Failed to delete files: ${error.message}`
+          );
           throw error;
         }
       });
     },
-    { 
+    {
       connection,
-      concurrency: parseInt(process.env.STORAGE_WORKER_CONCURRENCY || '10')
+      concurrency: parseInt(process.env.STORAGE_WORKER_CONCURRENCY || '10'),
     }
   );
 
@@ -87,7 +95,7 @@ const initStorageWorker = () => {
           queueName: 'storage-cleanup',
           payload: job.data,
           error: err.message,
-          timestamp: new Date()
+          timestamp: new Date(),
         });
       } catch (dlqErr) {}
     }
