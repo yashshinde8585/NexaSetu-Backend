@@ -1,8 +1,8 @@
 const Directive = require('../models/Directive');
 const AppError = require('../utils/appError');
-const { getIO, EVENTS } = require('../socket');
+const { getIO } = require('../socket');
 const logger = require('../utils/logger');
-const { invalidateCache } = require('../middleware/cacheMiddleware');
+const { invalidateCache } = require('../middlewares/cacheMiddleware');
 
 const createDirective = async (user, data) => {
   const { type, title, description, priority, scope } = data;
@@ -25,7 +25,7 @@ const createDirective = async (user, data) => {
       type: directive.type,
       priority: directive.priority,
     });
-  } catch (err) {
+  } catch (_err) {
     logger.warn('[SOCKET] Failed to broadcast directive');
   }
 
@@ -45,7 +45,9 @@ const acknowledgeDirective = async (user, directiveId) => {
   const directive = await Directive.findById(directiveId);
   if (!directive) throw new AppError('Directive not found', 404);
 
-  const alreadyAck = directive.acknowledgments.some(ack => ack.user.toString() === user._id.toString());
+  const alreadyAck = directive.acknowledgments.some(
+    (ack) => ack.user.toString() === user._id.toString()
+  );
   if (!alreadyAck) {
     directive.acknowledgments.push({ user: user._id });
     await directive.save();
@@ -54,8 +56,35 @@ const acknowledgeDirective = async (user, directiveId) => {
   return directive;
 };
 
+/**
+ * Check if there is an active STABILIZE directive for a given workspace/project scope
+ */
+const checkStabilizeDirective = async (workspaceId, projectId) => {
+  return await Directive.findOne({
+    workspaceId,
+    status: 'issued',
+    type: 'STABILIZE',
+    $or: [
+      { 'scope.type': 'WORKSPACE' },
+      { 'scope.type': 'PROJECT', 'scope.targetId': projectId },
+    ],
+  });
+};
+
+/**
+ * Get active directives for the project war room data
+ */
+const getProjectWarRoomDirectives = async (workspaceId, limit = 3) => {
+  return await Directive.find({ workspaceId, status: 'issued' })
+    .sort('-priority')
+    .limit(limit)
+    .lean();
+};
+
 module.exports = {
   createDirective,
   getDirectives,
   acknowledgeDirective,
+  checkStabilizeDirective,
+  getProjectWarRoomDirectives,
 };

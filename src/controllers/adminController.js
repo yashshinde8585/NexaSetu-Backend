@@ -14,77 +14,133 @@ exports.getAdminDashboard = catchAsync(async (req, res, next) => {
 
 // Update workspace settings
 exports.updateSettings = catchAsync(async (req, res, next) => {
-  const settings = await workspaceService.updateSettings(req.user.workspaceId, req.body);
+  const settings = await workspaceService.updateSettings(
+    req.user.workspaceId,
+    req.body
+  );
   res.status(200).json({ status: 'success', settings });
 });
 
 // Invite a new user to the workspace
 exports.inviteUser = catchAsync(async (req, res, next) => {
   const { email, role, projectId } = req.body;
-  const invitation = await adminService.inviteUser(req.user.workspaceId, req.user._id, email, role, projectId);
-  
-  getEmitter().to(`workspace:${req.user.workspaceId}`).emit(EVENTS.USER_UPDATED, { action: 'INVITE', email });
-  
+  const invitation = await adminService.inviteUser(
+    req.user.workspaceId,
+    req.user._id,
+    email,
+    role,
+    projectId
+  );
+
+  getEmitter()
+    .to(`workspace:${req.user.workspaceId}`)
+    .emit(EVENTS.USER_UPDATED, { action: 'INVITE', email });
+
   res.status(201).json({ status: 'success', data: { invitation } });
 });
 
 // Deactivate or activate a user account
 exports.deactivateUser = catchAsync(async (req, res, next) => {
   const { userId, status } = req.body;
-  await adminService.deactivateUser(req.user.workspaceId, req.user._id, userId, status);
-  
-  getEmitter().to(`workspace:${req.user.workspaceId}`).emit(EVENTS.USER_UPDATED, { action: 'STATUS_CHANGE', userId, status });
-  
+  await adminService.deactivateUser(
+    req.user.workspaceId,
+    req.user._id,
+    userId,
+    status
+  );
+
+  getEmitter()
+    .to(`workspace:${req.user.workspaceId}`)
+    .emit(EVENTS.USER_UPDATED, { action: 'STATUS_CHANGE', userId, status });
+
   res.status(200).json({ status: 'success', message: `User ${status}` });
 });
 
 // Update a user's role
 exports.updateUserRole = catchAsync(async (req, res, next) => {
   const { userId, role } = req.body;
-  await adminService.updateUserRole(req.user.workspaceId, req.user._id, userId, role);
-  
-  getEmitter().to(`workspace:${req.user.workspaceId}`).emit(EVENTS.USER_UPDATED, { action: 'ROLE_CHANGE', userId, role });
-  
+  await adminService.updateUserRole(
+    req.user.workspaceId,
+    req.user._id,
+    userId,
+    role
+  );
+
+  getEmitter()
+    .to(`workspace:${req.user.workspaceId}`)
+    .emit(EVENTS.USER_UPDATED, { action: 'ROLE_CHANGE', userId, role });
+
   res.status(200).json({ status: 'success', message: 'User role updated' });
 });
 
 // Create a new organizational team
 exports.createTeam = catchAsync(async (req, res, next) => {
-  const team = await adminService.createTeam(req.user.workspaceId, req.user.id, req.body);
-  
-  getEmitter().to(`workspace:${req.user.workspaceId}`).emit(EVENTS.TEAM_UPDATED, { action: 'CREATE', teamId: team._id });
-  
+  const team = await adminService.createTeam(
+    req.user.workspaceId,
+    req.user.id,
+    req.body
+  );
+
+  getEmitter()
+    .to(`workspace:${req.user.workspaceId}`)
+    .emit(EVENTS.TEAM_UPDATED, { action: 'CREATE', teamId: team._id });
+
   res.status(201).json({ status: 'success', data: { team } });
 });
 
 // Update an existing organizational team
 exports.updateTeam = catchAsync(async (req, res, next) => {
-  const team = await adminService.updateTeam(req.user.workspaceId, req.user.id, req.params.id, req.body);
-  
-  getEmitter().to(`workspace:${req.user.workspaceId}`).emit(EVENTS.TEAM_UPDATED, { action: 'UPDATE', teamId: req.params.id });
-  
+  const team = await adminService.updateTeam(
+    req.user.workspaceId,
+    req.user.id,
+    req.params.id,
+    req.body
+  );
+
+  getEmitter()
+    .to(`workspace:${req.user.workspaceId}`)
+    .emit(EVENTS.TEAM_UPDATED, { action: 'UPDATE', teamId: req.params.id });
+
   res.status(200).json({ status: 'success', data: { team } });
 });
 
 // Remove an organizational team
 exports.deleteTeam = catchAsync(async (req, res, next) => {
-  await adminService.deleteTeam(req.user.workspaceId, req.user.id, req.params.id);
-  
-  getEmitter().to(`workspace:${req.user.workspaceId}`).emit(EVENTS.TEAM_UPDATED, { action: 'DELETE', teamId: req.params.id });
-  
-  res.status(200).json({ status: 'success', message: 'Team successfully decommissioned' });
+  await adminService.deleteTeam(
+    req.user.workspaceId,
+    req.user.id,
+    req.params.id
+  );
+
+  getEmitter()
+    .to(`workspace:${req.user.workspaceId}`)
+    .emit(EVENTS.TEAM_UPDATED, { action: 'DELETE', teamId: req.params.id });
+
+  res
+    .status(200)
+    .json({ status: 'success', message: 'Team successfully decommissioned' });
 });
 
 // Update organizational role permissions
 exports.updateRolePermissions = catchAsync(async (req, res, next) => {
   const { role, permissions } = req.body;
-  const rolePermissions = await adminService.updateRolePermissions(req.user.workspaceId, req.user.id, role, permissions);
+  const rolePermissions = await adminService.updateRolePermissions(
+    req.user.workspaceId,
+    req.user.id,
+    role,
+    permissions
+  );
   res.status(200).json({ status: 'success', data: { rolePermissions } });
 });
 
 // Create a new organizational role
 exports.createRole = catchAsync(async (req, res, next) => {
   const { roleName, permissions } = req.body;
-  const result = await adminService.createRole(req.user.workspaceId, req.user.id, roleName, permissions);
+  const result = await adminService.createRole(
+    req.user.workspaceId,
+    req.user.id,
+    roleName,
+    permissions
+  );
   res.status(201).json({ status: 'success', data: result });
 });

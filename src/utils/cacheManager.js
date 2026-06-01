@@ -1,12 +1,17 @@
-const { getRedisClient, isRedisConnected, withTimeout } = require('../config/redis');
+const {
+  getRedisClient,
+  isRedisConnected,
+  withTimeout,
+} = require('../config/redis');
 const logger = require('./logger');
 
 // Cache Manager Utility: Centralizes cache key construction and invalidation logic.
 
 const generateKey = (workspaceId, entity, identifier = 'list') => {
-  const cleanId = typeof identifier === 'string' 
-    ? identifier.replace(/\/$/, '').replace(/\?$/, '') 
-    : identifier;
+  const cleanId =
+    typeof identifier === 'string'
+      ? identifier.replace(/\/$/, '').replace(/\?$/, '')
+      : identifier;
   return `cache:${workspaceId || 'global'}:${entity}:${cleanId}`;
 };
 
@@ -20,7 +25,13 @@ const invalidate = async (workspaceId, pattern) => {
 
   try {
     do {
-      const [nextCursor, keys] = await redis.scan(cursor, 'MATCH', keyPattern, 'COUNT', 100);
+      const [nextCursor, keys] = await redis.scan(
+        cursor,
+        'MATCH',
+        keyPattern,
+        'COUNT',
+        100
+      );
       cursor = nextCursor;
 
       if (keys.length > 0) {
@@ -30,10 +41,14 @@ const invalidate = async (workspaceId, pattern) => {
     } while (cursor !== '0');
 
     if (totalPurged > 0) {
-      logger.info(`[CACHE INVALIDATE] Purged ${totalPurged} keys for pattern: ${keyPattern}`);
+      logger.info(
+        `[CACHE INVALIDATE] Purged ${totalPurged} keys for pattern: ${keyPattern}`
+      );
     }
   } catch (err) {
-    logger.error(`[CACHE ERROR] Invalidation failed for ${keyPattern}: ${err.message}`);
+    logger.error(
+      `[CACHE ERROR] Invalidation failed for ${keyPattern}: ${err.message}`
+    );
   }
 };
 
@@ -41,10 +56,7 @@ const set = async (key, value, ttl = 3600) => {
   if (!isRedisConnected()) return;
   try {
     const redis = getRedisClient();
-    await withTimeout(
-      redis.set(key, JSON.stringify(value), 'EX', ttl),
-      1000 
-    );
+    await withTimeout(redis.set(key, JSON.stringify(value), 'EX', ttl), 1000);
   } catch (err) {
     logger.warn(`[CACHE SET ERROR] Failed to cache ${key}: ${err.message}`);
   }
@@ -54,10 +66,7 @@ const get = async (key) => {
   if (!isRedisConnected()) return null;
   try {
     const redis = getRedisClient();
-    const data = await withTimeout(
-      redis.get(key),
-      800
-    );
+    const data = await withTimeout(redis.get(key), 800);
     return data ? JSON.parse(data) : null;
   } catch (err) {
     logger.warn(`[CACHE GET ERROR] Failed to retrieve ${key}: ${err.message}`);
@@ -67,7 +76,7 @@ const get = async (key) => {
 
 const getWithFallback = async (newKey, legacyKey) => {
   if (!isRedisConnected()) return null;
-  
+
   const data = await get(newKey);
   if (data) return data;
 
@@ -102,5 +111,5 @@ module.exports = {
   get,
   getWithFallback,
   acquireLock,
-  releaseLock
+  releaseLock,
 };

@@ -19,5 +19,5 @@ const getActivityLogs = async (user) => {
 };
 
 module.exports = {
-  getActivityLogs
+  getActivityLogs,
 };

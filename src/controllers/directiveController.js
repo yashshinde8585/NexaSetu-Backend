@@ -17,7 +17,10 @@ const createDirective = catchAsync(async (req, res) => {
 });
 
 const getDirectives = catchAsync(async (req, res) => {
-  const directives = await directiveService.getDirectives(req.user.workspaceId, req.query.status);
+  const directives = await directiveService.getDirectives(
+    req.user.workspaceId,
+    req.query.status
+  );
   res.status(200).json({
     status: 'success',
     data: { directives },
@@ -25,7 +28,10 @@ const getDirectives = catchAsync(async (req, res) => {
 });
 
 const acknowledgeDirective = catchAsync(async (req, res) => {
-  const directive = await directiveService.acknowledgeDirective(req.user, req.params.id);
+  const directive = await directiveService.acknowledgeDirective(
+    req.user,
+    req.params.id
+  );
   res.status(200).json({
     status: 'success',
     data: { directive },

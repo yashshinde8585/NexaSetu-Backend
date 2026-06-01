@@ -9,6 +9,8 @@ const { monitorClientStatus } = require('../utils/requestGuard');
 
 const cookieOptions = config.jwt.cookieOptions;
 
+const { toUserDTO } = require('../utils/dtoMapper');
+
 const sendAuthResponse = async (user, statusCode, req, res) => {
   const { accessToken, refreshToken } = authService.generateTokens(user._id);
 
@@ -30,20 +32,22 @@ const sendAuthResponse = async (user, statusCode, req, res) => {
     expires: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
   });
 
-  user.password = undefined;
+  const safeUser = toUserDTO(user);
 
   return res.status(statusCode).json({
     success: true,
     status: 'success',
+    code: 'SUCCESS',
     token: accessToken,
-    data: { user },
+    data: { user: safeUser },
+    message: 'Operation successful',
   });
 };
 
 exports.registerUser = catchAsync(async (req, res, next) => {
   const guard = monitorClientStatus(req);
   const user = await authService.registerUser(req.body);
-  
+
   guard.throwIfAborted();
   await sendAuthResponse(user, 201, req, res);
 });
@@ -51,9 +55,9 @@ exports.registerUser = catchAsync(async (req, res, next) => {
 exports.loginUser = catchAsync(async (req, res, next) => {
   const guard = monitorClientStatus(req);
   const { email, password } = req.body;
-  
+
   const user = await authService.loginUser(email, password);
-  
+
   guard.throwIfAborted();
   await sendAuthResponse(user, 200, req, res);
 });
@@ -62,7 +66,10 @@ exports.logoutUser = catchAsync(async (req, res, next) => {
   const { refreshToken } = req.cookies;
   if (refreshToken) await authService.revokeSession(refreshToken);
 
-  const clearOptions = { ...cookieOptions, expires: new Date(Date.now() + 1000) };
+  const clearOptions = {
+    ...cookieOptions,
+    expires: new Date(Date.now() + 1000),
+  };
   res.cookie('jwt', 'loggedout', clearOptions);
   res.cookie('refreshToken', 'loggedout', clearOptions);
 
@@ -71,11 +78,17 @@ exports.logoutUser = catchAsync(async (req, res, next) => {
 
 exports.refreshAccessToken = catchAsync(async (req, res, next) => {
   const { refreshToken } = req.cookies;
-  if (!refreshToken) return ResponseBuilder.error(res, 'Session expired', 'SESSION_EXPIRED', 401);
+  if (!refreshToken)
+    return ResponseBuilder.error(
+      res,
+      'Session expired',
+      'SESSION_EXPIRED',
+      401
+    );
 
   try {
     const { accessToken } = await authService.refreshAccessToken(refreshToken);
-    
+
     res.cookie('jwt', accessToken, {
       ...cookieOptions,
       expires: new Date(Date.now() + 8 * 60 * 60 * 1000),
@@ -84,22 +97,32 @@ exports.refreshAccessToken = catchAsync(async (req, res, next) => {
     return res.status(200).json({
       success: true,
       status: 'success',
-      token: accessToken
+      token: accessToken,
     });
   } catch (err) {
     if (refreshToken) await authService.revokeSession(refreshToken);
-    return ResponseBuilder.error(res, 'Invalid session', 'INVALID_SESSION', 401);
+    return ResponseBuilder.error(
+      res,
+      'Invalid session',
+      'INVALID_SESSION',
+      401
+    );
   }
 });
 
 exports.getMe = catchAsync(async (req, res, next) => {
-  return ResponseBuilder.success(res, { user: req.user });
+  return ResponseBuilder.success(res, { user: toUserDTO(req.user) });
 });
 
 exports.activateInvitation = catchAsync(async (req, res, next) => {
   const { token, name, password } = req.body;
   if (!token || !name || !password) {
-    return ResponseBuilder.error(res, 'Missing activation data.', 'MISSING_DATA', 400);
+    return ResponseBuilder.error(
+      res,
+      'Missing activation data.',
+      'MISSING_DATA',
+      400
+    );
   }
 
   const user = await authService.activateInvitation(token, name, password);
@@ -108,13 +131,23 @@ exports.activateInvitation = catchAsync(async (req, res, next) => {
 
 exports.forgotPassword = catchAsync(async (req, res, next) => {
   const resetToken = await authService.forgotPassword(req.body.email);
-  logger.info(`[MOCK EMAIL] Password reset token for ${req.body.email}: ${resetToken}`);
+  logger.info(
+    `[MOCK EMAIL] Password reset token for ${req.body.email}: ${resetToken}`
+  );
 
-  return ResponseBuilder.success(res, null, 200, 'Token sent to email (Mocked in logs)');
+  return ResponseBuilder.success(
+    res,
+    null,
+    200,
+    'Token sent to email (Mocked in logs)'
+  );
 });
 
 exports.resetPassword = catchAsync(async (req, res, next) => {
-  const user = await authService.resetPassword(req.params.token, req.body.password);
+  const user = await authService.resetPassword(
+    req.params.token,
+    req.body.password
+  );
   await sendAuthResponse(user, 200, req, res);
 });
 
@@ -125,7 +158,12 @@ exports.completeTour = catchAsync(async (req, res, next) => {
 
 exports.updateAvatar = catchAsync(async (req, res, next) => {
   if (!req.file) {
-    return ResponseBuilder.error(res, 'No image file provided.', 'MISSING_FILE', 400);
+    return ResponseBuilder.error(
+      res,
+      'No image file provided.',
+      'MISSING_FILE',
+      400
+    );
   }
 
   const publicUrl = await storageService.uploadFile(
@@ -134,32 +172,57 @@ exports.updateAvatar = catchAsync(async (req, res, next) => {
   );
 
   if (req.user.profilePicture) {
-    await storageService.deleteFile(req.user.profilePicture).catch(err => {
+    await storageService.deleteFile(req.user.profilePicture).catch((err) => {
       logger.error(`[AVATAR_CLEANUP_ERROR]: ${err.message}`);
     });
   }
-  
+
   const updatedUser = await authService.updateAvatar(req.user, publicUrl);
 
-  return ResponseBuilder.success(res, { user: updatedUser }, 200, 'Profile picture updated successfully');
+  return ResponseBuilder.success(
+    res,
+    { user: updatedUser },
+    200,
+    'Profile picture updated successfully'
+  );
 });
 
 exports.changePassword = catchAsync(async (req, res, next) => {
   const { currentPassword, newPassword, confirmPassword } = req.body;
 
   if (!currentPassword || !newPassword || !confirmPassword) {
-    return ResponseBuilder.error(res, 'All fields are required.', 'MISSING_FIELDS', 400);
+    return ResponseBuilder.error(
+      res,
+      'All fields are required.',
+      'MISSING_FIELDS',
+      400
+    );
   }
 
   if (newPassword !== confirmPassword) {
-    return ResponseBuilder.error(res, 'New passwords do not match.', 'PASSWORD_MISMATCH', 400);
+    return ResponseBuilder.error(
+      res,
+      'New passwords do not match.',
+      'PASSWORD_MISMATCH',
+      400
+    );
   }
 
   if (newPassword.length < 8) {
-    return ResponseBuilder.error(res, 'New password must be at least 8 characters.', 'PASSWORD_TOO_SHORT', 400);
+    return ResponseBuilder.error(
+      res,
+      'New password must be at least 8 characters.',
+      'PASSWORD_TOO_SHORT',
+      400
+    );
   }
 
   await authService.changePassword(req.user._id, currentPassword, newPassword);
 
-  return ResponseBuilder.success(res, null, 200, 'Password updated successfully.');
+  return ResponseBuilder.success(
+    res,
+    null,
+    200,
+    'Password updated successfully.'
+  );
 });

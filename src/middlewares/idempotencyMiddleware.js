@@ -1,4 +1,8 @@
-const { getRedisClient, isRedisConnected, withTimeout } = require('../config/redis');
+const {
+  getRedisClient,
+  isRedisConnected,
+  withTimeout,
+} = require('../config/redis');
 const crypto = require('crypto');
 const logger = require('../utils/logger');
 
@@ -15,7 +19,9 @@ const idempotency = (options = {}) => {
 
     if (!key) {
       if (process.env.NODE_ENV === 'development') {
-        logger.warn(`[IDEMPOTENCY] Missing ${headerName} header for ${req.method} ${req.url}`);
+        logger.warn(
+          `[IDEMPOTENCY] Missing ${headerName} header for ${req.method} ${req.url}`
+        );
       }
       return next();
     }
@@ -28,12 +34,13 @@ const idempotency = (options = {}) => {
     const redisKey = `idempotency:${req.path}:${key}`;
 
     try {
-      const cached = await withTimeout(redis.get(redisKey), 500); 
+      const cached = await withTimeout(redis.get(redisKey), 500);
       if (cached) {
         if (cached === 'IN_PROGRESS') {
           return res.status(409).json({
             status: 'fail',
-            message: 'A request with this idempotency key is already being processed.'
+            message:
+              'A request with this idempotency key is already being processed.',
           });
         }
         const { status, body } = JSON.parse(cached);
@@ -41,11 +48,14 @@ const idempotency = (options = {}) => {
         return res.status(status).json(body);
       }
 
-      const locked = await withTimeout(redis.set(redisKey, 'IN_PROGRESS', 'NX', 'EX', 60), 500);
+      const locked = await withTimeout(
+        redis.set(redisKey, 'IN_PROGRESS', 'NX', 'EX', 60),
+        500
+      );
       if (!locked) {
         return res.status(409).json({
           status: 'fail',
-          message: 'Conflict: Request already in progress.'
+          message: 'Conflict: Request already in progress.',
         });
       }
 
@@ -54,15 +64,17 @@ const idempotency = (options = {}) => {
         if (res.statusCode < 500) {
           const responseToCache = {
             status: res.statusCode,
-            body: body
+            body: body,
           };
-          redis.set(redisKey, JSON.stringify(responseToCache), 'EX', ttl).catch(err => {
-            logger.error('[IDEMPOTENCY] Redis set error: %o', err);
-          });
+          redis
+            .set(redisKey, JSON.stringify(responseToCache), 'EX', ttl)
+            .catch((err) => {
+              logger.error('[IDEMPOTENCY] Redis set error: %o', err);
+            });
         } else {
           redis.del(redisKey).catch(() => {});
         }
-        
+
         return originalJson.call(this, body);
       };
 

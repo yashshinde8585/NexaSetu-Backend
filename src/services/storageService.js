@@ -5,19 +5,38 @@ const logger = require('../utils/logger');
 const { STORAGE_CONSTANTS } = require('../utils/constants');
 const { v4: uuidv4 } = require('uuid');
 
+const withTimeout = async (promise, timeoutMs = 8000) => {
+  let timeout;
+  const timeoutPromise = new Promise((_, reject) => {
+    timeout = setTimeout(() => {
+      reject(new Error('Storage request timed out'));
+    }, timeoutMs);
+  });
+
+  try {
+    const result = await Promise.race([promise, timeoutPromise]);
+    clearTimeout(timeout);
+    return result;
+  } catch (err) {
+    clearTimeout(timeout);
+    throw err;
+  }
+};
+
 const uploadFile = async (fileBuffer, originalName, bucket = 'avatars') => {
   try {
     const fileExt = originalName.split('.').pop();
     const fileName = `${uuidv4()}.${fileExt}`;
     const filePath = `${bucket}/${fileName}`;
 
-    const { data, error } = await supabase.storage
-      .from(bucket)
-      .upload(filePath, fileBuffer, {
+    const { data, error } = await withTimeout(
+      supabase.storage.from(bucket).upload(filePath, fileBuffer, {
         contentType: `image/${fileExt}`,
         cacheControl: '3600',
-        upsert: false
-      });
+        upsert: false,
+      }),
+      8000
+    );
 
     if (error) {
       logger.error(`[STORAGE_UPLOAD_ERROR]: ${error.message}`);
@@ -38,16 +57,17 @@ const uploadFile = async (fileBuffer, originalName, bucket = 'avatars') => {
 const deleteFile = async (publicUrl, bucket = 'avatars') => {
   try {
     if (!publicUrl) return;
-    
+
     // Extract path from URL: https://.../storage/v1/object/public/avatars/avatars/filename.jpg
     const urlParts = publicUrl.split(`${bucket}/`);
     if (urlParts.length < 2) return;
-    
+
     const filePath = urlParts[1];
 
-    const { error } = await supabase.storage
-      .from(bucket)
-      .remove([filePath]);
+    const { error } = await withTimeout(
+      supabase.storage.from(bucket).remove([filePath]),
+      8000
+    );
 
     if (error) {
       logger.error(`[STORAGE_DELETE_ERROR]: ${error.message}`);
@@ -65,7 +85,8 @@ const checkQuota = async (workspaceId, fileSize) => {
   if (!workspace) return false;
 
   const used = workspace.subscription.storageUsed || 0;
-  const quota = workspace.subscription.storageQuota || STORAGE_CONSTANTS.DEFAULT_QUOTA;
+  const quota =
+    workspace.subscription.storageQuota || STORAGE_CONSTANTS.DEFAULT_QUOTA;
 
   return used + fileSize <= quota;
 };
@@ -79,7 +100,10 @@ const validateAttachment = (file, context) => {
   }
 
   if (file.size > STORAGE_CONSTANTS.MAX_FILE_SIZE) {
-    throw new AppError(`File too large. Max size: ${STORAGE_CONSTANTS.MAX_FILE_SIZE / (1024 * 1024)}MB`, 400);
+    throw new AppError(
+      `File too large. Max size: ${STORAGE_CONSTANTS.MAX_FILE_SIZE / (1024 * 1024)}MB`,
+      400
+    );
   }
 
   // Basic path validation - ensuring it belongs to the right workspace
@@ -96,18 +120,21 @@ const validateAttachment = (file, context) => {
  */
 const verifyAttachment = async (storagePath, expectedSize) => {
   try {
-    const { data, error } = await supabase.storage
-      .from(STORAGE_CONSTANTS.BUCKET_NAME)
-      .list(storagePath.split('/').slice(0, -1).join('/'), {
-        search: storagePath.split('/').pop(),
-      });
+    const { data, error } = await withTimeout(
+      supabase.storage
+        .from(STORAGE_CONSTANTS.BUCKET_NAME)
+        .list(storagePath.split('/').slice(0, -1).join('/'), {
+          search: storagePath.split('/').pop(),
+        }),
+      5000
+    );
 
     if (error || !data || data.length === 0) {
       return false;
     }
 
     // Supabase list returns metadata including size
-    const file = data.find(f => f.name === storagePath.split('/').pop());
+    const file = data.find((f) => f.name === storagePath.split('/').pop());
     return file && file.metadata.size === expectedSize;
   } catch (err) {
     logger.error(`[STORAGE_VERIFY_ERROR]: ${err.message}`);
@@ -120,7 +147,7 @@ const verifyAttachment = async (storagePath, expectedSize) => {
  */
 const updateStorageUsage = async (workspaceId, sizeDelta) => {
   await Workspace.findByIdAndUpdate(workspaceId, {
-    $inc: { 'subscription.storageUsed': sizeDelta }
+    $inc: { 'subscription.storageUsed': sizeDelta },
   });
 };
 
@@ -128,9 +155,12 @@ const updateStorageUsage = async (workspaceId, sizeDelta) => {
  * Generates a signed URL for temporary access to a private file.
  */
 const getSignedDownloadUrl = async (storagePath) => {
-  const { data, error } = await supabase.storage
-    .from(STORAGE_CONSTANTS.BUCKET_NAME)
-    .createSignedUrl(storagePath, 3600); // 1 hour
+  const { data, error } = await withTimeout(
+    supabase.storage
+      .from(STORAGE_CONSTANTS.BUCKET_NAME)
+      .createSignedUrl(storagePath, 3600), // 1 hour
+    5000
+  );
 
   if (error) {
     logger.error(`[STORAGE_SIGNED_URL_ERROR]: ${error.message}`);
@@ -143,13 +173,23 @@ const getSignedDownloadUrl = async (storagePath) => {
 /**
  * Generates a signed upload URL for direct-to-cloud uploads.
  */
-const getSignedUploadUrl = async (workspaceId, projectId, taskId, fileName, fileType, fileSize) => {
+const getSignedUploadUrl = async (
+  workspaceId,
+  projectId,
+  taskId,
+  fileName,
+  fileType,
+  fileSize
+) => {
   const fileExt = fileName.split('.').pop();
   const storagePath = `${workspaceId}/${projectId}/${taskId}/${uuidv4()}.${fileExt}`;
 
-  const { data, error } = await supabase.storage
-    .from(STORAGE_CONSTANTS.BUCKET_NAME)
-    .createSignedUploadUrl(storagePath);
+  const { data, error } = await withTimeout(
+    supabase.storage
+      .from(STORAGE_CONSTANTS.BUCKET_NAME)
+      .createSignedUploadUrl(storagePath),
+    5000
+  );
 
   if (error) {
     logger.error(`[STORAGE_SIGNED_UPLOAD_ERROR]: ${error.message}`);
@@ -159,7 +199,7 @@ const getSignedUploadUrl = async (workspaceId, projectId, taskId, fileName, file
   return {
     uploadUrl: data.signedUrl,
     storagePath,
-    token: data.token
+    token: data.token,
   };
 };
 

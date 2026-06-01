@@ -9,8 +9,10 @@ const onTaskCreated = async (task) => {
 };
 
 const onTaskStatusChanged = async (task, oldStatus, newStatus) => {
-  logger.info(`[Workflow] Task ${task._id} moved from ${oldStatus} to ${newStatus}`);
-  
+  logger.info(
+    `[Workflow] Task ${task._id} moved from ${oldStatus} to ${newStatus}`
+  );
+
   // E.g. notify QA if status is IN_REVIEW
   if (newStatus === 'IN_REVIEW') {
     logger.info(`[Workflow] Triggering QA assignment for task ${task._id}`);
@@ -21,4 +23,3 @@ module.exports = {
   onTaskCreated,
   onTaskStatusChanged,
 };
-

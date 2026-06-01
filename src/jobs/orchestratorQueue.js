@@ -30,7 +30,7 @@ const initOrchestratorWorker = () => {
   const agentOrchestrator = require('../services/agentOrchestrator');
   const FailedJob = require('../models/FailedJob');
 
-const { runWithJobContext } = require('../utils/context');
+  const { runWithJobContext } = require('../utils/context');
 
   orchestratorWorker = new Worker(
     'agent-orchestrator',
@@ -42,38 +42,64 @@ const { runWithJobContext } = require('../utils/context');
           await agentOrchestrator.processEvent(event);
           logger.info(`[WORKER] Completed job ${job.id}`);
         } catch (err) {
-          logger.error(`[WORKER] Critical failure in job ${job.id}: ${err.message}`);
+          logger.error(
+            `[WORKER] Critical failure in job ${job.id}: ${err.message}`
+          );
           throw err;
         }
       });
     },
-    { 
+    {
       connection,
       concurrency: parseInt(process.env.WORKER_CONCURRENCY || '10'),
       limiter: {
         max: 100,
-        duration: 5000
-      }
+        duration: 5000,
+      },
     }
   );
 
   workerManager.registerWorker(orchestratorWorker);
 
   orchestratorWorker.on('failed', async (job, err) => {
-    logger.error(`[QUEUE] Job ${job?.id} failed after ${job?.attemptsMade} attempts: ${err.message}`);
-    
+    const errMsg = err?.message || 'Unknown error';
+    const errStack = err?.stack || '';
+
+    logger.error(
+      `[QUEUE] Job ${job?.id} failed after ${job?.attemptsMade} attempts: ${errMsg}`
+    );
+
     if (job && job.attemptsMade >= 5) {
       try {
+        const sanitizePayload = (data) => {
+          try {
+            const str = JSON.stringify(data);
+            if (str.length > 50000) {
+              return {
+                _truncated: true,
+                _originalSize: str.length,
+                _sample: str.substring(0, 1000),
+              };
+            }
+            return data;
+          } catch (e) {
+            return { _error: 'Failed to serialize payload' };
+          }
+        };
+
         await FailedJob.create({
           jobId: job.id,
           queueName: 'agent-orchestrator',
-          payload: job.data,
-          error: err.message,
-          stack: err.stack,
-          timestamp: new Date()
+          payload: sanitizePayload(job.data),
+          error: errMsg,
+          stack: errStack,
+          timestamp: new Date(),
         });
         const { notify } = require('../utils/notify');
-        await notify('ERROR', `Job ${job.id} moved to DLQ`, { queue: 'agent-orchestrator', error: err.message });
+        await notify('ERROR', `Job ${job.id} moved to DLQ`, {
+          queue: 'agent-orchestrator',
+          error: errMsg,
+        });
         logger.info(`[DLQ] Job ${job.id} moved to failed_jobs collection.`);
       } catch (dlqErr) {
         logger.error(`[DLQ] Failed to record job failure: ${dlqErr.message}`);
@@ -90,5 +116,8 @@ const { runWithJobContext } = require('../utils/context');
 
 const getOrchestratorQueue = () => orchestratorQueue;
 
-module.exports = { initOrchestratorQueue, initOrchestratorWorker, getOrchestratorQueue };
-
+module.exports = {
+  initOrchestratorQueue,
+  initOrchestratorWorker,
+  getOrchestratorQueue,
+};

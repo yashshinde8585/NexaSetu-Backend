@@ -26,7 +26,7 @@ const eventSchema = new mongoose.Schema({
   metadata: {
     ip: String,
     userAgent: String,
-  }
+  },
 });
 
 const Event = mongoose.model('Event', eventSchema);
@@ -40,11 +40,13 @@ const trackEvent = async (user, eventType, payload = {}, meta = {}) => {
       payload,
       metadata: {
         ip: meta.ip,
-        userAgent: meta.userAgent
-      }
+        userAgent: meta.userAgent,
+      },
     });
-    
-    logger.info(`[METRICS] Event tracked: ${eventType} for user ${user?._id || 'ANONYMOUS'}`);
+
+    logger.info(
+      `[METRICS] Event tracked: ${eventType} for user ${user?._id || 'ANONYMOUS'}`
+    );
   } catch (err) {
     logger.error(`[METRICS] Tracking failed: ${err.message}`);
   }

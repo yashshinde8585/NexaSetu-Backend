@@ -7,11 +7,11 @@ const validate = (schema) => (req, res, next) => {
     return next(new AppError('Request body is missing or empty.', 400));
   }
   try {
-    schema.parse(req.body);
+    req.body = schema.parse(req.body);
     next();
   } catch (error) {
     let errorMessage = error.message;
-    
+
     if (error.errors) {
       errorMessage = error.errors
         .map((err) => `${err.path.join('.')}: ${err.message}`)
@@ -19,9 +19,9 @@ const validate = (schema) => (req, res, next) => {
     }
 
     // Track validation failures for observability.
-    metricsService.trackEvent(req.user, 'validation_failed', { 
+    metricsService.trackEvent(req.user, 'validation_failed', {
       path: req.originalUrl,
-      error: errorMessage 
+      error: errorMessage,
     });
 
     next(new AppError(errorMessage, 400));

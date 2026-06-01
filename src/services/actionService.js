@@ -33,5 +33,5 @@ const rejectAction = async (actionId, userId) => {
 module.exports = {
   getPendingActions,
   approveAction,
-  rejectAction
+  rejectAction,
 };

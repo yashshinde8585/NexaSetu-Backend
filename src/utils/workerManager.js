@@ -2,14 +2,47 @@ const logger = require('./logger');
 
 const workers = [];
 const queues = [];
+let sweepInterval = null;
+
+const startStatsSweep = (intervalMs = 300000) => {
+  if (sweepInterval) return;
+
+  sweepInterval = setInterval(async () => {
+    try {
+      const reports = await getHealthReport();
+      reports.forEach((report) => {
+        if (report.status === 'error') {
+          logger.error(
+            `[QUEUE-STATS-ERROR] Failed to query stats for queue ${report.name}: ${report.error}`
+          );
+        } else {
+          logger.info(
+            `[QUEUE-STATS] Queue: ${report.name} | Status: ${report.status} | Active: ${report.active} | Waiting: ${report.waiting} | Delayed: ${report.delayed} | Completed: ${report.completed} | Failed: ${report.failed}`
+          );
+        }
+      });
+    } catch (err) {
+      logger.error(
+        `[QUEUE-STATS-ERROR] Error in queue health sweep: ${err.message}`
+      );
+    }
+  }, intervalMs);
+
+  if (sweepInterval.unref) {
+    sweepInterval.unref();
+  }
+};
 
 const registerWorker = (worker) => {
   if (worker) {
     workers.push(worker);
     logger.debug(`[WORKER-MANAGER] Registered worker: ${worker.name}`);
-    
+
     worker.on('error', (err) => {
-      logger.error(`[WORKER-MANAGER] Worker ${worker.name} critical error: ${err.message}`, { stack: err.stack });
+      logger.error(
+        `[WORKER-MANAGER] Worker ${worker.name} critical error: ${err.message}`,
+        { stack: err.stack }
+      );
     });
   }
 };
@@ -18,35 +51,53 @@ const registerQueue = (queue) => {
   if (queue) {
     queues.push(queue);
     logger.debug(`[WORKER-MANAGER] Registered queue: ${queue.name}`);
+    startStatsSweep();
   }
 };
 
 const getHealthReport = async () => {
-  const reports = await Promise.all(queues.map(async (queue) => {
-    try {
-      const counts = await queue.getJobCounts('active', 'waiting', 'completed', 'failed', 'delayed');
-      return {
-        name: queue.name,
-        ...counts,
-        status: queue.client.status
-      };
-    } catch (err) {
-      return { name: queue?.name, status: 'error', error: err.message };
-    }
-  }));
+  const reports = await Promise.all(
+    queues.map(async (queue) => {
+      try {
+        const counts = await queue.getJobCounts(
+          'active',
+          'waiting',
+          'completed',
+          'failed',
+          'delayed'
+        );
+        return {
+          name: queue.name,
+          ...counts,
+          status: queue.client.status,
+        };
+      } catch (err) {
+        return { name: queue?.name, status: 'error', error: err.message };
+      }
+    })
+  );
   return reports;
 };
 
 const shutdown = async () => {
-  logger.info('[WORKER-MANAGER] Initiating graceful shutdown of workers and queues...');
-  
+  logger.info(
+    '[WORKER-MANAGER] Initiating graceful shutdown of workers and queues...'
+  );
+
+  if (sweepInterval) {
+    clearInterval(sweepInterval);
+    sweepInterval = null;
+  }
+
   const workerPromises = workers.map(async (worker) => {
     try {
       logger.info(`[WORKER-MANAGER] Closing worker: ${worker.name}`);
       await worker.close();
       logger.info(`[WORKER-MANAGER] Worker closed: ${worker.name}`);
     } catch (err) {
-      logger.error(`[WORKER-MANAGER] Error closing worker ${worker.name}: ${err.message}`);
+      logger.error(
+        `[WORKER-MANAGER] Error closing worker ${worker.name}: ${err.message}`
+      );
     }
   });
 
@@ -58,7 +109,9 @@ const shutdown = async () => {
       await queue.close();
       logger.info(`[WORKER-MANAGER] Queue closed: ${queue.name}`);
     } catch (err) {
-      logger.error(`[WORKER-MANAGER] Error closing queue ${queue.name}: ${err.message}`);
+      logger.error(
+        `[WORKER-MANAGER] Error closing queue ${queue.name}: ${err.message}`
+      );
     }
   });
 
@@ -70,5 +123,5 @@ module.exports = {
   registerWorker,
   registerQueue,
   getHealthReport,
-  shutdown
+  shutdown,
 };

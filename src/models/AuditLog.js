@@ -22,7 +22,15 @@ const auditLogSchema = new mongoose.Schema(
     entityType: {
       type: String,
       required: true,
-      enum: ['PROJECT', 'TASK', 'USER', 'INVITATION', 'AI_ACTION', 'TEAM', 'ROLE'],
+      enum: [
+        'PROJECT',
+        'TASK',
+        'USER',
+        'INVITATION',
+        'AI_ACTION',
+        'TEAM',
+        'ROLE',
+      ],
     },
     entityId: {
       type: mongoose.Schema.Types.ObjectId,
@@ -43,6 +51,8 @@ const auditLogSchema = new mongoose.Schema(
   }
 );
 
+auditLogSchema.index({ workspaceId: 1, action: 1, timestamp: -1 });
+auditLogSchema.index({ workspaceId: 1, timestamp: -1 });
 auditLogSchema.index({ timestamp: 1 }, { expiresAfterSeconds: 7776000 });
 
 module.exports = mongoose.model('AuditLog', auditLogSchema);

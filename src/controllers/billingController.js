@@ -8,7 +8,7 @@ const logger = require('../utils/logger');
 exports.getPlans = (req, res) => {
   res.status(200).json({
     status: 'success',
-    data: { plans: Object.values(PLANS) }
+    data: { plans: Object.values(PLANS) },
   });
 };
 
@@ -40,28 +40,30 @@ exports.selectPlan = catchAsync(async (req, res, next) => {
     });
   }
 
-  logger.info(`[BILLING] Plan activated: workspace=${workspaceId} plan=${plan}`);
+  logger.info(
+    `[BILLING] Plan activated: workspace=${workspaceId} plan=${plan}`
+  );
 
   res.status(200).json({
     status: 'success',
-    data: { subscription }
+    data: { subscription },
   });
 });
 
 // Get current subscription details including feature limits and usage
 exports.getSubscription = catchAsync(async (req, res, next) => {
   const workspaceId = req.user.workspaceId;
-  
+
   const subscription = await Subscription.findOne({ workspaceId });
-  
+
   if (!subscription) {
     return res.status(200).json({
       status: 'success',
-      data: { 
+      data: {
         subscription: null,
         limits: null,
-        planName: 'No Active Plan'
-      }
+        planName: 'No Active Plan',
+      },
     });
   }
 
@@ -69,23 +71,23 @@ exports.getSubscription = catchAsync(async (req, res, next) => {
 
   res.status(200).json({
     status: 'success',
-    data: { 
+    data: {
       subscription,
       limits: planConfig.features,
-      planName: planConfig.name
-    }
+      planName: planConfig.name,
+    },
   });
 });
 
 // Cancel subscription - no longer auto-reverts to Free
 exports.cancelSubscription = catchAsync(async (req, res, next) => {
   const workspaceId = req.user.workspaceId;
-  
+
   const subscription = await Subscription.findOneAndUpdate(
     { workspaceId },
-    { 
+    {
       status: 'canceled',
-      cancelAtPeriodEnd: false 
+      cancelAtPeriodEnd: false,
     },
     { new: true }
   );
@@ -97,6 +99,6 @@ exports.cancelSubscription = catchAsync(async (req, res, next) => {
   res.status(200).json({
     status: 'success',
     message: 'Subscription canceled.',
-    data: { subscription }
+    data: { subscription },
   });
 });

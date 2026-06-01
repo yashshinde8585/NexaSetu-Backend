@@ -23,18 +23,21 @@ const finalizeSprint = async (user, sprintId) => {
     sprintObjectId,
     user.workspaceId
   );
-  if (sprint.project && !sprintProjects.some(id => id.toString() === sprint.project.toString())) {
+  if (
+    sprint.project &&
+    !sprintProjects.some((id) => id.toString() === sprint.project.toString())
+  ) {
     sprintProjects.push(sprint.project);
   }
   const tasks = await Task.find({
     $or: [
       { sprint: sprintObjectId },
-      { 
+      {
         $and: [
           { project: { $in: sprintProjects } },
-          { $or: [{ sprint: null }, { sprint: { $exists: false } }] }
-        ]
-      }
+          { $or: [{ sprint: null }, { sprint: { $exists: false } }] },
+        ],
+      },
     ],
   }).populate('project assignedUser');
 
@@ -77,7 +80,10 @@ const finalizeSprint = async (user, sprintId) => {
     topContributors,
     metrics: {
       velocity: completedTasks.length,
-      retention: 100 - (pendingTasks.length / tasks.length) * 100,
+      retention:
+        tasks.length > 0
+          ? 100 - (pendingTasks.length / tasks.length) * 100
+          : 100,
       spillover: pendingTasks.length,
     },
   };
@@ -85,7 +91,9 @@ const finalizeSprint = async (user, sprintId) => {
 
 const getSprintStats = async (user, sprintId) => {
   const logger = require('../utils/logger');
-  logger.info(`[STATS] Fetching stats for sprint ${sprintId} in workspace ${user.workspaceId}`);
+  logger.info(
+    `[STATS] Fetching stats for sprint ${sprintId} in workspace ${user.workspaceId}`
+  );
   const sprintObjectId = new mongoose.Types.ObjectId(sprintId);
 
   const sprint = await Sprint.findOne({
@@ -101,8 +109,11 @@ const getSprintStats = async (user, sprintId) => {
     sprintObjectId,
     user.workspaceId
   );
-  
-  if (sprint.project && !sprintProjects.some(id => id.toString() === sprint.project.toString())) {
+
+  if (
+    sprint.project &&
+    !sprintProjects.some((id) => id.toString() === sprint.project.toString())
+  ) {
     sprintProjects.push(sprint.project);
   }
 
@@ -111,13 +122,13 @@ const getSprintStats = async (user, sprintId) => {
       $match: {
         $or: [
           { sprint: sprintObjectId },
-          { 
+          {
             $and: [
               { project: { $in: sprintProjects } },
-              { $or: [{ sprint: null }, { sprint: { $exists: false } }] }
-            ]
-          }
-        ]
+              { $or: [{ sprint: null }, { sprint: { $exists: false } }] },
+            ],
+          },
+        ],
       },
     },
     {
@@ -173,7 +184,7 @@ const getSprintStats = async (user, sprintId) => {
                 $divide: [
                   { $subtract: ['$completedAt', '$startedAt'] },
                   1000 * 60 * 60 * 24,
-                ], 
+                ],
               },
             },
           },
@@ -225,30 +236,40 @@ const getSprintStats = async (user, sprintId) => {
             $match: {
               $or: [
                 { sprint: sprintObjectId },
-                { 
+                {
                   $and: [
                     { project: { $in: sprintProjects } },
-                    { $or: [{ sprint: null }, { sprint: { $exists: false } }] }
-                  ]
-                }
+                    { $or: [{ sprint: null }, { sprint: { $exists: false } }] },
+                  ],
+                },
               ],
               status: 'done',
-              completedAt: { $gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) }
-            }
+              completedAt: {
+                $gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
+              },
+            },
           },
           {
             $group: {
-              _id: { $dateToString: { format: "%Y-%m-%d", date: "$completedAt" } },
-              count: { $sum: 1 }
-            }
+              _id: {
+                $dateToString: { format: '%Y-%m-%d', date: '$completedAt' },
+              },
+              count: { $sum: 1 },
+            },
           },
-          { $sort: { "_id": 1 } }
-        ]
+          { $sort: { _id: 1 } },
+        ],
       },
     },
   ]);
 
-  const raw = aggregation[0] || { summary: [], avgDuration: [], blockers: [], workload: [], velocityHistory: [] };
+  const raw = aggregation[0] || {
+    summary: [],
+    avgDuration: [],
+    blockers: [],
+    workload: [],
+    velocityHistory: [],
+  };
   const summary = raw.summary?.[0] || {
     total: 0,
     completed: 0,
@@ -266,22 +287,23 @@ const getSprintStats = async (user, sprintId) => {
       ? Math.round((summary.completed / summary.total) * 100)
       : 0;
   const strategicDebt =
-    summary.total > 0
-      ? Math.round((summary.overdue / summary.total) * 100)
-      : 0;
+    summary.total > 0 ? Math.round((summary.overdue / summary.total) * 100) : 0;
   const blockerDensityRaw =
     summary.total > 0 ? blockerCount / summary.total : 0;
 
-  const healthScore = Math.max(0, 100 - (strategicDebt * 1.5) - (blockerDensityRaw * 50));
-  
-  const activeTasks = summary.inProgress + summary.inReview;
-  const pressureIndex = summary.total > 0 
-    ? Math.round((activeTasks / summary.total) * 100) 
-    : 0;
+  const healthScore = Math.max(
+    0,
+    100 - strategicDebt * 1.5 - blockerDensityRaw * 50
+  );
 
-  const flowEfficiency = summary.total > 0 
-    ? Math.round((summary.completed / summary.total) * 100) 
-    : 0;
+  const activeTasks = summary.inProgress + summary.inReview;
+  const pressureIndex =
+    summary.total > 0 ? Math.round((activeTasks / summary.total) * 100) : 0;
+
+  const flowEfficiency =
+    summary.total > 0
+      ? Math.round((summary.completed / summary.total) * 100)
+      : 0;
 
   const trends = {
     completion: '+4.2%',
@@ -290,13 +312,15 @@ const getSprintStats = async (user, sprintId) => {
     debt: '-2%',
   };
 
-  const velocitySpark = Array(7).fill(0).map((_, i) => {
-    const d = new Date();
-    d.setDate(d.getDate() - (6 - i));
-    const dStr = d.toISOString().split('T')[0];
-    const found = raw.velocityHistory?.find(v => v._id === dStr);
-    return found ? found.count : 0;
-  });
+  const velocitySpark = Array(7)
+    .fill(0)
+    .map((_, i) => {
+      const d = new Date();
+      d.setDate(d.getDate() - (6 - i));
+      const dStr = d.toISOString().split('T')[0];
+      const found = raw.velocityHistory?.find((v) => v._id === dStr);
+      return found ? found.count : 0;
+    });
 
   return {
     sprint: {
@@ -352,39 +376,47 @@ const getSprintReportData = async (user, sprintId) => {
     sprintObjectId,
     user.workspaceId
   );
-  if (sprint.project && !sprintProjects.some(id => id.toString() === sprint.project.toString())) {
+  if (
+    sprint.project &&
+    !sprintProjects.some((id) => id.toString() === sprint.project.toString())
+  ) {
     sprintProjects.push(sprint.project);
   }
-  
-  const isManagement = ['WORKSPACE_ADMIN', 'WORKSPACE_MANAGER', 'TECH_LEAD'].includes(user.role);
-  
+
+  const isManagement = [
+    'WORKSPACE_ADMIN',
+    'WORKSPACE_MANAGER',
+    'TECH_LEAD',
+  ].includes(user.role);
+
   const Project = mongoose.model('Project');
   const projectDocs = await Project.find({ _id: { $in: sprintProjects } });
 
   const taskQuery = {
     $or: [
       { sprint: sprintObjectId },
-      { 
+      {
         $and: [
           { project: { $in: sprintProjects } },
-          { $or: [{ sprint: null }, { sprint: { $exists: false } }] }
-        ]
-      }
+          { $or: [{ sprint: null }, { sprint: { $exists: false } }] },
+        ],
+      },
     ],
   };
 
   if (!isManagement) {
-     const userProjectIds = projectDocs.filter(p => p.members?.includes(user._id)).map(p => p._id);
-     taskQuery.$and = taskQuery.$and || [];
-     taskQuery.$and.push({
-       $or: [
-         { assignedUser: user._id },
-         { project: { $in: userProjectIds } }
-       ]
-     });
+    const userProjectIds = projectDocs
+      .filter((p) => p.members?.includes(user._id))
+      .map((p) => p._id);
+    taskQuery.$and = taskQuery.$and || [];
+    taskQuery.$and.push({
+      $or: [{ assignedUser: user._id }, { project: { $in: userProjectIds } }],
+    });
   }
 
-  const tasks = await Task.find(taskQuery).populate('project assignedUser createdBy');
+  const tasks = await Task.find(taskQuery).populate(
+    'project assignedUser createdBy'
+  );
 
   return {
     sprint: {

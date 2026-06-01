@@ -23,7 +23,6 @@ const failedJobSchema = new mongoose.Schema({
     type: Date,
     default: Date.now,
   },
-
 });
 
 failedJobSchema.index({ timestamp: 1 }, { expireAfterSeconds: 2592000 });

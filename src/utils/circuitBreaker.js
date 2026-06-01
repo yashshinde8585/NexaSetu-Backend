@@ -1,10 +1,10 @@
 const logger = require('./logger');
 
-const createCircuitBreaker = function(serviceName, options = {}) {
+const createCircuitBreaker = function (serviceName, options = {}) {
   const failureThreshold = options.failureThreshold || 5;
   const resetTimeout = options.resetTimeout || 30000;
-  
-  let state = 'CLOSED'; 
+
+  let state = 'CLOSED';
   let failureCount = 0;
   let nextAttempt = Date.now();
 
@@ -15,12 +15,16 @@ const createCircuitBreaker = function(serviceName, options = {}) {
 
   const onFailure = (error) => {
     failureCount++;
-    logger.warn(`[CIRCUIT-BREAKER] ${serviceName} failure detected (${failureCount}/${failureThreshold}): ${error.message}`);
-    
+    logger.warn(
+      `[CIRCUIT-BREAKER] ${serviceName} failure detected (${failureCount}/${failureThreshold}): ${error.message}`
+    );
+
     if (failureCount >= failureThreshold || state === 'HALF_OPEN') {
       state = 'OPEN';
       nextAttempt = Date.now() + resetTimeout;
-      logger.error(`[CIRCUIT-BREAKER] ${serviceName} circuit OPENED. Tripping for ${resetTimeout}ms.`);
+      logger.error(
+        `[CIRCUIT-BREAKER] ${serviceName} circuit OPENED. Tripping for ${resetTimeout}ms.`
+      );
     }
   };
 
@@ -28,10 +32,14 @@ const createCircuitBreaker = function(serviceName, options = {}) {
     if (state === 'OPEN') {
       if (Date.now() > nextAttempt) {
         state = 'HALF_OPEN';
-        logger.info(`[CIRCUIT-BREAKER] ${serviceName} entering HALF_OPEN state. Testing connectivity...`);
+        logger.info(
+          `[CIRCUIT-BREAKER] ${serviceName} entering HALF_OPEN state. Testing connectivity...`
+        );
       } else {
         if (fallback) return fallback();
-        throw new Error(`Circuit Breaker for ${serviceName} is OPEN. Failing fast.`);
+        throw new Error(
+          `Circuit Breaker for ${serviceName} is OPEN. Failing fast.`
+        );
       }
     }
 
@@ -48,8 +56,12 @@ const createCircuitBreaker = function(serviceName, options = {}) {
 
   return {
     execute,
-    get state() { return state; },
-    get failureCount() { return failureCount; }
+    get state() {
+      return state;
+    },
+    get failureCount() {
+      return failureCount;
+    },
   };
 };
 

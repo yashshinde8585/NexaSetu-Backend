@@ -79,6 +79,20 @@ const userSchema = new mongoose.Schema(
       type: String,
       default: null,
     },
+    department: {
+      type: String,
+      enum: [
+        'Engineering',
+        'Product',
+        'QA & Testing',
+        'Design',
+        'Sales',
+        'Marketing',
+        'HR',
+        'Finance',
+      ],
+      index: true,
+    },
   },
   {
     timestamps: true,
@@ -86,6 +100,52 @@ const userSchema = new mongoose.Schema(
     toObject: { getters: true },
   }
 );
+
+userSchema.pre('save', function () {
+  if (this.isModified('jobTitle') || !this.department) {
+    const title = (this.jobTitle || '').toLowerCase();
+    const role = (this.role || '').toLowerCase();
+
+    if (
+      title.includes('engineer') ||
+      title.includes('developer') ||
+      role.includes('engineer') ||
+      role.includes('swe')
+    ) {
+      if (
+        title.includes('qa') ||
+        title.includes('test') ||
+        role.includes('qa')
+      ) {
+        this.department = 'QA & Testing';
+      } else {
+        this.department = 'Engineering';
+      }
+    } else if (title.includes('product') || role.includes('product')) {
+      this.department = 'Product';
+    } else if (
+      title.includes('design') ||
+      title.includes('ux') ||
+      title.includes('ui')
+    ) {
+      this.department = 'Design';
+    } else if (title.includes('sales')) {
+      this.department = 'Sales';
+    } else if (title.includes('marketing')) {
+      this.department = 'Marketing';
+    } else if (
+      title.includes('hr') ||
+      title.includes('recru') ||
+      role.includes('hr')
+    ) {
+      this.department = 'HR';
+    } else if (title.includes('finance') || title.includes('billing')) {
+      this.department = 'Finance';
+    } else {
+      this.department = 'Engineering';
+    }
+  }
+});
 
 userSchema.pre('save', async function () {
   if (!this.isModified('password')) return;
@@ -102,10 +162,27 @@ userSchema.index({ workspaceId: 1, githubId: 1 }, { sparse: true });
 
 userSchema.pre(/^find/, async function () {
   const query = this.getQuery();
-  const isGlobalLookup = query.email !== undefined || query._id !== undefined || this.getOptions().bypassTenantSafety;
-  
+  const isGlobalLookup =
+    query.email !== undefined ||
+    query._id !== undefined ||
+    query.clerkUserId !== undefined ||
+    this.getOptions().bypassTenantSafety;
+
   if (query.workspaceId === undefined && !isGlobalLookup) {
-    logger.warn(`[TENANT-SAFETY] Query executed without workspaceId filter on User collection: %o`, query);
+    const { getContext } = require('../utils/context');
+    const store = getContext();
+    const requestId = store.requestId || 'unknown';
+    const actor = store.user
+      ? `User(id=${store.user.id}, role=${store.user.role})`
+      : 'System/Anonymous';
+
+    const msg = `[TENANT-SAFETY] Query executed without workspaceId filter on User collection: ${JSON.stringify(query)} | Actor: ${actor} | RequestId: ${requestId}`;
+
+    if (process.env.ENFORCE_TENANT_SAFETY === 'true') {
+      throw new Error(msg);
+    } else {
+      logger.warn(msg);
+    }
   }
 });
 

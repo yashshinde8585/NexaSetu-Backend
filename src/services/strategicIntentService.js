@@ -6,13 +6,14 @@ const AppError = require('../utils/appError');
 const calculateSAS = (weight, storyPoints = 1) => {
   const { v = 0, u = 0, rm = 0, sf = 0 } = weight || {};
   const effort = Math.max(storyPoints, 1);
-  
+
   // Weights (could be configurable)
   const weights = { v: 0.4, u: 0.2, rm: 0.2, sf: 0.2 };
-  
-  const baseScore = (weights.v * v + weights.u * u + weights.rm * rm + weights.sf * sf);
+
+  const baseScore =
+    weights.v * v + weights.u * u + weights.rm * rm + weights.sf * sf;
   const score = baseScore / Math.sqrt(effort);
-  
+
   return parseFloat(score.toFixed(2));
 };
 
@@ -42,7 +43,7 @@ const generateStoriesFromIntent = async (intentId, userId) => {
   const createdStories = [];
   for (const data of storiesData) {
     const sasScore = calculateSAS(data.strategicWeight, data.storyPoints);
-    
+
     const story = await Task.create({
       title: data.title,
       description: data.description,
@@ -53,7 +54,7 @@ const generateStoriesFromIntent = async (intentId, userId) => {
       storyPoints: data.storyPoints,
       sasScore: sasScore,
       createdBy: userId,
-      status: 'todo'
+      status: 'todo',
     });
     createdStories.push(story);
   }
@@ -70,13 +71,17 @@ const getStrategicHub = async (projectId) => {
   const [intents, epics, stories] = await Promise.all([
     Task.find({ project: projectId, type: 'intent' }).sort({ sasScore: -1 }),
     Task.find({ project: projectId, type: 'epic' }),
-    Task.find({ project: projectId, type: 'story' })
+    Task.find({ project: projectId, type: 'story' }),
   ]);
 
   return { intents, epics, stories };
 };
 
-const updateStrategicAlignment = async (taskId, strategicWeight, storyPoints) => {
+const updateStrategicAlignment = async (
+  taskId,
+  strategicWeight,
+  storyPoints
+) => {
   const task = await Task.findById(taskId);
   if (!task) throw new AppError('Task not found', 404);
 
@@ -91,31 +96,33 @@ const updateStrategicAlignment = async (taskId, strategicWeight, storyPoints) =>
 };
 
 const getDependencyGraph = async (projectId) => {
-  const tasks = await Task.find({ project: projectId }).select('title type status parentId dependencies sasScore');
-  
-  const nodes = tasks.map(t => ({
+  const tasks = await Task.find({ project: projectId }).select(
+    'title type status parentId dependencies sasScore'
+  );
+
+  const nodes = tasks.map((t) => ({
     id: t._id.toString(),
     data: { label: t.title, type: t.type, status: t.status, sas: t.sasScore },
-    position: { x: 0, y: 0 }
+    position: { x: 0, y: 0 },
   }));
 
   const edges = [];
-  tasks.forEach(t => {
+  tasks.forEach((t) => {
     if (t.parentId) {
       edges.push({
         id: `e-parent-${t.parentId}-${t._id}`,
         source: t.parentId.toString(),
         target: t._id.toString(),
-        label: 'parent-of'
+        label: 'parent-of',
       });
     }
     if (t.dependencies && t.dependencies.length > 0) {
-      t.dependencies.forEach(depId => {
+      t.dependencies.forEach((depId) => {
         edges.push({
           id: `e-dep-${depId}-${t._id}`,
           source: depId.toString(),
           target: t._id.toString(),
-          label: 'blocks'
+          label: 'blocks',
         });
       });
     }
@@ -130,5 +137,5 @@ module.exports = {
   findPotentialDuplicates,
   getStrategicHub,
   updateStrategicAlignment,
-  getDependencyGraph
+  getDependencyGraph,
 };

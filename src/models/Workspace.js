@@ -43,7 +43,7 @@ const workspaceSchema = new mongoose.Schema(
       storageQuota: {
         type: Number,
         default: 104857600, // 100MB Default
-      }
+      },
     },
     settings: {
       logo: String,
@@ -51,12 +51,12 @@ const workspaceSchema = new mongoose.Schema(
       timezone: { type: String, default: 'UTC+5:30' },
       workingHours: { type: String, default: '09:00 - 18:00' },
       notificationRules: { type: String, default: 'Email, Slack' },
-      projectDefaults: { type: String, default: 'Sprint: 14 days' }
+      projectDefaults: { type: String, default: 'Sprint: 14 days' },
     },
     rolePermissions: {
       type: Map,
       of: [String],
-      default: {}
+      default: {},
     },
     integrations: {
       github: {
@@ -64,15 +64,15 @@ const workspaceSchema = new mongoose.Schema(
         accessToken: String,
         githubId: { type: String, index: true, sparse: true },
         repoCount: { type: Number, default: 0 },
-        lastSync: Date
+        lastSync: Date,
       },
       slack: {
         connected: { type: Boolean, default: false },
         channel: String,
         webhookUrl: String,
-        lastSync: Date
-      }
-    }
+        lastSync: Date,
+      },
+    },
   },
   {
     timestamps: true,

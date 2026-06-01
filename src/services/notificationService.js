@@ -46,5 +46,5 @@ module.exports = {
   getMyNotifications,
   markAsRead,
   markAllAsRead,
-  deleteAllMyNotifications
+  deleteAllMyNotifications,
 };

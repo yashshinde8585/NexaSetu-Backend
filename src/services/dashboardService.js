@@ -17,7 +17,10 @@ const getDashboardStats = async (user, sprintId) => {
     .filter((p) => p.sprint?.toString() === sprintId)
     .map((p) => p._id);
 
-  const baseMatch = { project: { $in: projectIds } };
+  const baseMatch = {
+    workspaceId: user.workspaceId,
+    project: { $in: projectIds },
+  };
   if (sprintFilter) {
     baseMatch.$or = [
       { sprint: sprintFilter },
@@ -94,6 +97,7 @@ const getDashboardStats = async (user, sprintId) => {
                       {
                         $and: [
                           { $ne: ['$status', 'done'] },
+                          { $ne: ['$dueDate', null] },
                           { $lt: ['$dueDate', new Date()] },
                         ],
                       },
@@ -169,6 +173,7 @@ const getDashboardStats = async (user, sprintId) => {
                             ],
                           },
                           { $ne: ['$status', 'done'] },
+                          { $ne: ['$dueDate', null] },
                           { $lt: ['$dueDate', new Date()] },
                         ],
                       },
@@ -183,7 +188,7 @@ const getDashboardStats = async (user, sprintId) => {
         },
       },
     ]),
-    Task.find({ project: { $in: projectIds } })
+    Task.find({ workspaceId: user.workspaceId, project: { $in: projectIds } })
       .sort({ updatedAt: -1 })
       .limit(5)
       .populate('project', 'name')
@@ -267,7 +272,7 @@ const getDashboardStats = async (user, sprintId) => {
 
     const pendingTasks = pStat.todo + pStat.inProgress;
     const pendingScore =
-      pStat.total > 0 ? (1 - pendingTasks / pStat.total) * 100 * 0.3 : 30; 
+      pStat.total > 0 ? (1 - pendingTasks / pStat.total) * 100 * 0.3 : 30;
 
     const delayImpact = (pStat.delayed + pStat.atRisk * 0.5) / pStat.total;
     const delayScore = pStat.total > 0 ? (1 - delayImpact) * 100 * 0.2 : 20;
@@ -314,7 +319,6 @@ const getDashboardStats = async (user, sprintId) => {
       sprint: p.sprint,
     };
   });
-
 
   return {
     summary: stats,

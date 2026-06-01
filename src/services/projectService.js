@@ -4,11 +4,14 @@ const Task = require('../models/Task');
 const auditService = require('../services/auditService');
 const { calculateDelayStatus } = require('../utils/taskUtils');
 const { getProjectAccessQuery } = require('../utils/queryHelpers');
-const { isManagerOrAdmin, hasLeadRestriction } = require('../utils/authHelpers');
+const {
+  isManagerOrAdmin,
+  hasLeadRestriction,
+} = require('../utils/authHelpers');
 const AppError = require('../utils/appError');
 const metricsService = require('./metricsService');
 const logger = require('../utils/logger');
-const { invalidateCache } = require('../middleware/cacheMiddleware');
+const { invalidateCache } = require('../middlewares/cacheMiddleware');
 
 const createProject = async (user, data) => {
   const { name, sprint } = data;
@@ -22,17 +25,28 @@ const createProject = async (user, data) => {
   }
 
   if (!user.workspaceId) {
-    throw new AppError('Tactical Workspace context is missing. Please re-authenticate.', 400);
+    throw new AppError(
+      'Tactical Workspace context is missing. Please re-authenticate.',
+      400
+    );
   }
 
-  const sprintId = sprint && sprint.trim() && mongoose.Types.ObjectId.isValid(sprint) ? sprint : undefined;
+  const sprintId =
+    sprint && sprint.trim() && mongoose.Types.ObjectId.isValid(sprint)
+      ? sprint
+      : undefined;
 
-  let key = name.replace(/[^a-zA-Z]/g, '').substring(0, 3).toUpperCase();
+  let key = name
+    .replace(/[^a-zA-Z]/g, '')
+    .substring(0, 3)
+    .toUpperCase();
   if (key.length < 3) key = (key + 'XXX').substring(0, 3);
-  
+
   let uniqueKey = key;
   let counter = 1;
-  while (await Project.findOne({ workspaceId: user.workspaceId, key: uniqueKey })) {
+  while (
+    await Project.findOne({ workspaceId: user.workspaceId, key: uniqueKey })
+  ) {
     uniqueKey = `${key}${counter}`;
     counter++;
   }
@@ -58,13 +72,17 @@ const createProject = async (user, data) => {
     details: { name: project.name },
   });
 
-  metricsService.trackEvent(user, 'project_created', { 
-    projectId: project._id, 
-    type: project.type 
-  }).catch(err => logger.error(`[METRICS] Failed to track project creation: ${err.message}`));
-  
+  metricsService
+    .trackEvent(user, 'project_created', {
+      projectId: project._id,
+      type: project.type,
+    })
+    .catch((err) =>
+      logger.error(`[METRICS] Failed to track project creation: ${err.message}`)
+    );
+
   await invalidateCache(user.workspaceId, 'project');
-  
+
   return project;
 };
 
@@ -90,14 +108,23 @@ const getProject = async (user, id) => {
   const query = getProjectAccessQuery(user);
   query._id = id;
 
-  const project = await Project.findOne(query).populate('members', 'name email role profilePicture');
+  const project = await Project.findOne(query).populate(
+    'members',
+    'name email role profilePicture'
+  );
 
   if (!project) {
     const exists = await Project.findById(id);
     if (!exists) {
-      throw new AppError('Mission footprint not found in the central ledger.', 404);
+      throw new AppError(
+        'Mission footprint not found in the central ledger.',
+        404
+      );
     }
-    throw new AppError('You lack the tactical credentials to view this project.', 403);
+    throw new AppError(
+      'You lack the tactical credentials to view this project.',
+      403
+    );
   }
 
   return project;
@@ -112,9 +139,15 @@ const getProjectAnalytics = async (user, id, sprintId) => {
   if (!project) {
     const exists = await Project.findById(id);
     if (!exists) {
-      throw new AppError('Mission footprint not found in the central ledger.', 404);
+      throw new AppError(
+        'Mission footprint not found in the central ledger.',
+        404
+      );
     }
-    throw new AppError('You lack the tactical credentials to access these analytics.', 403);
+    throw new AppError(
+      'You lack the tactical credentials to access these analytics.',
+      403
+    );
   }
 
   const pipeline = [
@@ -206,7 +239,10 @@ const updateProject = async (user, id, updateData) => {
     Object.keys(updateData).length === 1 && 'sprint' in updateData;
 
   if (!isManager && (!isMember || !isOnlySprintUpdate)) {
-    throw new AppError('You do not have permission to update tactical settings for this mission.', 403);
+    throw new AppError(
+      'You do not have permission to update tactical settings for this mission.',
+      403
+    );
   }
 
   // Sanitize: Convert empty strings or invalid IDs to null for the sprint field
