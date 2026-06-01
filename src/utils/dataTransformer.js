@@ -1,9 +1,8 @@
-
 const transform = (req, allowedFields = []) => {
   const dto = {};
-  
+
   if (allowedFields.length > 0) {
-    allowedFields.forEach(field => {
+    allowedFields.forEach((field) => {
       if (req.body[field] !== undefined) {
         dto[field] = req.body[field];
       }
@@ -17,12 +16,12 @@ const transform = (req, allowedFields = []) => {
     userId: req.user?._id,
     workspaceId: req.user?.workspaceId,
     timestamp: new Date(),
-    requestId: req.id // Injected by requestId middleware.
+    requestId: req.id, // Injected by requestId middleware.
   };
 
   return dto;
 };
 
 module.exports = {
-  transform
+  transform,
 };

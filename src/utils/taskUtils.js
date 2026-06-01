@@ -1,6 +1,5 @@
 const { parseDate } = require('./common');
 
-
 // Calculate if a task is Delayed, At Risk, or On Track
 exports.calculateDelayStatus = (task, now = new Date()) => {
   const dueDate = parseDate(task.dueDate);
@@ -23,7 +22,6 @@ exports.calculateDelayStatus = (task, now = new Date()) => {
 
   return 'On Track';
 };
-
 
 // Add business days to a date skipping weekends
 exports.addBusinessDays = (date, days) => {

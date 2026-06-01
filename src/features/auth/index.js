@@ -3,5 +3,5 @@ const authController = require('../../controllers/authController');
 
 module.exports = {
   service: authService,
-  controller: authController
+  controller: authController,
 };

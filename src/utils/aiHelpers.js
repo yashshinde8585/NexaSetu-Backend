@@ -1,6 +1,5 @@
 const crypto = require('crypto');
 
-
 exports.extractAndParseJSON = (text) => {
   if (!text || typeof text !== 'string') return null;
 
@@ -12,7 +11,11 @@ exports.extractAndParseJSON = (text) => {
 
     let jsonStr = '';
 
-    if (firstBrace !== -1 && lastBrace !== -1 && (firstBracket === -1 || firstBrace < firstBracket)) {
+    if (
+      firstBrace !== -1 &&
+      lastBrace !== -1 &&
+      (firstBracket === -1 || firstBrace < firstBracket)
+    ) {
       jsonStr = text.substring(firstBrace, lastBrace + 1);
     } else if (firstBracket !== -1 && lastBracket !== -1) {
       jsonStr = text.substring(firstBracket, lastBracket + 1);
@@ -23,7 +26,7 @@ exports.extractAndParseJSON = (text) => {
     const cleanStr = jsonStr
       .replace(/```json/g, '')
       .replace(/```/g, '')
-      .replace(/,\s*([\]}])/g, '$1') 
+      .replace(/,\s*([\]}])/g, '$1')
       .trim();
 
     return JSON.parse(cleanStr);
@@ -32,13 +35,13 @@ exports.extractAndParseJSON = (text) => {
   }
 };
 
-
 exports.truncateToWindow = (text, maxTokens = 4000) => {
   if (!text) return '';
   const maxChars = maxTokens * 4;
-  return text.length <= maxChars ? text : text.substring(0, maxChars) + '... [TRUNCATED]';
+  return text.length <= maxChars
+    ? text
+    : text.substring(0, maxChars) + '... [TRUNCATED]';
 };
-
 
 exports.sanitizeInput = (text) => {
   if (!text || typeof text !== 'string') return '';
@@ -48,7 +51,6 @@ exports.sanitizeInput = (text) => {
     .replace(/\]/g, '&#93;')
     .trim();
 };
-
 
 exports.generateHash = (text) => {
   if (!text) return '';

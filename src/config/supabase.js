@@ -5,7 +5,9 @@ const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 if (!supabaseUrl || !supabaseServiceRoleKey) {
-  logger.warn('[SUPABASE] Missing backend environment variables. Storage cleanup will fail.');
+  logger.warn(
+    '[SUPABASE] Missing backend environment variables. Storage cleanup will fail.'
+  );
 }
 
 // Service role client for bypass RLS in cleanup jobs

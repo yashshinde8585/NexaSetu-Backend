@@ -1,7 +1,15 @@
 const AuditLog = require('../models/AuditLog');
 const logger = require('../utils/logger');
 
-const log = async ({ action, user, workspaceId, entityType, entityId, details, req }) => {
+const log = async ({
+  action,
+  user,
+  workspaceId,
+  entityType,
+  entityId,
+  details,
+  req,
+}) => {
   try {
     const entry = {
       action,
@@ -10,12 +18,16 @@ const log = async ({ action, user, workspaceId, entityType, entityId, details, r
       entityType,
       entityId,
       details,
-      ip: req ? (req.ip || req.headers['x-forwarded-for'] || req.connection.remoteAddress) : 'system',
-      timestamp: new Date()
+      ip: req
+        ? req.ip ||
+          req.headers['x-forwarded-for'] ||
+          req.connection.remoteAddress
+        : 'system',
+      timestamp: new Date(),
     };
 
     await AuditLog.create(entry);
-    
+
     if (process.env.NODE_ENV !== 'production') {
       logger.info(`[AUDIT]: ${action} on ${entityType}:${entityId}`);
     }
@@ -26,11 +38,11 @@ const log = async ({ action, user, workspaceId, entityType, entityId, details, r
 
 const logUpdate = async (user, entityType, entityId, before, after, req) => {
   const diff = {};
-  Object.keys(after).forEach(key => {
+  Object.keys(after).forEach((key) => {
     if (JSON.stringify(before[key]) !== JSON.stringify(after[key])) {
       diff[key] = {
         old: before[key],
-        new: after[key]
+        new: after[key],
       };
     }
   });
@@ -43,7 +55,7 @@ const logUpdate = async (user, entityType, entityId, before, after, req) => {
     entityType,
     entityId,
     details: { diff },
-    req
+    req,
   });
 };
 

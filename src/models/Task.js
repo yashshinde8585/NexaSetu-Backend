@@ -27,7 +27,15 @@ const taskSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ['todo', 'in_progress', 'blocked', 'in_review', 'approved', 'rejected', 'done'],
+      enum: [
+        'todo',
+        'in_progress',
+        'blocked',
+        'in_review',
+        'approved',
+        'rejected',
+        'done',
+      ],
       default: 'todo',
       index: true,
     },
@@ -83,7 +91,7 @@ const taskSchema = new mongoose.Schema(
       {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'Task',
-        index: true, 
+        index: true,
       },
     ],
     parentId: {
@@ -177,7 +185,13 @@ const taskSchema = new mongoose.Schema(
     ],
     reviewStatus: {
       type: String,
-      enum: ['pending', 'code_review', 'test_validation', 'approved', 'rejected'],
+      enum: [
+        'pending',
+        'code_review',
+        'test_validation',
+        'approved',
+        'rejected',
+      ],
       default: 'pending',
     },
     escalationOwner: {
@@ -241,7 +255,7 @@ taskSchema.index({ workspaceId: 1, project: 1, status: 1, type: 1 });
 taskSchema.index({ workspaceId: 1, assignedUser: 1, status: 1 });
 taskSchema.index({ workspaceId: 1, status: 1, dueDate: 1 });
 taskSchema.index({ workspaceId: 1, type: 1, status: 1 });
-taskSchema.index({ project: 1, taskNumber: 1 }, { unique: true }); 
+taskSchema.index({ project: 1, taskNumber: 1 }, { unique: true });
 
 taskSchema.pre('save', async function () {
   if (this.timelineHistory && this.timelineHistory.length > 100) {
@@ -257,9 +271,12 @@ taskSchema.pre('save', async function () {
       if (isRedisConnected()) {
         const nextNumber = await redis.incr(projectKey);
         this.taskNumber = nextNumber;
-        
+
         const Project = mongoose.model('Project');
-        Project.updateOne({ _id: this.project }, { lastTaskNumber: nextNumber }).catch(err => {
+        Project.updateOne(
+          { _id: this.project },
+          { lastTaskNumber: nextNumber }
+        ).catch((err) => {
           logger.error(err);
         });
       } else {
@@ -277,7 +294,7 @@ taskSchema.pre('save', async function () {
       }
     } catch (err) {
       logger.error(err);
-      if (err.code === 11000) throw err; 
+      if (err.code === 11000) throw err;
       this.taskNumber = Date.now();
     }
   }
@@ -285,8 +302,24 @@ taskSchema.pre('save', async function () {
 
 taskSchema.pre(/^find/, async function () {
   const query = this.getQuery();
-  if (query.workspaceId === undefined && !this.getOptions().bypassTenantSafety) {
-    logger.warn(`[TENANT-SAFETY] Query executed without workspaceId filter on Task collection: %o`, query);
+  if (
+    query.workspaceId === undefined &&
+    !this.getOptions().bypassTenantSafety
+  ) {
+    const { getContext } = require('../utils/context');
+    const store = getContext();
+    const requestId = store.requestId || 'unknown';
+    const actor = store.user
+      ? `User(id=${store.user.id}, role=${store.user.role})`
+      : 'System/Anonymous';
+
+    const msg = `[TENANT-SAFETY] Query executed without workspaceId filter on Task collection: ${JSON.stringify(query)} | Actor: ${actor} | RequestId: ${requestId}`;
+
+    if (process.env.ENFORCE_TENANT_SAFETY === 'true') {
+      throw new Error(msg);
+    } else {
+      logger.warn(msg);
+    }
   }
 });
 

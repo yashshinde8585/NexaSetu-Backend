@@ -10,14 +10,18 @@ exports.getWorkspace = catchAsync(async (req, res, next) => {
   const workspaceId = req.user.workspaceId;
   const role = req.user.role; // Extracting role from JWT payload/User object
 
-  const dashboardData = await engineeringService.getWorkspaceData(userId, workspaceId, role);
+  const dashboardData = await engineeringService.getWorkspaceData(
+    userId,
+    workspaceId,
+    role
+  );
 
   res.status(200).json({
     status: 'success',
     data: {
       ...dashboardData,
       roleDisplay: role.replace('_', ' '),
-      timestamp: new Date()
-    }
+      timestamp: new Date(),
+    },
   });
 });

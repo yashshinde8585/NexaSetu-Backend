@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const logger = require('../utils/logger');
 
 const serviceSchema = new mongoose.Schema(
   {
@@ -53,5 +54,20 @@ const serviceSchema = new mongoose.Schema(
 
 // Compound index for workspace-specific status queries
 serviceSchema.index({ workspaceId: 1, status: 1 });
+
+serviceSchema.pre(/^find/, async function () {
+  const query = this.getQuery();
+  if (
+    query.workspaceId === undefined &&
+    !this.getOptions().bypassTenantSafety
+  ) {
+    const msg = `[TENANT-SAFETY] Query executed without workspaceId filter on Service collection: ${JSON.stringify(query)}`;
+    if (process.env.ENFORCE_TENANT_SAFETY === 'true') {
+      throw new Error(msg);
+    } else {
+      logger.warn(msg);
+    }
+  }
+});
 
 module.exports = mongoose.model('Service', serviceSchema);

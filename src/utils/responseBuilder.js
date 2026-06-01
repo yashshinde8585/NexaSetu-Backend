@@ -1,8 +1,13 @@
-
-const success = (res, data = null, statusCode = 200, message = 'Operation successful', code = 'SUCCESS') => {
+const success = (
+  res,
+  data = null,
+  statusCode = 200,
+  message = 'Operation successful',
+  code = 'SUCCESS'
+) => {
   const responseBody = {
     success: true,
-    status: 'success', 
+    status: 'success',
     code,
     message,
   };
@@ -18,7 +23,12 @@ const success = (res, data = null, statusCode = 200, message = 'Operation succes
   return res.status(statusCode).json(responseBody);
 };
 
-const error = (res, message = 'Operation failed', code = 'ERROR', statusCode = 400) => {
+const error = (
+  res,
+  message = 'Operation failed',
+  code = 'ERROR',
+  statusCode = 400
+) => {
   return res.status(statusCode).json({
     success: false,
     status: 'error',
@@ -29,5 +39,5 @@ const error = (res, message = 'Operation failed', code = 'ERROR', statusCode = 4
 
 module.exports = {
   success,
-  error
+  error,
 };

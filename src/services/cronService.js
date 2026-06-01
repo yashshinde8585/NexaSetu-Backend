@@ -17,8 +17,10 @@ const runMorningDiagnostic = async () => {
     const workspaces = await User.distinct('workspaceId');
     for (const workspaceId of workspaces) {
       if (!workspaceId) continue;
-      
-      logger.info(`[${SERVICE_NAME}] Running intelligence diagnostic for workspace: ${workspaceId}`);
+
+      logger.info(
+        `[${SERVICE_NAME}] Running intelligence diagnostic for workspace: ${workspaceId}`
+      );
       await riskMonitorService.runProjectRiskAnalysis(workspaceId);
     }
   } catch (error) {

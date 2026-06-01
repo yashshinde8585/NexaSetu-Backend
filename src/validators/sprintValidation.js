@@ -20,12 +20,18 @@ const createSprintSchema = z.object({
 const updateSprintSchema = z.object({
   name: z.string().min(1).max(100).optional(),
   goal: z.string().optional(),
-  startDate: z.string().optional().refine((val) => !val || !isNaN(Date.parse(val)), {
-    message: 'Invalid start date format',
-  }),
-  endDate: z.string().optional().refine((val) => !val || !isNaN(Date.parse(val)), {
-    message: 'Invalid end date format',
-  }),
+  startDate: z
+    .string()
+    .optional()
+    .refine((val) => !val || !isNaN(Date.parse(val)), {
+      message: 'Invalid start date format',
+    }),
+  endDate: z
+    .string()
+    .optional()
+    .refine((val) => !val || !isNaN(Date.parse(val)), {
+      message: 'Invalid end date format',
+    }),
   status: z.enum(['active', 'completed', 'upcoming', 'archived']).optional(),
   capacityPredicted: z.number().min(0).optional(),
   pointsTarget: z.number().min(0).optional(),

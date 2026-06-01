@@ -16,15 +16,19 @@ const initCronQueue = async () => {
       attempts: 3,
       backoff: { type: 'exponential', delay: 5000 },
       removeOnComplete: { count: 50 },
-      removeOnFail: { count: 100 }
-    }
+      removeOnFail: { count: 100 },
+    },
   });
 
   try {
-    await cronQueue.add('morning-diagnostic', {}, {
-      repeat: { cron: '0 8 * * *' },
-      jobId: 'daily-morning-diagnostic'
-    });
+    await cronQueue.add(
+      'morning-diagnostic',
+      {},
+      {
+        repeat: { cron: '0 8 * * *' },
+        jobId: 'daily-morning-diagnostic',
+      }
+    );
     logger.info('[QUEUE] Cron Repeatable Jobs scheduled.');
   } catch (err) {
     logger.error(`[QUEUE] Failed to schedule cron jobs: ${err.message}`);
@@ -44,16 +48,16 @@ const initCronWorker = () => {
     'system-cron',
     async (job) => {
       logger.info(`[CRON-WORKER] Executing scheduled job: ${job.name}`);
-      
+
       if (job.name === 'morning-diagnostic') {
         await cronService.runMorningDiagnostic();
       }
-      
+
       logger.info(`[CRON-WORKER] Job completed: ${job.name}`);
     },
-    { 
+    {
       connection,
-      concurrency: 1 
+      concurrency: 1,
     }
   );
 

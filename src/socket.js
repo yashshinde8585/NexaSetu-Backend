@@ -28,25 +28,34 @@ const EVENTS = {
   AI_EXTRACTION_COMPLETE: 'AI_EXTRACTION_COMPLETE',
   MAGICBAR_COMPLETE: 'MAGICBAR_COMPLETE',
   NOTIFICATION_RECEIVED: 'NOTIFICATION_RECEIVED',
-  ERROR: 'error'
+  ERROR: 'error',
 };
 
 const init = (server) => {
   try {
-    const pubClient = createClient('SocketPub', { maxRetriesPerRequest: null, enableReadyCheck: true });
-    const subClient = createClient('SocketSub', { maxRetriesPerRequest: null, enableReadyCheck: true });
-    
+    const pubClient = createClient('SocketPub', {
+      maxRetriesPerRequest: null,
+      enableReadyCheck: true,
+    });
+    const subClient = createClient('SocketSub', {
+      maxRetriesPerRequest: null,
+      enableReadyCheck: true,
+    });
+
     emitter = new Emitter(pubClient);
 
     io = new Server(server, {
       cors: {
-        origin: config.env === 'development' ? 'http://localhost:5173' : config.clientUrl,
+        origin:
+          config.env === 'development'
+            ? 'http://localhost:5173'
+            : config.clientUrl,
         methods: ['GET', 'POST'],
         credentials: true,
       },
       pingTimeout: 60000,
       pingInterval: 25000,
-      transports: ['websocket', 'polling']
+      transports: ['websocket', 'polling'],
     });
 
     io.adapter(createAdapter(pubClient, subClient));
@@ -55,12 +64,22 @@ const init = (server) => {
       try {
         const useClerk = process.env.USE_CLERK_AUTH === 'true';
         const cookies = socket.handshake.headers.cookie;
-        const tokenFromCookie = cookies ? cookie.parse(cookies).accessToken : null;
-        const authHeader = socket.handshake.auth?.token || socket.handshake.headers.authorization;
-        const finalToken = tokenFromCookie || (authHeader?.startsWith('Bearer ') ? authHeader.split(' ')[1] : authHeader);
+        const tokenFromCookie = cookies
+          ? cookie.parse(cookies).accessToken
+          : null;
+        const authHeader =
+          socket.handshake.auth?.token ||
+          socket.handshake.headers.authorization;
+        const finalToken =
+          tokenFromCookie ||
+          (authHeader?.startsWith('Bearer ')
+            ? authHeader.split(' ')[1]
+            : authHeader);
 
         if (!finalToken) {
-          logger.warn(`[SOCKET-AUTH] Connection denied: Missing token for ${socket.id}`);
+          logger.warn(
+            `[SOCKET-AUTH] Connection denied: Missing token for ${socket.id}`
+          );
           return next(new Error('Authentication failed: Missing token'));
         }
 
@@ -69,47 +88,67 @@ const init = (server) => {
 
         if (useClerk) {
           const { createClerkClient } = require('@clerk/clerk-sdk-node');
-          const clerkClient = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY });
+          const clerkClient = createClerkClient({
+            secretKey: process.env.CLERK_SECRET_KEY,
+          });
           const verified = await clerkClient.verifyToken(finalToken);
           userId = verified.sub;
-          
+
           const User = require('./models/User');
-          const user = await User.findOne({ clerkUserId: userId }).select('_id workspaceId role jobTitle');
-          
+          const user = await User.findOne({ clerkUserId: userId }).select(
+            '_id workspaceId role jobTitle'
+          );
+
           if (!user) {
-             logger.warn(`[SOCKET-AUTH] User ${userId} verified by Clerk but not found in local DB.`);
-             return next(new Error('Authentication failed: Profile synchronization pending'));
+            logger.warn(
+              `[SOCKET-AUTH] User ${userId} verified by Clerk but not found in local DB.`
+            );
+            return next(
+              new Error(
+                'Authentication failed: Profile synchronization pending'
+              )
+            );
           }
-          
-          socket.user = {
-            id: user._id,
-            workspaceId: user.workspaceId,
-            role: user.role,
-            jobTitle: user.jobTitle
-          };
-        } else {
-          decoded = jwt.verify(finalToken, config.jwt.secret);
-          if (!decoded.id) return next(new Error('Authentication failed: Invalid token payload'));
-          
-          const User = require('./models/User');
-          const user = await User.findById(decoded.id).select('_id workspaceId role jobTitle');
-          
-          if (!user) return next(new Error('Authentication failed: User no longer exists'));
 
           socket.user = {
             id: user._id,
             workspaceId: user.workspaceId,
             role: user.role,
-            jobTitle: user.jobTitle
+            jobTitle: user.jobTitle,
+          };
+        } else {
+          decoded = jwt.verify(finalToken, config.jwt.secret);
+          if (!decoded.id)
+            return next(
+              new Error('Authentication failed: Invalid token payload')
+            );
+
+          const User = require('./models/User');
+          const user = await User.findById(decoded.id).select(
+            '_id workspaceId role jobTitle'
+          );
+
+          if (!user)
+            return next(
+              new Error('Authentication failed: User no longer exists')
+            );
+
+          socket.user = {
+            id: user._id,
+            workspaceId: user.workspaceId,
+            role: user.role,
+            jobTitle: user.jobTitle,
           };
         }
-        
+
         next();
       } catch (err) {
         logger.error(`[SOCKET-AUTH] Token validation failed: ${err.message}`);
         return next(new Error('Authentication failed: Invalid session'));
       }
     });
+
+    const { registerHandlers } = require('./socket/socketHandlers');
 
     io.on(EVENTS.CONNECTION, (socket) => {
       logger.info(`[SOCKET] Authenticated: ${socket.user?.id || socket.id}`);
@@ -118,72 +157,23 @@ const init = (server) => {
         socket.join(socket.user.id.toString());
       }
 
-      socket.on(EVENTS.JOIN_TASK, async (taskId) => {
-        if (!taskId) return;
-        
-        const hasAccess = await canAccessResource(socket.user, taskId, 'task');
-        if (!hasAccess) {
-          logger.warn(`[SOCKET-SECURITY] Unauthorized room join attempt: user=${socket.user.id} room=task:${taskId}`);
-          return socket.emit(EVENTS.ERROR, { message: 'Access denied to this task room.' });
-        }
-
-        socket.join(taskId.toString());
-        logger.debug(`[SOCKET] ${socket.id} joined task room: ${taskId}`);
-      });
-
-      socket.on(EVENTS.LEAVE_TASK, (taskId) => {
-        if (!taskId) return;
-        socket.leave(taskId.toString());
-        logger.debug(`[SOCKET] ${socket.id} left task room: ${taskId}`);
-      });
-
-      socket.on(EVENTS.JOIN_PROJECT, async (projectId) => {
-        if (!projectId) return;
-
-        const hasAccess = await canAccessResource(socket.user, projectId, 'project');
-        if (!hasAccess) {
-          logger.warn(`[SOCKET-SECURITY] Unauthorized room join attempt: user=${socket.user.id} room=project:${projectId}`);
-          return socket.emit(EVENTS.ERROR, { message: 'Access denied to this project room.' });
-        }
-
-        socket.join(projectId.toString());
-        logger.debug(`[SOCKET] ${socket.id} joined project room: ${projectId}`);
-      });
-
-      socket.on(EVENTS.LEAVE_PROJECT, (projectId) => {
-        if (!projectId) return;
-        socket.leave(projectId.toString());
-        logger.debug(`[SOCKET] ${socket.id} left project room: ${projectId}`);
-      });
-
-      socket.on(EVENTS.JOIN_WORKSPACE, async (workspaceId) => {
-        if (!workspaceId) return;
-
-        // Ensure user belongs to this workspace and has admin/manager role
-        if (socket.user.workspaceId.toString() !== workspaceId.toString()) {
-          return socket.emit(EVENTS.ERROR, { message: 'Access denied to this workspace room.' });
-        }
-
-        socket.join(`workspace:${workspaceId}`);
-        logger.debug(`[SOCKET] ${socket.id} joined workspace room: ${workspaceId}`);
-      });
-
-      socket.on(EVENTS.LEAVE_WORKSPACE, (workspaceId) => {
-        if (!workspaceId) return;
-        socket.leave(`workspace:${workspaceId}`);
-        logger.debug(`[SOCKET] ${socket.id} left workspace room: ${workspaceId}`);
-      });
+      // Register decoupled handlers for room join/leave logic
+      registerHandlers(socket);
 
       socket.on(EVENTS.DISCONNECT, (reason) => {
         logger.info(`[SOCKET] Session ended: ${socket.id} (${reason})`);
       });
 
       socket.on(EVENTS.ERROR, (err) => {
-        logger.error(`[SOCKET] Operational error for ${socket.id}: ${err.message}`);
+        logger.error(
+          `[SOCKET] Operational error for ${socket.id}: ${err.message}`
+        );
       });
     });
 
-    logger.info('[SOCKET] Real-time Hub initialized with security and horizontal scaling');
+    logger.info(
+      '[SOCKET] Real-time Hub initialized with security and horizontal scaling'
+    );
     return io;
   } catch (err) {
     logger.error(`[SOCKET] Critical initialization failure: ${err.message}`);
@@ -193,16 +183,22 @@ const init = (server) => {
 
 const getIO = () => {
   if (!io) {
-    throw new Error('Socket.io hub has not been initialized. Call init(server) first.');
+    throw new Error(
+      'Socket.io hub has not been initialized. Call init(server) first.'
+    );
   }
   return io;
 };
 
 const getEmitter = () => {
   if (emitter) return emitter;
-  
-  logger.info('[SOCKET] Initializing standalone Redis emitter for worker process');
-  const pubClient = createClient('WorkerEmitter', { maxRetriesPerRequest: null });
+
+  logger.info(
+    '[SOCKET] Initializing standalone Redis emitter for worker process'
+  );
+  const pubClient = createClient('WorkerEmitter', {
+    maxRetriesPerRequest: null,
+  });
   emitter = new Emitter(pubClient);
   return emitter;
 };
@@ -220,4 +216,3 @@ const close = async () => {
 };
 
 module.exports = { init, getIO, getEmitter, close, EVENTS };
-

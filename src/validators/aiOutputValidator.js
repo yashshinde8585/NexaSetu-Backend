@@ -2,7 +2,6 @@ const { z } = require('zod');
 const AppError = require('../utils/appError');
 const logger = require('../utils/logger');
 
-
 const schemas = {
   CREATE_PROJECT: z.object({
     projectName: z.string().min(3).max(100),
@@ -28,28 +27,37 @@ const schemas = {
   }),
 };
 
-
 const validateTaskEnrichment = (data) => {
-  const allowedFields = ['priority', 'estimatedDuration', 'subtasks', 'tags', 'description'];
+  const allowedFields = [
+    'priority',
+    'estimatedDuration',
+    'subtasks',
+    'tags',
+    'description',
+  ];
   const validatedData = {};
 
   if (!data || typeof data !== 'object') {
     throw new AppError('AI generated invalid response format', 500);
   }
 
-  allowedFields.forEach(field => {
+  allowedFields.forEach((field) => {
     if (data[field] !== undefined) {
-      if (field === 'priority' && !['low', 'medium', 'high'].includes(data[field])) return;
-      if (field === 'estimatedDuration' && typeof data[field] !== 'number') return;
+      if (
+        field === 'priority' &&
+        !['low', 'medium', 'high'].includes(data[field])
+      )
+        return;
+      if (field === 'estimatedDuration' && typeof data[field] !== 'number')
+        return;
       if (field === 'subtasks' && !Array.isArray(data[field])) return;
-      
+
       validatedData[field] = data[field];
     }
   });
 
   return validatedData;
 };
-
 
 const validateIntentParams = (intent, params) => {
   const schema = schemas[intent];
@@ -58,7 +66,9 @@ const validateIntentParams = (intent, params) => {
   try {
     return schema.parse(params);
   } catch (err) {
-    logger.warn(`[AI-Validator] Intent ${intent} failed validation: ${err.message}`);
+    logger.warn(
+      `[AI-Validator] Intent ${intent} failed validation: ${err.message}`
+    );
     return params;
   }
 };
@@ -66,5 +76,5 @@ const validateIntentParams = (intent, params) => {
 module.exports = {
   validateTaskEnrichment,
   validateIntentParams,
-  schemas
+  schemas,
 };

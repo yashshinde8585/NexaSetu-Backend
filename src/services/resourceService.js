@@ -95,9 +95,7 @@ exports.getResourceWorkload = async (user) => {
   const managerProjectIds = managerProjects.map((p) => p._id);
 
   // Identify distinct resources deployed across active projects.
-  const teamMemberIds = [
-    ...new Set(managerProjects.flatMap((p) => p.members)),
-  ];
+  const teamMemberIds = [...new Set(managerProjects.flatMap((p) => p.members))];
 
   // Measure overall systemic load dynamically.
   const activeTasks = await Task.find({
@@ -122,17 +120,12 @@ exports.getResourceWorkload = async (user) => {
     if (userWorkloadMap[userIdStr]) {
       userWorkloadMap[userIdStr].activeTasks.push(task);
       userWorkloadMap[userIdStr].taskCount += 1;
-      userWorkloadMap[userIdStr].projectCount.add(
-        task.project._id.toString()
-      );
+      userWorkloadMap[userIdStr].projectCount.add(task.project._id.toString());
     }
   });
 
   // Append identifying attributes to active team IDs.
-  const users = await User.find(
-    { _id: { $in: teamMemberIds } },
-    'name email'
-  );
+  const users = await User.find({ _id: { $in: teamMemberIds } }, 'name email');
 
   // Synthesize raw totals into categorized diagnostic health statuses.
   const workloadData = users.map((userObj) => {
@@ -157,7 +150,5 @@ exports.getResourceWorkload = async (user) => {
     };
   });
 
-  return workloadData.sort(
-    (a, b) => b.activeTasksCount - a.activeTasksCount
-  );
+  return workloadData.sort((a, b) => b.activeTasksCount - a.activeTasksCount);
 };

@@ -13,7 +13,7 @@ const performanceTracker = (req, res, next) => {
     const memoryDiff = ((endMemory - startMemory) / 1024 / 1024).toFixed(2);
 
     const logMessage = `[TELEMETRY] ${req.method} ${req.originalUrl} - Role: ${req.user?.role || 'ANON'} - ${durationMs}ms - MemoryDelta: ${memoryDiff}MB`;
-    
+
     // Warn if request processing exceeds 500ms threshold
     if (durationMs > 500) {
       logger.warn(`${logMessage} [SLOW_REQUEST]`);

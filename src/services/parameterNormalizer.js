@@ -46,5 +46,5 @@ module.exports = {
   normalizeStatus,
   normalizeDate,
   normalizeString,
-  STATUS_MAP
+  STATUS_MAP,
 };

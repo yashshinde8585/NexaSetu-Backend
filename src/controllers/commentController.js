@@ -15,7 +15,11 @@ exports.getTaskComments = catchAsync(async (req, res, next) => {
 
 // Appends a new user comment to the task feed and notifies relevant mission stakeholders.
 exports.addComment = catchAsync(async (req, res, next) => {
-  const comment = await commentService.addComment(req.user, req.params.taskId, req.body.content);
+  const comment = await commentService.addComment(
+    req.user,
+    req.params.taskId,
+    req.body.content
+  );
 
   res.status(201).json({
     status: 'success',

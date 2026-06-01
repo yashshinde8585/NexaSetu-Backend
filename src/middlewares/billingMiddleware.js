@@ -11,7 +11,7 @@ const catchAsync = require('../utils/catchAsync');
 exports.checkLimit = (feature, getUsage = null) => {
   return catchAsync(async (req, res, next) => {
     const workspaceId = req.user.workspaceId;
-    
+
     const subscription = await Subscription.findOne({ workspaceId });
     if (!subscription) {
       return next(new AppError('Active subscription required.', 403));
@@ -41,8 +41,8 @@ exports.checkLimit = (feature, getUsage = null) => {
           feature,
           current: currentUsage,
           limit,
-          upgradeRequired: true
-        }
+          upgradeRequired: true,
+        },
       });
     }
 

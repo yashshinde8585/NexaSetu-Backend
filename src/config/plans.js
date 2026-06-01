@@ -1,7 +1,3 @@
-/**
- * Plan Configuration - Centralized Pricing Tiers
- * Standardizes feature limits and billing metadata across the system.
- */
 const PLANS = {
   FREE: {
     id: 'free',
@@ -21,10 +17,10 @@ const PLANS = {
   PRO: {
     id: 'pro',
     name: 'Pro',
-    price: 1999,
-    priceAnnual: 1599,
-    globalPrice: 29,
-    globalPriceAnnual: 24,
+    price: 799,
+    priceAnnual: 639,
+    globalPrice: 10,
+    globalPriceAnnual: 8,
     features: {
       projects: 20,
       sprints: 50,
@@ -36,10 +32,10 @@ const PLANS = {
   ENTERPRISE: {
     id: 'enterprise',
     name: 'Enterprise',
-    price: 9999,
-    priceAnnual: 7999,
-    globalPrice: 149,
-    globalPriceAnnual: 119,
+    price: 2999,
+    priceAnnual: 2399,
+    globalPrice: 36,
+    globalPriceAnnual: 29,
     features: {
       projects: Infinity,
       sprints: Infinity,

@@ -8,51 +8,71 @@ const config = require('./config/config');
 const { isRedisConnected } = require('./config/redis');
 const logger = require('./utils/logger');
 const SmartRateLimitStore = require('./utils/SmartRateLimitStore');
+const mongoSanitize = require('./middlewares/nosqlSanitizeMiddleware');
 const crypto = require('crypto');
 
 const app = express();
 
-app.set('trust proxy', 1); 
+app.set('trust proxy', 1);
 
 app.use(compression());
 
-app.use(cors({
-  origin: config.env === 'development' ? 'http://localhost:5173' : config.clientUrl,
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Idempotency-Key', 'X-Idempotency-Key', 'x-idempotency-key'],
-  maxAge: 86400,
-}));
+app.use(
+  cors({
+    origin:
+      config.env === 'development' ? 'http://localhost:5173' : config.clientUrl,
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+    allowedHeaders: [
+      'Content-Type',
+      'Authorization',
+      'X-Requested-With',
+      'Accept',
+      'Idempotency-Key',
+      'X-Idempotency-Key',
+      'x-idempotency-key',
+      'X-CSRF-Token',
+      'x-csrf-token',
+    ],
+    maxAge: 86400,
+  })
+);
 
-app.use(helmet({
-  contentSecurityPolicy: {
-    directives: {
-      defaultSrc: ["'self'"],
-      scriptSrc: ["'self'", "'unsafe-inline'"],
-      styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
-      imgSrc: ["'self'", "data:", "https:", "http:"],
-      connectSrc: ["'self'", "https:", "http:", "ws:", "wss:"],
-      fontSrc: ["'self'", "https://fonts.gstatic.com"],
-      objectSrc: ["'none'"],
-      upgradeInsecureRequests: [],
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'", "'unsafe-inline'"],
+        styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+        imgSrc: ["'self'", 'data:', 'https:', 'http:'],
+        connectSrc: ["'self'", 'https:', 'http:', 'ws:', 'wss:'],
+        fontSrc: ["'self'", 'https://fonts.gstatic.com'],
+        objectSrc: ["'none'"],
+        upgradeInsecureRequests: [],
+      },
     },
-  },
-}));
+  })
+);
 
-app.use(express.json({ 
-  limit: '15kb',
-  verify: (req, res, buf) => {
-    if (req.originalUrl.includes('/webhooks')) {
-      req.rawBody = buf;
-    }
-  }
-}));
+app.use(
+  express.json({
+    limit: '15kb',
+    verify: (req, res, buf) => {
+      if (req.originalUrl.includes('/webhooks')) {
+        req.rawBody = buf;
+      }
+    },
+  })
+);
+app.use(mongoSanitize());
 app.use((err, req, res, next) => {
   if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
     return res.status(400).json({
       status: 'fail',
       code: 'MALFORMED_JSON',
-      message: 'The request body contains malformed JSON. Please check your syntax.'
+      message:
+        'The request body contains malformed JSON. Please check your syntax.',
     });
   }
   next(err);
@@ -60,11 +80,14 @@ app.use((err, req, res, next) => {
 app.use(express.urlencoded({ extended: true, limit: '15kb' }));
 app.use(cookieParser());
 
-const telemetry = require('./middleware/telemetryMiddleware');
-const idempotency = require('./middleware/idempotencyMiddleware');
-const normalizeUnicode = require('./middleware/normalizationMiddleware');
+const csrfProtection = require('./middlewares/csrfMiddleware');
+app.use(csrfProtection());
 
-const timeoutHandler = require('./middleware/timeoutHandler');
+const telemetry = require('./middlewares/telemetryMiddleware');
+const idempotency = require('./middlewares/idempotencyMiddleware');
+const normalizeUnicode = require('./middlewares/normalizationMiddleware');
+
+const timeoutHandler = require('./middlewares/timeoutHandler');
 
 app.use(telemetry);
 app.use(normalizeUnicode);
@@ -78,7 +101,7 @@ app.use((req, res, next) => {
   const requestId = req.headers['x-request-id'] || crypto.randomUUID();
   req.id = requestId;
   const start = Date.now();
-  
+
   runWithContext({ requestId }, () => {
     let logged = false;
     const logRequest = () => {
@@ -87,41 +110,66 @@ app.use((req, res, next) => {
       const duration = Date.now() - start;
       const status = res.statusCode;
       const finished = res.writableFinished || res.finished;
-      logger.info(`[API] ${req.method} ${req.url} - ${status} [${duration}ms]${finished ? '' : ' (aborted)'}`);
+      logger.info(
+        `[API] ${req.method} ${req.url} - ${status} [${duration}ms]${finished ? '' : ' (aborted)'}`
+      );
     };
 
     res.on('finish', logRequest);
     res.on('close', logRequest);
-    
+
     next();
   });
 });
 
-const createLimiter = (prefix, max, windowMs = 60 * 60 * 1000) => rateLimit({
-  windowMs,
-  max,
-  message: { 
-    status: 'fail', 
-    code: 'TOO_MANY_REQUESTS',
-    message: 'Operational limit exceeded. Please wait before retrying.' 
-  },
-  standardHeaders: true,
-  legacyHeaders: false,
-  store: new SmartRateLimitStore({
-    prefix: `rl:${prefix}:`,
-    windowMs
-  }),
-  skip: (req) => config.isTest,
-});
+const createLimiter = (prefix, max, windowMs = 60 * 60 * 1000) =>
+  rateLimit({
+    windowMs,
+    max,
+    message: {
+      status: 'fail',
+      code: 'TOO_MANY_REQUESTS',
+      message: 'Operational limit exceeded. Please wait before retrying.',
+    },
+    standardHeaders: true,
+    legacyHeaders: false,
+    store: new SmartRateLimitStore({
+      prefix: `rl:${prefix}:`,
+      windowMs,
+    }),
+    skip: (req) => config.isTest,
+    validate: { singleCount: false },
+  });
 
 // Public health check (bypass global rate limit for monitoring)
 const healthRoutes = require('./routes/healthRoutes');
 app.use('/api/health', healthRoutes);
 
+// Clerk Webhooks (bypass rate limiter)
+const webhookRoutes = require('./routes/webhookRoutes');
+app.use(['/api/v1/webhooks', '/api/webhooks'], webhookRoutes);
+
+// Swagger Documentation
+const setupSwagger = require('./config/swagger');
+setupSwagger(app);
+
 const isDev = config.env === 'development';
 app.use('/api', createLimiter('global', isDev ? 10000 : 5000, 15 * 60 * 1000));
 
-app.use('/api/auth/login', createLimiter('auth-login', 15, 5 * 60 * 1000));
+app.use(
+  ['/api/auth/login', '/api/v1/auth/login'],
+  createLimiter('auth-login', 15, 5 * 60 * 1000)
+);
+
+app.use(
+  [
+    '/api/auth/forgot-password',
+    '/api/v1/auth/forgot-password',
+    '/api/auth/reset-password',
+    '/api/v1/auth/reset-password',
+  ],
+  createLimiter('auth-reset', 10, 15 * 60 * 1000)
+);
 
 const v1Router = express.Router();
 
@@ -150,9 +198,6 @@ const executionRoutes = require('./routes/executionRoutes');
 const observabilityRoutes = require('./routes/observabilityRoutes');
 const metricsRoutes = require('./routes/metricsRoutes');
 const directiveRoutes = require('./routes/directiveRoutes');
-const webhookRoutes = require('./routes/webhookRoutes');
-
-v1Router.use('/webhooks', webhookRoutes);
 v1Router.use('/auth', authRoutes);
 v1Router.use('/projects', projectRoutes);
 v1Router.use('/tasks', taskRoutes);
@@ -187,11 +232,11 @@ app.use(['/api/v1', '/api'], v1Router);
 app.use((req, res, next) => {
   res.status(404).json({
     status: 'fail',
-    message: `Can't find ${req.method} ${req.originalUrl} on this server! Check route mounting.`
+    message: `Can't find ${req.method} ${req.originalUrl} on this server! Check route mounting.`,
   });
 });
 
-const globalErrorHandler = require('./middleware/errorMiddleware');
+const globalErrorHandler = require('./middlewares/errorMiddleware');
 app.use(globalErrorHandler);
 
 module.exports = app;

@@ -38,7 +38,7 @@ const getPortfolioRecommendations = async (user) => {
         recommendations.push({
           type: 'delay',
           priority: 'high',
-          message: `Task "${task.title}" is delayed in project ${task.project.name}.`,
+          message: `Task "${task.title}" is delayed in project ${task.project?.name || 'Unknown Project'}.`,
           action: 'Extend deadline or reassign to accelerate.',
           targetId: task._id,
           targetType: 'task',
@@ -65,10 +65,7 @@ const getPortfolioRecommendations = async (user) => {
   );
 
   if (overloadedUserIds.length > 0) {
-    const users = await User.find(
-      { _id: { $in: overloadedUserIds } },
-      'name'
-    );
+    const users = await User.find({ _id: { $in: overloadedUserIds } }, 'name');
     users.forEach((u) => {
       recommendations.push({
         type: 'resource',
@@ -89,8 +86,7 @@ const getPortfolioRecommendations = async (user) => {
       type: 'workload',
       priority: 'medium',
       message: 'Significant workload imbalance detected across your team.',
-      action:
-        'Rebalance tasks from overloaded members to available resources.',
+      action: 'Rebalance tasks from overloaded members to available resources.',
       targetType: 'portfolio',
     });
   }
@@ -132,5 +128,5 @@ const getPortfolioRecommendations = async (user) => {
 };
 
 module.exports = {
-  getPortfolioRecommendations
+  getPortfolioRecommendations,
 };

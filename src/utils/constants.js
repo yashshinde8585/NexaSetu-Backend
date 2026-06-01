@@ -19,9 +19,9 @@ exports.STORAGE_CONSTANTS = {
   ],
   BUCKET_NAME: 'task-attachments',
   QUOTAS: {
-    FREE: 100 * 1024 * 1024,      // 100MB
-    PRO: 1024 * 1024 * 1024,     // 1GB
-    ENTERPRISE: 10 * 1024 * 1024 * 1024 // 10GB
+    FREE: 100 * 1024 * 1024, // 100MB
+    PRO: 1024 * 1024 * 1024, // 1GB
+    ENTERPRISE: 10 * 1024 * 1024 * 1024, // 10GB
   },
-  DEFAULT_QUOTA: 100 * 1024 * 1024 // 100MB
+  DEFAULT_QUOTA: 100 * 1024 * 1024, // 100MB
 };
