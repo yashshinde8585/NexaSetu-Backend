@@ -17,7 +17,8 @@ const runStorageCleanup = async () => {
 
     if (wsError) throw wsError;
 
-    for (const ws of workspaces) {
+    const workspacesList = workspaces || [];
+    for (const ws of workspacesList) {
       if (!ws.id) continue;
       logger.debug(`[STORAGE-AUDIT] Auditing workspace folder: ${ws.name}`);
     }

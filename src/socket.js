@@ -148,6 +148,8 @@ const init = (server) => {
       }
     });
 
+    const { registerHandlers } = require('./socket/socketHandlers');
+
     io.on(EVENTS.CONNECTION, (socket) => {
       logger.info(`[SOCKET] Authenticated: ${socket.user?.id || socket.id}`);
 
@@ -155,79 +157,8 @@ const init = (server) => {
         socket.join(socket.user.id.toString());
       }
 
-      socket.on(EVENTS.JOIN_TASK, async (taskId) => {
-        if (!taskId) return;
-
-        const hasAccess = await canAccessResource(socket.user, taskId, 'task');
-        if (!hasAccess) {
-          logger.warn(
-            `[SOCKET-SECURITY] Unauthorized room join attempt: user=${socket.user.id} room=task:${taskId}`
-          );
-          return socket.emit(EVENTS.ERROR, {
-            message: 'Access denied to this task room.',
-          });
-        }
-
-        socket.join(taskId.toString());
-        logger.debug(`[SOCKET] ${socket.id} joined task room: ${taskId}`);
-      });
-
-      socket.on(EVENTS.LEAVE_TASK, (taskId) => {
-        if (!taskId) return;
-        socket.leave(taskId.toString());
-        logger.debug(`[SOCKET] ${socket.id} left task room: ${taskId}`);
-      });
-
-      socket.on(EVENTS.JOIN_PROJECT, async (projectId) => {
-        if (!projectId) return;
-
-        const hasAccess = await canAccessResource(
-          socket.user,
-          projectId,
-          'project'
-        );
-        if (!hasAccess) {
-          logger.warn(
-            `[SOCKET-SECURITY] Unauthorized room join attempt: user=${socket.user.id} room=project:${projectId}`
-          );
-          return socket.emit(EVENTS.ERROR, {
-            message: 'Access denied to this project room.',
-          });
-        }
-
-        socket.join(projectId.toString());
-        logger.debug(`[SOCKET] ${socket.id} joined project room: ${projectId}`);
-      });
-
-      socket.on(EVENTS.LEAVE_PROJECT, (projectId) => {
-        if (!projectId) return;
-        socket.leave(projectId.toString());
-        logger.debug(`[SOCKET] ${socket.id} left project room: ${projectId}`);
-      });
-
-      socket.on(EVENTS.JOIN_WORKSPACE, async (workspaceId) => {
-        if (!workspaceId) return;
-
-        // Ensure user belongs to this workspace and has admin/manager role
-        if (socket.user.workspaceId.toString() !== workspaceId.toString()) {
-          return socket.emit(EVENTS.ERROR, {
-            message: 'Access denied to this workspace room.',
-          });
-        }
-
-        socket.join(`workspace:${workspaceId}`);
-        logger.debug(
-          `[SOCKET] ${socket.id} joined workspace room: ${workspaceId}`
-        );
-      });
-
-      socket.on(EVENTS.LEAVE_WORKSPACE, (workspaceId) => {
-        if (!workspaceId) return;
-        socket.leave(`workspace:${workspaceId}`);
-        logger.debug(
-          `[SOCKET] ${socket.id} left workspace room: ${workspaceId}`
-        );
-      });
+      // Register decoupled handlers for room join/leave logic
+      registerHandlers(socket);
 
       socket.on(EVENTS.DISCONNECT, (reason) => {
         logger.info(`[SOCKET] Session ended: ${socket.id} (${reason})`);

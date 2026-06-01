@@ -10,6 +10,22 @@ const logger = require('../utils/logger');
 const AppError = require('../utils/appError');
 const CircuitBreaker = require('../utils/circuitBreaker');
 
+const logGithubError = (contextMessage, error, level = 'error') => {
+  const status = error.status || (error.response && error.response.status);
+  const headers = error.response?.headers || {};
+  const limit = headers['x-ratelimit-limit'] || headers['X-Ratelimit-Limit'];
+  const remaining =
+    headers['x-ratelimit-remaining'] || headers['X-Ratelimit-Remaining'];
+  const reset = headers['x-ratelimit-reset'] || headers['X-Ratelimit-Reset'];
+
+  const logMsg = `[GITHUB-DIAGNOSTICS] ${contextMessage} - Message: ${error.message} (Status: ${status || 'unknown'}, Remaining: ${remaining || 'N/A'}, Limit: ${limit || 'N/A'}, Reset: ${reset || 'N/A'})`;
+  if (level === 'warn') {
+    logger.warn(logMsg);
+  } else {
+    logger.error(logMsg);
+  }
+};
+
 const githubBreaker = new CircuitBreaker('GitHub_API', {
   failureThreshold: 3,
   resetTimeout: 30000,
@@ -43,7 +59,7 @@ const connectGithub = async (user, accessToken) => {
       githubUsername: githubUser.login,
     };
   } catch (error) {
-    logger.error('[GitHub Connection Error]: %s', error.message);
+    logGithubError('Connection Error', error);
     const statusCode =
       error.status || (error.response && error.response.status);
 
@@ -80,25 +96,30 @@ const getUserRepositories = async (user) => {
     throw new AppError('GitHub not connected', 400);
   }
 
-  const octokit = getOctokit(userDoc.githubAccessToken);
-  const { data } = await githubBreaker.execute(
-    () =>
-      octokit.rest.repos.listForAuthenticatedUser({
-        sort: 'updated',
-        per_page: 50,
-      }),
-    () => {
-      throw new AppError('GitHub API is temporarily unavailable', 503);
-    }
-  );
-  return data.map((repo) => ({
-    id: repo.id,
-    name: repo.name,
-    fullName: repo.full_name,
-    owner: repo.owner.login,
-    description: repo.description,
-    url: repo.html_url,
-  }));
+  try {
+    const octokit = getOctokit(userDoc.githubAccessToken);
+    const { data } = await githubBreaker.execute(
+      () =>
+        octokit.rest.repos.listForAuthenticatedUser({
+          sort: 'updated',
+          per_page: 50,
+        }),
+      () => {
+        throw new AppError('GitHub API is temporarily unavailable', 503);
+      }
+    );
+    return data.map((repo) => ({
+      id: repo.id,
+      name: repo.name,
+      fullName: repo.full_name,
+      owner: repo.owner.login,
+      description: repo.description,
+      url: repo.html_url,
+    }));
+  } catch (error) {
+    logGithubError(`List repositories for user ${user._id}`, error);
+    throw error;
+  }
 };
 
 const linkProject = async (user, projectId, repoInfo) => {
@@ -161,10 +182,7 @@ const getRepositoryActivity = async (accessToken, owner, repo) => {
     );
     commits = data;
   } catch (err) {
-    logger.warn(
-      `[GITHUB RECON] Commits unreachable for ${owner}/${repo}: %s`,
-      err.message
-    );
+    logGithubError(`Commits unreachable for ${owner}/${repo}`, err, 'warn');
   }
 
   let prs = [];
@@ -181,10 +199,7 @@ const getRepositoryActivity = async (accessToken, owner, repo) => {
     );
     prs = data;
   } catch (err) {
-    logger.warn(
-      `[GITHUB RECON] PRs unreachable for ${owner}/${repo}: %s`,
-      err.message
-    );
+    logGithubError(`PRs unreachable for ${owner}/${repo}`, err, 'warn');
   }
 
   const activity = [
@@ -274,7 +289,7 @@ const generateTaskSuggestions = async (activity, projectId) => {
   const filteredTasks = taskCreations.filter((t) => t !== null);
 
   if (filteredTasks.length > 0) {
-    const createdTasks = await Task.insertMany(filteredTasks);
+    const createdTasks = await Task.create(filteredTasks);
 
     for (const task of createdTasks) {
       resourceService
@@ -396,7 +411,7 @@ const approveTasks = async (user, projectId, tasks) => {
 
   let createdTasks = [];
   if (tasksToCreate.length > 0) {
-    createdTasks = await Task.insertMany(tasksToCreate);
+    createdTasks = await Task.create(tasksToCreate);
   }
 
   return createdTasks;

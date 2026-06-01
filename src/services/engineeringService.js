@@ -8,9 +8,13 @@ const Project = require('../models/Project');
 const {
   calculateProgress,
   mapTaskToDashboard,
-  formatDueDate,
   formatTimeAgo,
 } = require('../utils/dashboardHelpers');
+const businessRules = require('../config/businessRules');
+const {
+  getBadgesPresenter,
+  getTipsPresenter,
+} = require('../utils/dashboardPresenter');
 
 const _getDefaultSteps = () => [
   { text: 'Analyze requirements', completed: false },
@@ -80,7 +84,7 @@ const _getActivityCounts = async (userId, workspaceId, startOfDay) => {
 };
 
 const _getStalePR = async (workspaceId) => {
-  const threshold = 48 * 60 * 60 * 1000; // 48h
+  const threshold = businessRules.git.stalePrThresholdMs; // 48h
   const cutoff = new Date(Date.now() - threshold);
 
   const staleTask = await Task.findOne({
@@ -132,7 +136,7 @@ const _getCommonMetrics = async (userId, workspaceId, today) => {
 };
 
 const _getFilteredTasks = async (userId, workspaceId, subRole) => {
-  const limit = 10; // Standardized limit for ICs
+  const limit = businessRules.pagination.defaultIcTaskLimit; // Standardized limit for ICs
   const tasks = await Task.find({
     workspaceId,
     assignedUser: userId,
@@ -263,6 +267,78 @@ const _getGuidedData = async (userId, workspaceId, currentTask) => {
   };
 };
 
+const getStreakDays = async (userId, workspaceId) => {
+  let streak = 0;
+  const now = new Date();
+  for (let i = 0; i < 30; i++) {
+    const start = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate() - i,
+      0,
+      0,
+      0
+    );
+    const end = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate() - i,
+      23,
+      59,
+      59
+    );
+    const count = await AuditLog.countDocuments({
+      performer: userId,
+      workspaceId,
+      timestamp: { $gte: start, $lte: end },
+    });
+    if (count > 0) {
+      streak++;
+    } else {
+      break;
+    }
+  }
+  return streak;
+};
+
+const getUpcomingEvents = async (workspaceId) => {
+  const sprints = await Sprint.find({ workspaceId, status: 'upcoming' })
+    .sort('startDate')
+    .limit(3)
+    .lean();
+  return sprints.map((s) => {
+    const date = new Date(s.startDate);
+    const monthStr = date
+      .toLocaleDateString('en-US', { month: 'short' })
+      .toUpperCase();
+    const dayVal = date.getDate();
+    return {
+      date: `${monthStr} ${dayVal}`,
+      title: `Sprint Start: ${s.name}`,
+      time: `${date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} • 10:00 AM IST`,
+    };
+  });
+};
+
+const getLearningLessons = (userTasks) => {
+  const categories = [
+    ...new Set(userTasks.map((t) => t.category).filter(Boolean)),
+  ];
+  if (categories.length === 0) return [];
+  return categories.map((cat) => {
+    const catTasks = userTasks.filter((t) => t.category === cat);
+    const completed = catTasks.filter((t) => t.status === 'done').length;
+    const total = catTasks.length;
+    const progress = total ? Math.round((completed / total) * 100) : 0;
+    return {
+      title: `${cat.charAt(0).toUpperCase() + cat.slice(1)} Mastery`,
+      completed,
+      total,
+      progress,
+    };
+  });
+};
+
 /**
  * Fetches workspace data based on specific sub-role
  */
@@ -291,6 +367,28 @@ const getWorkspaceData = async (userId, workspaceId, subRole) => {
     (t) => t.blocked || t.status === 'blocked'
   ).length;
   const todoTasksCount = userTasks.filter((t) => t.status === 'todo').length;
+
+  // 4. Code Quality & Code Health calculations (moved up)
+  const services = await Service.find({ workspaceId }).lean();
+  let codeHealthScore = 100;
+  if (services.length > 0) {
+    const avgDebt =
+      services.reduce((acc, s) => acc + (s.technicalDebt?.score || 0), 0) /
+      services.length;
+    codeHealthScore = Math.max(
+      0,
+      Math.round(100 - avgDebt - blockedTasksCount * 2)
+    );
+  } else {
+    codeHealthScore =
+      blockedTasksCount > 0 ? Math.max(0, 100 - blockedTasksCount * 5) : 100;
+  }
+
+  const testCases = await TestCase.find({ workspaceId }).lean();
+  const passedTests = testCases.filter((t) => t.status === 'passed').length;
+  const totalTests = testCases.length;
+  const coverage =
+    totalTests > 0 ? Math.round((passedTests / totalTests) * 100) : 0;
 
   const workItemsStatus = {
     done: doneTasksCount,
@@ -385,13 +483,78 @@ const getWorkspaceData = async (userId, workspaceId, subRole) => {
       .limit(3)
       .lean();
 
+    // Resolve mentor details dynamically
+    let mentor = { name: 'Lead', role: 'Mentor', avatar: null };
+    const firstTask = userTasks[0];
+    if (firstTask && firstTask.createdBy) {
+      const creatorUser = await User.findById(firstTask.createdBy).lean();
+      if (creatorUser) {
+        mentor = {
+          name: creatorUser.name,
+          role: creatorUser.role?.replace('_', ' ') || 'Mentor',
+          avatar: creatorUser.avatarUrl || null,
+        };
+      }
+    }
+
+    const streakDays = await getStreakDays(userId, workspaceId);
+    const upcomingEvents = await getUpcomingEvents(workspaceId);
+    const xp = doneTasksCount * 50 + inProgressTasksCount * 10;
+    const level = Math.floor(xp / 100) + 1;
+    const nextLevelXp = 100 - (xp % 100);
+    const percentage = Math.min(100, Math.max(0, xp % 100));
+
+    const doneBugs = userTasks.filter(
+      (t) =>
+        t.status === 'done' &&
+        (t.type === 'bug' || t.title.toLowerCase().includes('bug'))
+    ).length;
+    const badges = getBadgesPresenter(
+      xp,
+      prStats?.merged || 0,
+      totalTasks,
+      doneBugs
+    );
+    const tips = getTipsPresenter(blockedTasksCount, codeHealthScore, coverage);
+
+    const goals = [
+      { title: 'Make first code contribution', completed: doneTasksCount > 0 },
+      {
+        title: 'Resolve all assigned tasks',
+        completed: totalTasks > 0 && doneTasksCount === totalTasks,
+      },
+      {
+        title: 'Maintain zero blocked tasks',
+        completed: blockedTasksCount === 0,
+        progress: blockedTasksCount === 0 ? 100 : 0,
+      },
+    ];
+
+    const learningLessons = getLearningLessons(userTasks);
+
     extraData = {
       ...extraData,
       ...guidedData,
+      mentor,
       feedback: logs.map((l) => ({
         title: l.action.replace(/_/g, ' '),
         message: l.details || 'System verified mission parameters.',
       })),
+      gamification: {
+        progressData: {
+          xp,
+          totalXp: level * 100,
+          level,
+          nextLevelXp,
+          percentage,
+        },
+        streakDays,
+        upcomingEvents,
+        badges,
+        tips,
+        goals,
+        learningLessons,
+      },
     };
   }
 
@@ -478,27 +641,7 @@ const getWorkspaceData = async (userId, workspaceId, subRole) => {
     }
   }
 
-  // 4. Code Quality & Code Health calculations
-  const services = await Service.find({ workspaceId }).lean();
-  let codeHealthScore = 100;
-  if (services.length > 0) {
-    const avgDebt =
-      services.reduce((acc, s) => acc + (s.technicalDebt?.score || 0), 0) /
-      services.length;
-    codeHealthScore = Math.max(
-      0,
-      Math.round(100 - avgDebt - blockedTasksCount * 2)
-    );
-  } else {
-    codeHealthScore =
-      blockedTasksCount > 0 ? Math.max(0, 100 - blockedTasksCount * 5) : 100;
-  }
-
-  const testCases = await TestCase.find({ workspaceId }).lean();
-  const passedTests = testCases.filter((t) => t.status === 'passed').length;
-  const totalTests = testCases.length;
-  const coverage =
-    totalTests > 0 ? Math.round((passedTests / totalTests) * 100) : 0;
+  // Code Quality & Code Health calculations were moved to the top of the function
 
   const eslintIssues = services.reduce(
     (acc, s) => acc + (s.eslintIssues || 0),

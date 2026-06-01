@@ -88,13 +88,30 @@ const initStorageWorker = () => {
   workerManager.registerWorker(storageWorker);
 
   storageWorker.on('failed', async (job, err) => {
+    const errMsg = err?.message || 'Unknown error';
     if (job && job.attemptsMade >= 5) {
       try {
+        const sanitizePayload = (data) => {
+          try {
+            const str = JSON.stringify(data);
+            if (str.length > 50000) {
+              return {
+                _truncated: true,
+                _originalSize: str.length,
+                _sample: str.substring(0, 1000),
+              };
+            }
+            return data;
+          } catch (e) {
+            return { _error: 'Failed to serialize payload' };
+          }
+        };
+
         await FailedJob.create({
           jobId: job.id,
           queueName: 'storage-cleanup',
-          payload: job.data,
-          error: err.message,
+          payload: sanitizePayload(job.data),
+          error: errMsg,
           timestamp: new Date(),
         });
       } catch (dlqErr) {}

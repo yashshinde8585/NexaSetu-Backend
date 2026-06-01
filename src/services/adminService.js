@@ -381,7 +381,7 @@ const getAdminDashboard = async (workspaceId, filters = {}) => {
     ActionRequest.countDocuments({ status: 'pending' }),
     User.countDocuments({ workspaceId, status: 'Deactivated' }),
     AILog.countDocuments({ workspaceId }),
-    Task.countDocuments({ workspaceId, status: { $ne: 'Completed' } }),
+    Task.countDocuments({ workspaceId, status: { $ne: 'done' } }),
     User.countDocuments({ workspaceId }),
     User.countDocuments({
       workspaceId,

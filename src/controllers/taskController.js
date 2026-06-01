@@ -117,7 +117,10 @@ exports.submitTaskReview = catchAsync(async (req, res, next) => {
 exports.getSignedUploadUrl = catchAsync(async (req, res, next) => {
   const dto = dataTransformer.transform(req);
 
-  if (req.user.workspaceId.toString() !== dto.workspaceId?.toString()) {
+  const userWorkspaceId = req.user?.workspaceId?.toString() || '';
+  const dtoWorkspaceId = dto.workspaceId?.toString() || '';
+
+  if (!userWorkspaceId || userWorkspaceId !== dtoWorkspaceId) {
     return ResponseBuilder.error(
       res,
       'Unauthorized workspace access',

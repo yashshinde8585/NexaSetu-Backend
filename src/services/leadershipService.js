@@ -11,27 +11,14 @@ const {
 const Team = require('../models/Team');
 const Service = require('../models/Service');
 const TestCase = require('../models/TestCase');
+const directiveService = require('./directiveService');
+const { getTacticalBasePresenter } = require('../utils/dashboardPresenter');
+const businessRules = require('../config/businessRules');
 
-const getTacticalBase = (activity) => {
-  return {
-    sprintControl: {
-      progress: 0,
-      delayRisk: 'LOW',
-      blockedTasks: 0,
-      teamLoad: 0,
-      tasksDueToday: 0,
-    },
-    taskBoard: [],
-    blockers: [],
-    teamWorkload: [],
-    burndown: { planned: 0, completed: 0, remaining: 0, daysLeft: 0 },
-    activity: activity || [],
-    focusToday: [],
-    distribution: { backend: 0, frontend: 0, qa: 0, other: 0, imbalance: null },
-  };
-};
+// Legacy 40-hour divisor constant used for compatibility with the frontend calculations
+const LEGACY_CAPACITY_HOURS_DIVISOR = 40;
 
-const getExecutionStats = async (workspaceId, today) => {
+const getExecutionStats = async (workspaceId) => {
   const [atRisk, blockedCount, projects] = await Promise.all([
     Project.countDocuments({ workspaceId, status: 'at_risk' }),
     Task.countDocuments({
@@ -56,38 +43,31 @@ const getExecutionStats = async (workspaceId, today) => {
 
 const getTeamPerformance = async (workspaceId) => {
   const result = await User.aggregate([
-    { $match: { workspaceId: new mongoose.Types.ObjectId(workspaceId) } },
+    {
+      $match: {
+        workspaceId: new mongoose.Types.ObjectId(workspaceId),
+        department: { $in: ['Engineering', 'QA & Testing'] },
+      },
+    },
     {
       $addFields: {
         teamName: {
           $cond: [
-            {
-              $regexMatch: {
-                input: '$jobTitle',
-                regex: /backend|api|database/i,
-              },
-            },
-            'Backend',
+            { $eq: ['$department', 'QA & Testing'] },
+            'QA',
             {
               $cond: [
                 {
                   $regexMatch: { input: '$jobTitle', regex: /frontend|ui|ux/i },
                 },
                 'Frontend',
-                {
-                  $cond: [
-                    { $regexMatch: { input: '$jobTitle', regex: /qa|test/i } },
-                    'QA',
-                    'Other',
-                  ],
-                },
+                'Backend',
               ],
             },
           ],
         },
       },
     },
-    { $match: { teamName: { $ne: 'Other' } } },
     {
       $lookup: {
         from: 'tasks',
@@ -613,22 +593,39 @@ const getTLSpecifics = async (workspaceId) => {
   const users = await User.find({ workspaceId: workspaceObjId })
     .limit(10)
     .lean();
-  const workloads = await Promise.all(
-    users.map(async (u) => {
-      const userTasksCount = await Task.countDocuments({
+  const userIds = users.map((u) => u._id);
+
+  const taskCounts = await Task.aggregate([
+    {
+      $match: {
         workspaceId: workspaceObjId,
-        assignedUser: u._id,
+        assignedUser: { $in: userIds },
         status: { $ne: 'done' },
-      });
-      const load = Math.min(100, userTasksCount * 20);
-      return {
-        member: u.name,
-        load: load,
-        status:
-          load > 85 ? 'Overallocated' : load > 60 ? 'Committed' : 'Available',
-      };
-    })
-  );
+      },
+    },
+    {
+      $group: {
+        _id: '$assignedUser',
+        count: { $sum: 1 },
+      },
+    },
+  ]);
+
+  const countMap = taskCounts.reduce((acc, curr) => {
+    acc[curr._id.toString()] = curr.count;
+    return acc;
+  }, {});
+
+  const workloads = users.map((u) => {
+    const userTasksCount = countMap[u._id.toString()] || 0;
+    const load = Math.min(100, userTasksCount * 20);
+    return {
+      member: u.name,
+      load: load,
+      status:
+        load > 85 ? 'Overallocated' : load > 60 ? 'Committed' : 'Available',
+    };
+  });
 
   // Code Health Overview Card
   const passedTests = testCases.filter((t) => t.status === 'passed').length;
@@ -1376,8 +1373,7 @@ const getEMSpecifics = async (workspaceId, userId) => {
     Sprint.findOne({ workspaceId, status: 'active' }).lean(),
   ]);
 
-  const AVAILABLE_HOURS_WEEK = 40;
-  const AVAILABLE_MINUTES_WEEK = AVAILABLE_HOURS_WEEK * 60;
+  const AVAILABLE_MINUTES_WEEK = businessRules.staffing.userWeeklyCapacityMins;
 
   const teamWorkload = users.map((user) => {
     const userTasks = tasks.filter(
@@ -1569,7 +1565,7 @@ const getLeadershipDashboard = async (userId, workspaceId, role) => {
   const roleSpecificData = await getRoleSpecificData(workspaceId, role, userId);
 
   return {
-    ...getTacticalBase(activity),
+    ...getTacticalBasePresenter(activity),
     executionStats,
     teamGrid,
     ...roleSpecificData,
@@ -1625,7 +1621,9 @@ const getRoleBreakdown = async (workspaceId, category) => {
       $group: {
         _id: '$role',
         count: { $sum: 1 },
-        avgLoad: { $avg: { $divide: ['$totalHours', 40] } },
+        avgLoad: {
+          $avg: { $divide: ['$totalHours', LEGACY_CAPACITY_HOURS_DIVISOR] },
+        },
       },
     },
     {
@@ -1672,7 +1670,12 @@ const getIndividualBreakdown = async (workspaceId, role) => {
         },
         load: {
           $multiply: [
-            { $divide: [{ $sum: '$tasks.estimatedDuration' }, 40] },
+            {
+              $divide: [
+                { $sum: '$tasks.estimatedDuration' },
+                LEGACY_CAPACITY_HOURS_DIVISOR,
+              ],
+            },
             100,
           ],
         },
@@ -1695,11 +1698,7 @@ const getProjectWarRoomData = async (workspaceId, projectId) => {
     Project.findById(projectId).populate('members', 'name role avatar').lean(),
     Sprint.findOne({ workspaceId, status: 'active' }).lean(),
     Task.find({ projectId }).populate('assignedUser', 'name role').lean(),
-    require('../models/Directive')
-      .find({ workspaceId, status: 'issued' })
-      .sort('-priority')
-      .limit(3)
-      .lean(),
+    directiveService.getProjectWarRoomDirectives(workspaceId),
   ]);
 
   if (!project) return null;
@@ -1807,4 +1806,6 @@ module.exports = {
   getRoleBreakdown,
   getIndividualBreakdown,
   getProjectWarRoomData,
+  checkStabilizeDirective: directiveService.checkStabilizeDirective,
+  getProjectWarRoomDirectives: directiveService.getProjectWarRoomDirectives,
 };

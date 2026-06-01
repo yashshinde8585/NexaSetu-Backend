@@ -306,10 +306,20 @@ taskSchema.pre(/^find/, async function () {
     query.workspaceId === undefined &&
     !this.getOptions().bypassTenantSafety
   ) {
-    logger.warn(
-      `[TENANT-SAFETY] Query executed without workspaceId filter on Task collection: %o`,
-      query
-    );
+    const { getContext } = require('../utils/context');
+    const store = getContext();
+    const requestId = store.requestId || 'unknown';
+    const actor = store.user
+      ? `User(id=${store.user.id}, role=${store.user.role})`
+      : 'System/Anonymous';
+
+    const msg = `[TENANT-SAFETY] Query executed without workspaceId filter on Task collection: ${JSON.stringify(query)} | Actor: ${actor} | RequestId: ${requestId}`;
+
+    if (process.env.ENFORCE_TENANT_SAFETY === 'true') {
+      throw new Error(msg);
+    } else {
+      logger.warn(msg);
+    }
   }
 });
 

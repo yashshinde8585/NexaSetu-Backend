@@ -110,13 +110,16 @@ async function bootstrap() {
 const { notify } = require('./src/utils/notify');
 
 process.on('unhandledRejection', (reason, promise) => {
+  logger.error(
+    '[UNHANDLED-REJECTION] Promise rejection unhandled: %s',
+    reason?.stack || reason
+  );
   notify('CRITICAL', 'Unhandled Rejection detected', {
     reason: reason?.message || reason,
     stack: reason?.stack,
+  }).catch((err) => {
+    logger.error('Failed to send unhandled rejection alert: %s', err.message);
   });
-  if (config.isProduction) {
-    process.emit('SIGTERM');
-  }
 });
 
 process.on('uncaughtException', async (err) => {

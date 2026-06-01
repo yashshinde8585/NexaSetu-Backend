@@ -5,19 +5,38 @@ const logger = require('../utils/logger');
 const { STORAGE_CONSTANTS } = require('../utils/constants');
 const { v4: uuidv4 } = require('uuid');
 
+const withTimeout = async (promise, timeoutMs = 8000) => {
+  let timeout;
+  const timeoutPromise = new Promise((_, reject) => {
+    timeout = setTimeout(() => {
+      reject(new Error('Storage request timed out'));
+    }, timeoutMs);
+  });
+
+  try {
+    const result = await Promise.race([promise, timeoutPromise]);
+    clearTimeout(timeout);
+    return result;
+  } catch (err) {
+    clearTimeout(timeout);
+    throw err;
+  }
+};
+
 const uploadFile = async (fileBuffer, originalName, bucket = 'avatars') => {
   try {
     const fileExt = originalName.split('.').pop();
     const fileName = `${uuidv4()}.${fileExt}`;
     const filePath = `${bucket}/${fileName}`;
 
-    const { data, error } = await supabase.storage
-      .from(bucket)
-      .upload(filePath, fileBuffer, {
+    const { data, error } = await withTimeout(
+      supabase.storage.from(bucket).upload(filePath, fileBuffer, {
         contentType: `image/${fileExt}`,
         cacheControl: '3600',
         upsert: false,
-      });
+      }),
+      8000
+    );
 
     if (error) {
       logger.error(`[STORAGE_UPLOAD_ERROR]: ${error.message}`);
@@ -45,7 +64,10 @@ const deleteFile = async (publicUrl, bucket = 'avatars') => {
 
     const filePath = urlParts[1];
 
-    const { error } = await supabase.storage.from(bucket).remove([filePath]);
+    const { error } = await withTimeout(
+      supabase.storage.from(bucket).remove([filePath]),
+      8000
+    );
 
     if (error) {
       logger.error(`[STORAGE_DELETE_ERROR]: ${error.message}`);
@@ -98,11 +120,14 @@ const validateAttachment = (file, context) => {
  */
 const verifyAttachment = async (storagePath, expectedSize) => {
   try {
-    const { data, error } = await supabase.storage
-      .from(STORAGE_CONSTANTS.BUCKET_NAME)
-      .list(storagePath.split('/').slice(0, -1).join('/'), {
-        search: storagePath.split('/').pop(),
-      });
+    const { data, error } = await withTimeout(
+      supabase.storage
+        .from(STORAGE_CONSTANTS.BUCKET_NAME)
+        .list(storagePath.split('/').slice(0, -1).join('/'), {
+          search: storagePath.split('/').pop(),
+        }),
+      5000
+    );
 
     if (error || !data || data.length === 0) {
       return false;
@@ -130,9 +155,12 @@ const updateStorageUsage = async (workspaceId, sizeDelta) => {
  * Generates a signed URL for temporary access to a private file.
  */
 const getSignedDownloadUrl = async (storagePath) => {
-  const { data, error } = await supabase.storage
-    .from(STORAGE_CONSTANTS.BUCKET_NAME)
-    .createSignedUrl(storagePath, 3600); // 1 hour
+  const { data, error } = await withTimeout(
+    supabase.storage
+      .from(STORAGE_CONSTANTS.BUCKET_NAME)
+      .createSignedUrl(storagePath, 3600), // 1 hour
+    5000
+  );
 
   if (error) {
     logger.error(`[STORAGE_SIGNED_URL_ERROR]: ${error.message}`);
@@ -156,9 +184,12 @@ const getSignedUploadUrl = async (
   const fileExt = fileName.split('.').pop();
   const storagePath = `${workspaceId}/${projectId}/${taskId}/${uuidv4()}.${fileExt}`;
 
-  const { data, error } = await supabase.storage
-    .from(STORAGE_CONSTANTS.BUCKET_NAME)
-    .createSignedUploadUrl(storagePath);
+  const { data, error } = await withTimeout(
+    supabase.storage
+      .from(STORAGE_CONSTANTS.BUCKET_NAME)
+      .createSignedUploadUrl(storagePath),
+    5000
+  );
 
   if (error) {
     logger.error(`[STORAGE_SIGNED_UPLOAD_ERROR]: ${error.message}`);

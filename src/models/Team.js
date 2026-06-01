@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const logger = require('../utils/logger');
 
 const teamSchema = new mongoose.Schema(
   {
@@ -44,5 +45,20 @@ const teamSchema = new mongoose.Schema(
 
 // Index for workspace-specific team lookups
 teamSchema.index({ workspaceId: 1, name: 1 });
+
+teamSchema.pre(/^find/, async function () {
+  const query = this.getQuery();
+  if (
+    query.workspaceId === undefined &&
+    !this.getOptions().bypassTenantSafety
+  ) {
+    const msg = `[TENANT-SAFETY] Query executed without workspaceId filter on Team collection: ${JSON.stringify(query)}`;
+    if (process.env.ENFORCE_TENANT_SAFETY === 'true') {
+      throw new Error(msg);
+    } else {
+      logger.warn(msg);
+    }
+  }
+});
 
 module.exports = mongoose.model('Team', teamSchema);

@@ -8,6 +8,19 @@ const createSmartRateLimitStore = function (options = {}) {
   const localStore = new MemoryStore();
   localStore.init({ windowMs });
 
+  let lastWarningTime = 0;
+  const WARNING_THROTTLE_MS = 10000; // 10 seconds
+
+  const logFallbackWarning = (reason, details = '') => {
+    const now = Date.now();
+    if (now - lastWarningTime > WARNING_THROTTLE_MS) {
+      lastWarningTime = now;
+      logger.warn(
+        `[RATE-LIMIT-FALLBACK] Degrading to local memory store. Reason: ${reason}. ${details}`
+      );
+    }
+  };
+
   const luaIncrement = `
     local current = redis.call("INCR", KEYS[1])
     if current == 1 then
@@ -35,10 +48,13 @@ const createSmartRateLimitStore = function (options = {}) {
           resetTime: new Date(Date.now() + pttl),
         };
       } catch (err) {
-        logger.warn(
-          `[RATE-LIMIT] Redis increment failed for ${key}, falling back to memory: ${err.message}`
+        logFallbackWarning(
+          'Redis eval error',
+          `key=${key}, err=${err.message}`
         );
       }
+    } else {
+      logFallbackWarning('Redis disconnected', `key=${key}`);
     }
 
     return await localStore.increment(key);
@@ -51,9 +67,14 @@ const createSmartRateLimitStore = function (options = {}) {
         const redis = getRedisClient();
         await redis.decr(fullKey);
       } catch (err) {
+        logFallbackWarning(
+          'Redis decr error',
+          `key=${key}, err=${err.message}`
+        );
         await localStore.decrement(key);
       }
     } else {
+      logFallbackWarning('Redis disconnected on decr', `key=${key}`);
       await localStore.decrement(key);
     }
   };
@@ -65,8 +86,11 @@ const createSmartRateLimitStore = function (options = {}) {
         const redis = getRedisClient();
         await redis.del(fullKey);
       } catch (err) {
+        logFallbackWarning('Redis del error', `key=${key}, err=${err.message}`);
         await localStore.resetKey(key);
       }
+    } else {
+      logFallbackWarning('Redis disconnected on reset', `key=${key}`);
     }
     await localStore.resetKey(key);
   };

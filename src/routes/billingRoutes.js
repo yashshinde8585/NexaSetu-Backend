@@ -1,6 +1,6 @@
 const express = require('express');
 const billingController = require('../controllers/billingController');
-const { protect } = require('../middlewares/authMiddleware');
+const { protect, restrictTo } = require('../middlewares/authMiddleware');
 
 const router = express.Router();
 
@@ -53,7 +53,11 @@ router.get('/subscription', billingController.getSubscription);
  *       200:
  *         description: Successful response
  */
-router.post('/select-plan', billingController.selectPlan);
+router.post(
+  '/select-plan',
+  restrictTo('WORKSPACE_ADMIN', 'WORKSPACE_MANAGER'),
+  billingController.selectPlan
+);
 /**
  * @swagger
  * /billing/cancel:
@@ -72,6 +76,10 @@ router.post('/select-plan', billingController.selectPlan);
  *       200:
  *         description: Successful response
  */
-router.post('/cancel', billingController.cancelSubscription);
+router.post(
+  '/cancel',
+  restrictTo('WORKSPACE_ADMIN', 'WORKSPACE_MANAGER'),
+  billingController.cancelSubscription
+);
 
 module.exports = router;

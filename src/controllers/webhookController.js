@@ -5,6 +5,7 @@ const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
 const logger = require('../utils/logger');
 const config = require('../config/config');
+const crypto = require('crypto');
 
 exports.handleClerkWebhook = catchAsync(async (req, res, next) => {
   const WEBHOOK_SECRET = process.env.CLERK_WEBHOOK_SECRET;
@@ -55,11 +56,20 @@ exports.handleClerkWebhook = catchAsync(async (req, res, next) => {
   if (eventType === 'user.created') {
     const {
       id: clerkUserId,
-      email_addresses,
+      email_addresses = [],
       first_name,
       last_name,
       unsafe_metadata,
     } = evt.data;
+
+    if (!email_addresses || email_addresses.length === 0) {
+      return next(
+        new AppError(
+          'No email addresses provided in Clerk webhook payload.',
+          400
+        )
+      );
+    }
     const email = email_addresses[0].email_address;
     const name = `${first_name || ''} ${last_name || ''}`.trim();
 
@@ -85,7 +95,7 @@ exports.handleClerkWebhook = catchAsync(async (req, res, next) => {
       const newUserData = {
         name: name || email.split('@')[0],
         email,
-        password: 'CLERK_MANAGED',
+        password: crypto.randomBytes(32).toString('hex'),
         clerkUserId,
         role: 'WORKSPACE_ADMIN',
         workspaceName,

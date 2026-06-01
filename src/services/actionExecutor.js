@@ -67,6 +67,10 @@ const executeImmediately = async (
   let newValue = null;
 
   try {
+    if (!payload || typeof payload !== 'object') {
+      throw new Error('Action payload must be a valid object');
+    }
+
     // Validate AI-driven output to prevent system state corruption.
     const aiAgents = ['Scheduler', 'Harvester', 'Portfolio'];
     if (aiAgents.includes(agent)) {

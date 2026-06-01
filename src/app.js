@@ -8,6 +8,7 @@ const config = require('./config/config');
 const { isRedisConnected } = require('./config/redis');
 const logger = require('./utils/logger');
 const SmartRateLimitStore = require('./utils/SmartRateLimitStore');
+const mongoSanitize = require('./middlewares/nosqlSanitizeMiddleware');
 const crypto = require('crypto');
 
 const app = express();
@@ -30,6 +31,8 @@ app.use(
       'Idempotency-Key',
       'X-Idempotency-Key',
       'x-idempotency-key',
+      'X-CSRF-Token',
+      'x-csrf-token',
     ],
     maxAge: 86400,
   })
@@ -62,6 +65,7 @@ app.use(
     },
   })
 );
+app.use(mongoSanitize());
 app.use((err, req, res, next) => {
   if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
     return res.status(400).json({
@@ -75,6 +79,9 @@ app.use((err, req, res, next) => {
 });
 app.use(express.urlencoded({ extended: true, limit: '15kb' }));
 app.use(cookieParser());
+
+const csrfProtection = require('./middlewares/csrfMiddleware');
+app.use(csrfProtection());
 
 const telemetry = require('./middlewares/telemetryMiddleware');
 const idempotency = require('./middlewares/idempotencyMiddleware');
@@ -131,11 +138,16 @@ const createLimiter = (prefix, max, windowMs = 60 * 60 * 1000) =>
       windowMs,
     }),
     skip: (req) => config.isTest,
+    validate: { singleCount: false },
   });
 
 // Public health check (bypass global rate limit for monitoring)
 const healthRoutes = require('./routes/healthRoutes');
 app.use('/api/health', healthRoutes);
+
+// Clerk Webhooks (bypass rate limiter)
+const webhookRoutes = require('./routes/webhookRoutes');
+app.use(['/api/v1/webhooks', '/api/webhooks'], webhookRoutes);
 
 // Swagger Documentation
 const setupSwagger = require('./config/swagger');
@@ -144,7 +156,20 @@ setupSwagger(app);
 const isDev = config.env === 'development';
 app.use('/api', createLimiter('global', isDev ? 10000 : 5000, 15 * 60 * 1000));
 
-app.use('/api/auth/login', createLimiter('auth-login', 15, 5 * 60 * 1000));
+app.use(
+  ['/api/auth/login', '/api/v1/auth/login'],
+  createLimiter('auth-login', 15, 5 * 60 * 1000)
+);
+
+app.use(
+  [
+    '/api/auth/forgot-password',
+    '/api/v1/auth/forgot-password',
+    '/api/auth/reset-password',
+    '/api/v1/auth/reset-password',
+  ],
+  createLimiter('auth-reset', 10, 15 * 60 * 1000)
+);
 
 const v1Router = express.Router();
 
@@ -173,9 +198,6 @@ const executionRoutes = require('./routes/executionRoutes');
 const observabilityRoutes = require('./routes/observabilityRoutes');
 const metricsRoutes = require('./routes/metricsRoutes');
 const directiveRoutes = require('./routes/directiveRoutes');
-const webhookRoutes = require('./routes/webhookRoutes');
-
-v1Router.use('/webhooks', webhookRoutes);
 v1Router.use('/auth', authRoutes);
 v1Router.use('/projects', projectRoutes);
 v1Router.use('/tasks', taskRoutes);

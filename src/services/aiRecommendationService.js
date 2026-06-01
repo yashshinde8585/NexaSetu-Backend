@@ -38,7 +38,7 @@ const getPortfolioRecommendations = async (user) => {
         recommendations.push({
           type: 'delay',
           priority: 'high',
-          message: `Task "${task.title}" is delayed in project ${task.project.name}.`,
+          message: `Task "${task.title}" is delayed in project ${task.project?.name || 'Unknown Project'}.`,
           action: 'Extend deadline or reassign to accelerate.',
           targetId: task._id,
           targetType: 'task',

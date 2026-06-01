@@ -5,6 +5,7 @@ const { getIO, EVENTS } = require('../socket');
 const { getRedisClient } = require('../config/redis');
 const logger = require('../utils/logger');
 const AppError = require('../utils/appError');
+const { sanitizeHTML } = require('../utils/sanitizer');
 
 const truncate = (text, max = 100) =>
   text.length > max ? text.substring(0, max) + '...' : text;
@@ -46,7 +47,7 @@ const addComment = async (user, taskId, content) => {
   const comment = await Comment.create({
     task: taskId,
     user: user._id,
-    content,
+    content: sanitizeHTML(content),
     type: 'user_comment',
   });
 

@@ -80,7 +80,10 @@ const finalizeSprint = async (user, sprintId) => {
     topContributors,
     metrics: {
       velocity: completedTasks.length,
-      retention: 100 - (pendingTasks.length / tasks.length) * 100,
+      retention:
+        tasks.length > 0
+          ? 100 - (pendingTasks.length / tasks.length) * 100
+          : 100,
       spillover: pendingTasks.length,
     },
   };

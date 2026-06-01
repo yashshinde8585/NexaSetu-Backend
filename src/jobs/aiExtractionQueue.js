@@ -88,14 +88,32 @@ const initAiExtractionWorker = () => {
   workerManager.registerWorker(aiExtractionWorker);
 
   aiExtractionWorker.on('failed', async (job, err) => {
+    const errMsg = err?.message || 'Unknown error';
+    const errStack = err?.stack || '';
     if (job && job.attemptsMade >= 3) {
       try {
+        const sanitizePayload = (data) => {
+          try {
+            const str = JSON.stringify(data);
+            if (str.length > 50000) {
+              return {
+                _truncated: true,
+                _originalSize: str.length,
+                _sample: str.substring(0, 1000),
+              };
+            }
+            return data;
+          } catch (e) {
+            return { _error: 'Failed to serialize payload' };
+          }
+        };
+
         await FailedJob.create({
           jobId: job.id,
           queueName: 'ai-extraction',
-          payload: job.data,
-          error: err.message,
-          stack: err.stack,
+          payload: sanitizePayload(job.data),
+          error: errMsg,
+          stack: errStack,
           timestamp: new Date(),
         });
         logger.info(`[DLQ] AI Extraction Job ${job.id} moved to failed_jobs.`);

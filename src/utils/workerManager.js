@@ -2,6 +2,36 @@ const logger = require('./logger');
 
 const workers = [];
 const queues = [];
+let sweepInterval = null;
+
+const startStatsSweep = (intervalMs = 300000) => {
+  if (sweepInterval) return;
+
+  sweepInterval = setInterval(async () => {
+    try {
+      const reports = await getHealthReport();
+      reports.forEach((report) => {
+        if (report.status === 'error') {
+          logger.error(
+            `[QUEUE-STATS-ERROR] Failed to query stats for queue ${report.name}: ${report.error}`
+          );
+        } else {
+          logger.info(
+            `[QUEUE-STATS] Queue: ${report.name} | Status: ${report.status} | Active: ${report.active} | Waiting: ${report.waiting} | Delayed: ${report.delayed} | Completed: ${report.completed} | Failed: ${report.failed}`
+          );
+        }
+      });
+    } catch (err) {
+      logger.error(
+        `[QUEUE-STATS-ERROR] Error in queue health sweep: ${err.message}`
+      );
+    }
+  }, intervalMs);
+
+  if (sweepInterval.unref) {
+    sweepInterval.unref();
+  }
+};
 
 const registerWorker = (worker) => {
   if (worker) {
@@ -21,6 +51,7 @@ const registerQueue = (queue) => {
   if (queue) {
     queues.push(queue);
     logger.debug(`[WORKER-MANAGER] Registered queue: ${queue.name}`);
+    startStatsSweep();
   }
 };
 
@@ -52,6 +83,11 @@ const shutdown = async () => {
   logger.info(
     '[WORKER-MANAGER] Initiating graceful shutdown of workers and queues...'
   );
+
+  if (sweepInterval) {
+    clearInterval(sweepInterval);
+    sweepInterval = null;
+  }
 
   const workerPromises = workers.map(async (worker) => {
     try {

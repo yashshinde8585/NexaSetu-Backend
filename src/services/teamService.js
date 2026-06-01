@@ -13,6 +13,21 @@ const clerkClient = createClerkClient({
   secretKey: process.env.CLERK_SECRET_KEY,
 });
 
+const invalidateTeamStatsCache = async (workspaceId) => {
+  const { getRedisClient, isRedisConnected } = require('../config/redis');
+  if (isRedisConnected()) {
+    try {
+      const redis = getRedisClient();
+      await redis.del(`workspace:${workspaceId}:teamStats`);
+      logger.info(
+        `[TEAM-STATS] Invalidated cache for workspace ${workspaceId}`
+      );
+    } catch (err) {
+      logger.error(`[TEAM-STATS] Cache invalidation error: ${err.message}`);
+    }
+  }
+};
+
 const provisionUser = async (
   { name, email, role, projectId, jobTitle },
   workspaceId,
@@ -79,6 +94,7 @@ const provisionUser = async (
       });
     }
 
+    await invalidateTeamStatsCache(workspaceId);
     return { status: 'PROVISIONED', user: newUser };
   } else {
     const token = crypto.randomBytes(32).toString('hex');
@@ -106,6 +122,7 @@ const provisionUser = async (
         logger.error(`[METRICS] Failed to track invitation: ${err.message}`)
       );
 
+    await invalidateTeamStatsCache(workspaceId);
     return { status: 'INVITED', invitation };
   }
 };
@@ -184,6 +201,10 @@ const bulkProvision = async (invites, workspaceId, user, isStrategicLead) => {
     }
   }
 
+  if (provisionedUsers.length > 0) {
+    await invalidateTeamStatsCache(workspaceId);
+  }
+
   return { provisionedUsers, failedInvites };
 };
 
@@ -202,6 +223,22 @@ const getInviteByToken = async (token) => {
 };
 
 const getWorkspaceTeamStats = async (workspaceId) => {
+  const { getRedisClient, isRedisConnected } = require('../config/redis');
+  const redis = getRedisClient();
+  const cacheKey = `workspace:${workspaceId}:teamStats`;
+
+  if (isRedisConnected()) {
+    try {
+      const cachedData = await redis.get(cacheKey);
+      if (cachedData) {
+        logger.info(`[TEAM-STATS] Cache hit for workspace ${workspaceId}`);
+        return JSON.parse(cachedData);
+      }
+    } catch (err) {
+      logger.error(`[TEAM-STATS] Cache read error: ${err.message}`);
+    }
+  }
+
   const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
   const sixtyDaysAgo = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000);
   const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
@@ -244,7 +281,9 @@ const getWorkspaceTeamStats = async (workspaceId) => {
   const recentUsers = await User.find({
     workspaceId,
     createdAt: { $gte: thirtyDaysAgo },
-  }).select('_id');
+  })
+    .select('_id')
+    .lean();
   recentUsers.forEach((u) => activePerformersSet.add(u._id.toString()));
   const activeCount = activePerformersSet.size;
 
@@ -258,7 +297,9 @@ const getWorkspaceTeamStats = async (workspaceId) => {
   const prevRecentUsers = await User.find({
     workspaceId,
     createdAt: { $gte: sixtyDaysAgo, $lt: thirtyDaysAgo },
-  }).select('_id');
+  })
+    .select('_id')
+    .lean();
   prevRecentUsers.forEach((u) => prevActivePerformersSet.add(u._id.toString()));
   const prevActiveCount = prevActivePerformersSet.size;
   const activeGrowth =
@@ -280,7 +321,9 @@ const getWorkspaceTeamStats = async (workspaceId) => {
     const usersCreated = await User.find({
       workspaceId,
       createdAt: { $gte: start, $lte: end },
-    }).select('_id');
+    })
+      .select('_id')
+      .lean();
     usersCreated.forEach((u) => performersSet.add(u._id.toString()));
     activeTrend.push({ val: performersSet.size });
   }
@@ -318,7 +361,7 @@ const getWorkspaceTeamStats = async (workspaceId) => {
     timestamp: { $gte: ninetyDaysAgo },
   });
   const activeUsers90dSet = new Set(activeUsers90d.map((id) => id.toString()));
-  const allUsersList = await User.find({ workspaceId }).select('_id');
+  const allUsersList = await User.find({ workspaceId }).select('_id').lean();
   const inactiveCount = allUsersList.filter(
     (u) => !activeUsers90dSet.has(u._id.toString())
   ).length;
@@ -333,7 +376,9 @@ const getWorkspaceTeamStats = async (workspaceId) => {
   const allUsersAsOf30dList = await User.find({
     workspaceId,
     createdAt: { $lt: thirtyDaysAgo },
-  }).select('_id');
+  })
+    .select('_id')
+    .lean();
   const inactiveCountAsOf30d = allUsersAsOf30dList.filter(
     (u) => !activeUsersPrev90dSet.has(u._id.toString())
   ).length;
@@ -363,7 +408,9 @@ const getWorkspaceTeamStats = async (workspaceId) => {
     const usersAtThatTime = await User.find({
       workspaceId,
       createdAt: { $lte: dateLimit },
-    }).select('_id');
+    })
+      .select('_id')
+      .lean();
     const inactiveAtThatTime = usersAtThatTime.filter(
       (u) => !activeAtThatTimeSet.has(u._id.toString())
     ).length;
@@ -412,7 +459,7 @@ const getWorkspaceTeamStats = async (workspaceId) => {
   const mfaPercentage =
     totalCount > 0 ? Math.round((mfaCount / totalCount) * 100) : 0;
 
-  return {
+  const stats = {
     totalUsers: { count: totalCount, growth: totalGrowth, trend: totalTrend },
     activeUsers: {
       count: activeCount,
@@ -432,6 +479,17 @@ const getWorkspaceTeamStats = async (workspaceId) => {
     },
     mfaEnabled: { count: mfaCount, percentage: mfaPercentage },
   };
+
+  if (isRedisConnected()) {
+    try {
+      // Cache stats for 15 minutes (900 seconds)
+      await redis.setex(cacheKey, 900, JSON.stringify(stats));
+    } catch (err) {
+      logger.error(`[TEAM-STATS] Cache write error: ${err.message}`);
+    }
+  }
+
+  return stats;
 };
 
 const getWorkspaceTeam = async (
@@ -604,6 +662,7 @@ const removeInvitation = async (user, invitationId) => {
   }
 
   await Invitation.findByIdAndDelete(invitationId);
+  await invalidateTeamStatsCache(user.workspaceId);
   return true;
 };
 
@@ -634,6 +693,7 @@ const updateMemberProject = async (user, memberId, projectId) => {
     });
   }
 
+  await invalidateTeamStatsCache(user.workspaceId);
   return member;
 };
 

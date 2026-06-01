@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const logger = require('../utils/logger');
 
 const sprintSchema = new mongoose.Schema(
   {
@@ -84,5 +85,20 @@ const sprintSchema = new mongoose.Schema(
 // ESR Optimization: workspaceId (Equality) -> project (Equality) -> status (Sort/Equality)
 sprintSchema.index({ workspaceId: 1, project: 1, status: 1 });
 sprintSchema.index({ workspaceId: 1, startDate: 1, endDate: 1 });
+
+sprintSchema.pre(/^find/, async function () {
+  const query = this.getQuery();
+  if (
+    query.workspaceId === undefined &&
+    !this.getOptions().bypassTenantSafety
+  ) {
+    const msg = `[TENANT-SAFETY] Query executed without workspaceId filter on Sprint collection: ${JSON.stringify(query)}`;
+    if (process.env.ENFORCE_TENANT_SAFETY === 'true') {
+      throw new Error(msg);
+    } else {
+      logger.warn(msg);
+    }
+  }
+});
 
 module.exports = mongoose.model('Sprint', sprintSchema);

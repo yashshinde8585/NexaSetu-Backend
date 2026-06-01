@@ -15,7 +15,8 @@ const runProjectRiskAnalysis = async (workspaceId) => {
 
   for (const project of projects) {
     const tasks = await Task.find({
-      projectId: project._id,
+      workspaceId,
+      project: project._id,
       status: { $ne: 'done' },
     });
 

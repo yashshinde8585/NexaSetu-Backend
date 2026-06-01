@@ -51,6 +51,8 @@ const auditLogSchema = new mongoose.Schema(
   }
 );
 
+auditLogSchema.index({ workspaceId: 1, action: 1, timestamp: -1 });
+auditLogSchema.index({ workspaceId: 1, timestamp: -1 });
 auditLogSchema.index({ timestamp: 1 }, { expiresAfterSeconds: 7776000 });
 
 module.exports = mongoose.model('AuditLog', auditLogSchema);

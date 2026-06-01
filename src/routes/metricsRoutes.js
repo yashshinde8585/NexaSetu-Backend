@@ -1,6 +1,6 @@
 const express = require('express');
 const { trackEvent } = require('../controllers/metricsController');
-const { protect } = require('../middlewares/authMiddleware');
+const { optionalProtect } = require('../middlewares/authMiddleware');
 
 const router = express.Router();
 
@@ -26,6 +26,6 @@ const router = express.Router();
  *       200:
  *         description: Successful response
  */
-router.post('/event', protect, trackEvent);
+router.post('/event', optionalProtect, trackEvent);
 
 module.exports = router;

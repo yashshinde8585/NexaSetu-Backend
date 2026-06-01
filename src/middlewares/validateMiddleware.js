@@ -7,7 +7,7 @@ const validate = (schema) => (req, res, next) => {
     return next(new AppError('Request body is missing or empty.', 400));
   }
   try {
-    schema.parse(req.body);
+    req.body = schema.parse(req.body);
     next();
   } catch (error) {
     let errorMessage = error.message;

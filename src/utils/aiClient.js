@@ -64,8 +64,8 @@ const generateCompletion = async (messages, options = {}) => {
         );
 
         return {
-          content: response.data.choices[0].message.content,
-          usage: response.data.usage,
+          content: response.data?.choices?.[0]?.message?.content || '',
+          usage: response.data?.usage,
           model: currentModel,
         };
       } catch (error) {

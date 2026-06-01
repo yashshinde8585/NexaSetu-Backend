@@ -31,7 +31,14 @@ router.get(
     'QA_ENGINEER',
     'SENIOR_QA_ENGINEER',
     'HR',
-    'PROJECT_MEMBER'
+    'PROJECT_MEMBER',
+    'SOFTWARE_ENGINEER',
+    'SENIOR_ENGINEER',
+    'TECH_LEAD',
+    'ENGINEERING_MANAGER',
+    'VP_ENGINEERING',
+    'JUNIOR_ENGINEER',
+    'INTERN'
   ),
   getDashboard
 );

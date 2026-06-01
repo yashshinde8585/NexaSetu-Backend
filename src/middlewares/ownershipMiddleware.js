@@ -26,7 +26,10 @@ const verifyOwnership = (
 
     // 1. Check if resource is directly owned by user
     const isOwner =
-      resource.userId && resource.userId.toString() === req.user._id.toString();
+      (resource.userId &&
+        resource.userId.toString() === req.user._id.toString()) ||
+      (resource.createdBy &&
+        resource.createdBy.toString() === req.user._id.toString());
 
     // 2. Check if resource belongs to user's workspace
     const belongsToWorkspace =

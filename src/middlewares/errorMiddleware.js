@@ -14,6 +14,7 @@ const globalErrorHandler = (err, req, res, next) => {
   // Map technical DB/JWT signals to user-friendly messages.
   if (err.name === 'CastError') error = handleCastErrorDB(err);
   else if (err.code === 11000) error = handleDuplicateFieldsDB(err);
+  else if (err.code === 112) error = handleWriteConflictDB(err);
   else if (err.name === 'ValidationError') error = handleValidationErrorDB(err);
   else if (err.name === 'JsonWebTokenError') error = handleJWTError();
   else if (err.name === 'TokenExpiredError') error = handleJWTExpiredError();
@@ -36,6 +37,22 @@ const handleDuplicateFieldsDB = (err) => {
     `Duplicate field value: ${value}. Please use another value!`,
     400
   );
+};
+
+const handleWriteConflictDB = (err) => {
+  logger.error('[DB-CONFLICT] Mongoose WriteConflict error encountered: %o', {
+    message: err.message,
+    code: err.code,
+    errmsg: err.errmsg,
+    stack: err.stack,
+  });
+
+  const appErr = new AppError(
+    'The database transaction was interrupted due to a concurrent write conflict. Please retry your request.',
+    409
+  );
+  appErr.code = 'WRITE_CONFLICT';
+  return appErr;
 };
 
 const handleValidationErrorDB = (err) => {

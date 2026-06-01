@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const logger = require('../utils/logger');
 
 const testCaseSchema = new mongoose.Schema(
   {
@@ -61,5 +62,20 @@ const testCaseSchema = new mongoose.Schema(
     timestamps: true,
   }
 );
+
+testCaseSchema.pre(/^find/, async function () {
+  const query = this.getQuery();
+  if (
+    query.workspaceId === undefined &&
+    !this.getOptions().bypassTenantSafety
+  ) {
+    const msg = `[TENANT-SAFETY] Query executed without workspaceId filter on TestCase collection: ${JSON.stringify(query)}`;
+    if (process.env.ENFORCE_TENANT_SAFETY === 'true') {
+      throw new Error(msg);
+    } else {
+      logger.warn(msg);
+    }
+  }
+});
 
 module.exports = mongoose.model('TestCase', testCaseSchema);

@@ -3,8 +3,8 @@ const Task = require('../models/Task');
 const Project = require('../models/Project');
 const Notification = require('../models/Notification');
 const TaskStatusHistory = require('../models/TaskStatusHistory');
-const Directive = require('../models/Directive');
 const AgentOrchestrator = require('../services/agentOrchestrator');
+const directiveService = require('../services/directiveService');
 const { getIO, EVENTS } = require('../socket');
 const { calculateDelayStatus } = require('../utils/taskUtils');
 const { isManagerOrAdmin } = require('../utils/authHelpers');
@@ -74,15 +74,10 @@ const updateTaskStatus = async (user, taskId, status, req) => {
     const isManager = isManagerOrAdmin(user);
 
     // --- DIRECTIVE ENFORCEMENT LAYER ---
-    const activeStabilize = await Directive.findOne({
-      workspaceId: user.workspaceId,
-      status: 'issued',
-      type: 'STABILIZE',
-      $or: [
-        { 'scope.type': 'WORKSPACE' },
-        { 'scope.type': 'PROJECT', 'scope.targetId': task.project },
-      ],
-    });
+    const activeStabilize = await directiveService.checkStabilizeDirective(
+      user.workspaceId,
+      task.project
+    );
 
     if (
       activeStabilize &&
@@ -222,15 +217,10 @@ const createTask = async (user, data) => {
     }
 
     // --- DIRECTIVE ENFORCEMENT ---
-    const activeStabilize = await Directive.findOne({
-      workspaceId: user.workspaceId,
-      status: 'issued',
-      type: 'STABILIZE',
-      $or: [
-        { 'scope.type': 'WORKSPACE' },
-        { 'scope.type': 'PROJECT', 'scope.targetId': project },
-      ],
-    });
+    const activeStabilize = await directiveService.checkStabilizeDirective(
+      user.workspaceId,
+      project
+    );
 
     if (activeStabilize && !isManagerOrAdmin(user)) {
       throw new AppError(
@@ -811,10 +801,17 @@ const deleteTask = async (user, taskId) => {
     );
 
     const { getJobMetadata } = require('../utils/context');
-    await getStorageQueue().add('cleanup-orphans', {
-      storagePaths,
-      ...getJobMetadata(),
-    });
+    const storageQueue = getStorageQueue();
+    if (storageQueue) {
+      await storageQueue.add('cleanup-orphans', {
+        storagePaths,
+        ...getJobMetadata(),
+      });
+    } else {
+      logger.warn(
+        `[STORAGE-QUEUE-OFFLINE] Redis/Queue disconnected. Deferred deletion of attachments: ${JSON.stringify(storagePaths)}`
+      );
+    }
     await storageService.updateStorageUsage(
       task.workspaceId,
       -totalDeletedSize

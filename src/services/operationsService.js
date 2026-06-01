@@ -1,31 +1,18 @@
 const TestCase = require('../models/TestCase');
 const Task = require('../models/Task');
 const User = require('../models/User');
-const Project = require('../models/Project');
 const Team = require('../models/Team');
 const AuditLog = require('../models/AuditLog');
 const Invitation = require('../models/Invitation');
 const Directive = require('../models/Directive');
+const Sprint = require('../models/Sprint');
+const { formatTimeAgo } = require('../utils/dashboardHelpers');
+const businessRules = require('../config/businessRules');
 const {
-  calculateProgress,
-  mapTaskToDashboard,
-} = require('../utils/dashboardHelpers');
-
-const formatTimeAgo = (date) => {
-  if (!date) return 'Unknown';
-  const seconds = Math.floor((new Date() - new Date(date)) / 1000);
-  let interval = seconds / 31536000;
-  if (interval > 1) return Math.floor(interval) + 'y ago';
-  interval = seconds / 2592000;
-  if (interval > 1) return Math.floor(interval) + 'mo ago';
-  interval = seconds / 86400;
-  if (interval > 1) return Math.floor(interval) + 'd ago';
-  interval = seconds / 3600;
-  if (interval > 1) return Math.floor(interval) + 'h ago';
-  interval = seconds / 60;
-  if (interval > 1) return Math.floor(interval) + 'm ago';
-  return Math.floor(seconds) + 's ago';
-};
+  getDefectsByStatusPresenter,
+  getTestExecutionSummaryPresenter,
+  getRecentActivityFeedPresenter,
+} = require('../utils/dashboardPresenter');
 
 const _calculateCoverage = (testCases) => {
   if (!testCases.length) return { Core: 0, API: 0, UI: 0 };
@@ -39,27 +26,58 @@ const _calculateCoverage = (testCases) => {
   return coverage;
 };
 
-const _getSQASections = async (workspaceId) => {
-  const [testCases, bugs, logs] = await Promise.all([
+const _getSQASections = async (workspaceId, userId) => {
+  const [testCases, bugs, logs, sprints, myTasks] = await Promise.all([
     TestCase.find({ workspaceId }).lean(),
-    Task.find({ workspaceId, type: 'bug', status: { $ne: 'done' } }).lean(),
+    Task.find({ workspaceId, type: 'bug' }).lean(),
     AuditLog.find({ workspaceId, action: { $regex: /test|bug|release/i } })
       .sort('-timestamp')
       .limit(20)
       .lean(),
+    Sprint.find({ workspaceId, status: { $in: ['active', 'upcoming'] } })
+      .sort('endDate')
+      .limit(3)
+      .lean(),
+    Task.find({ workspaceId, assignedUser: userId }).lean(),
   ]);
 
   const totalTests = testCases.length;
   const failedTests = testCases.filter((t) => t.status === 'failed').length;
   const blockedTests = testCases.filter((t) => t.status === 'blocked').length;
+  const passedTests = testCases.filter((t) => t.status === 'passed').length;
+  const pendingTests = testCases.filter((t) => t.status === 'pending').length;
   const flakyCount = testCases.filter((t) => t.isFlaky).length;
 
-  const critBugs = bugs.filter((b) =>
-    ['high', 'urgent'].includes(b.priority)
+  const total = totalTests;
+  const passed = passedTests;
+  const failed = failedTests;
+  const blocked = blockedTests;
+  const pending = pendingTests;
+  const flaky = flakyCount;
+
+  const failureRate = total ? Math.round((failed / total) * 100) : 0;
+  const passRate = total ? Math.round((passed / total) * 1000) / 10 : 0;
+
+  const critBugs = bugs.filter(
+    (b) =>
+      ['high', 'urgent', 'critical'].includes(b.priority) && b.status !== 'done'
+  ).length;
+  const highBugs = bugs.filter(
+    (b) => b.priority === 'high' && b.status !== 'done'
+  ).length;
+  const medBugs = bugs.filter(
+    (b) => b.priority === 'medium' && b.status !== 'done'
+  ).length;
+  const lowBugs = bugs.filter(
+    (b) => b.priority === 'low' && b.status !== 'done'
   ).length;
 
-  const modules = [...new Set(testCases.map((t) => t.module))];
-  const failureAnalysis = modules
+  const releaseRisk = critBugs > 0 || failed > 5 ? 'HIGH' : 'LOW';
+
+  const modules = [...new Set(testCases.map((t) => t.module))].filter(Boolean);
+  const activeModules = modules;
+
+  const failureAnalysis = activeModules
     .map((m) => {
       const modTests = testCases.filter((t) => t.module === m);
       const modFailures = modTests.filter((t) => t.status === 'failed').length;
@@ -72,13 +90,13 @@ const _getSQASections = async (workspaceId) => {
     .sort((a, b) => b.failures - a.failures)
     .slice(0, 3);
 
-  const bugIntelligence = modules
+  const bugIntelligence = activeModules
     .map((m) => {
       const modBugs = bugs.filter(
         (b) => b.module === m || (b.title && b.title.includes(m))
       );
       const highSev = modBugs.filter((b) =>
-        ['high', 'urgent'].includes(b.priority)
+        ['high', 'urgent', 'critical'].includes(b.priority)
       ).length;
       return {
         module: m,
@@ -88,12 +106,12 @@ const _getSQASections = async (workspaceId) => {
     })
     .slice(0, 5);
 
-  const coverageGaps = modules
+  const coverageGaps = activeModules
     .map((m) => {
       const modTests = testCases.filter((t) => t.module === m);
-      const passed = modTests.filter((t) => t.status === 'passed').length;
+      const pass = modTests.filter((t) => t.status === 'passed').length;
       const coverage = modTests.length
-        ? Math.round((passed / modTests.length) * 100)
+        ? Math.round((pass / modTests.length) * 100)
         : 0;
       return {
         module: m,
@@ -101,21 +119,270 @@ const _getSQASections = async (workspaceId) => {
         alert: coverage < 75 ? 'RISK' : 'OPTIMAL',
       };
     })
-    .filter((g) => g.coverage < 95)
+    .filter((g) => g.coverage < 95 && g.coverage > 0)
     .slice(0, 4);
 
-  const failureRate = totalTests
-    ? Math.round((failedTests / totalTests) * 100)
+  const getPassRateSparkline = (testCases) => {
+    const points = [];
+    const now = new Date();
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(
+        now.getFullYear(),
+        now.getMonth(),
+        now.getDate() - i,
+        23,
+        59,
+        59
+      );
+      const dayTests = testCases.filter(
+        (t) => new Date(t.updatedAt || t.createdAt) <= d
+      );
+      if (dayTests.length > 0) {
+        const passed = dayTests.filter((t) => t.status === 'passed').length;
+        points.push({
+          value: Math.round((passed / dayTests.length) * 1000) / 10,
+        });
+      } else {
+        points.push({ value: 0 });
+      }
+    }
+    return points;
+  };
+
+  const getDefectDensitySparkline = (testCases, bugs) => {
+    const points = [];
+    const now = new Date();
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(
+        now.getFullYear(),
+        now.getMonth(),
+        now.getDate() - i,
+        23,
+        59,
+        59
+      );
+      const dayTests = testCases.filter(
+        (t) => new Date(t.createdAt) <= d
+      ).length;
+      const dayBugs = bugs.filter((b) => new Date(b.createdAt) <= d).length;
+      const totalVal = dayTests || 1;
+      const density = Math.round((dayBugs / (totalVal / 100)) * 100) / 100;
+      points.push({ value: density });
+    }
+    return points;
+  };
+
+  const passRateSparkline = getPassRateSparkline(testCases);
+  const defectDensityValue = total
+    ? Math.round((bugs.length / (total / 100)) * 100) / 100
     : 0;
-  const releaseRisk = critBugs > 0 || failedTests > 5 ? 'HIGH' : 'LOW';
+  const defectDensitySparkline = getDefectDensitySparkline(testCases, bugs);
+
+  const openBugs = bugs.filter((b) => b.status !== 'done');
+  const topDefects = openBugs
+    .map((b, index) => ({
+      id: `DEF-${b.taskNumber || 2000 + index}`,
+      title: b.title,
+      module: b.category || 'System',
+      severity:
+        b.priority === 'urgent' || b.priority === 'critical'
+          ? 'Critical'
+          : b.priority === 'high'
+            ? 'High'
+            : 'Medium',
+      age: formatTimeAgo(b.createdAt),
+    }))
+    .slice(0, 5);
+
+  const { defects: defectsByStatus, total: totalOpenBugsComputed } =
+    getDefectsByStatusPresenter(bugs);
+
+  const myWork = [
+    {
+      label: 'Tasks Assigned',
+      count: myTasks.filter((t) => t.status === 'todo').length,
+      type: 'assigned',
+    },
+    {
+      label: 'In Progress',
+      count: myTasks.filter((t) => t.status === 'in_progress').length,
+      type: 'progress',
+    },
+    {
+      label: 'Ready for Review',
+      count: myTasks.filter((t) => t.status === 'in_review').length,
+      type: 'review',
+    },
+    {
+      label: 'Blocked',
+      count: myTasks.filter((t) => t.status === 'blocked').length,
+      type: 'blocked',
+    },
+  ];
+
+  const recentActivity = getRecentActivityFeedPresenter(logs).slice(0, 4);
+
+  const upcomingDeadlines = sprints.map((s) => {
+    const diffMs = new Date(s.endDate) - new Date();
+    const diffDays = Math.max(0, Math.ceil(diffMs / (1000 * 60 * 60 * 24)));
+    return {
+      title: s.name,
+      date: new Date(s.endDate).toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+      }),
+      remaining: `${diffDays} days left`,
+      status: diffDays <= 2 ? 'error' : diffDays <= 7 ? 'warning' : 'success',
+    };
+  });
+
+  const getTestExecutionTrend = (testCases) => {
+    const trend = [];
+    const now = new Date();
+    for (let i = 4; i >= 0; i--) {
+      const d = new Date(
+        now.getFullYear(),
+        now.getMonth(),
+        now.getDate() - i,
+        23,
+        59,
+        59
+      );
+      const dayTests = testCases.filter((t) => new Date(t.createdAt) <= d);
+      const passedVal = dayTests.filter(
+        (t) => t.status === 'passed' && new Date(t.updatedAt) <= d
+      ).length;
+      const failedVal = dayTests.filter(
+        (t) => t.status === 'failed' && new Date(t.updatedAt) <= d
+      ).length;
+      const blockedVal = dayTests.filter(
+        (t) => t.status === 'blocked' && new Date(t.updatedAt) <= d
+      ).length;
+      const totalVal = dayTests.length;
+      const rate = totalVal ? Math.round((passedVal / totalVal) * 100) : 0;
+      const dateStr = d.toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+      });
+      trend.push({
+        date: dateStr,
+        Passed: passedVal,
+        Failed: failedVal,
+        Blocked: blockedVal,
+        'Pass Rate %': rate,
+      });
+    }
+    return trend;
+  };
+
+  const getDefectsTrend = (bugs) => {
+    const trend = [];
+    const now = new Date();
+    for (let i = 4; i >= 0; i--) {
+      const d = new Date(
+        now.getFullYear(),
+        now.getMonth(),
+        now.getDate() - i,
+        23,
+        59,
+        59
+      );
+      const dayBugs = bugs.filter(
+        (b) =>
+          new Date(b.createdAt) <= d &&
+          (b.status !== 'done' || new Date(b.completedAt || b.updatedAt) > d)
+      );
+      const crit = dayBugs.filter((b) =>
+        ['urgent', 'critical'].includes(b.priority)
+      ).length;
+      const high = dayBugs.filter((b) => b.priority === 'high').length;
+      const med = dayBugs.filter((b) => b.priority === 'medium').length;
+      const low = dayBugs.filter((b) => b.priority === 'low').length;
+      const dateStr = d.toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+      });
+      trend.push({
+        date: dateStr,
+        Critical: crit,
+        High: high,
+        Medium: med,
+        Low: low,
+      });
+    }
+    return trend;
+  };
+
+  const testExecutionTrend = getTestExecutionTrend(testCases);
+  const defectsTrend = getDefectsTrend(bugs);
+
+  const regressionTests = testCases.filter((t) => t.isRegression);
+  const regressionCoverage = regressionTests.length
+    ? Math.round(
+        (regressionTests.filter((t) => t.status === 'passed').length /
+          regressionTests.length) *
+          100
+      )
+    : 0;
+
+  const criticalTests = testCases.filter((t) =>
+    ['high', 'critical'].includes(t.priority)
+  );
+  const criticalCoverage = criticalTests.length
+    ? Math.round(
+        (criticalTests.filter((t) => t.status === 'passed').length /
+          criticalTests.length) *
+          100
+      )
+    : 0;
+
+  const testCoverage = [
+    {
+      label: 'Overall Coverage',
+      rate: total ? Math.round((passed / total) * 100) : 0,
+    },
+    { label: 'Regression Coverage', rate: regressionCoverage },
+    { label: 'Critical Path Coverage', rate: criticalCoverage },
+  ];
 
   return {
     qualitySignals: {
       failureRate,
-      blockedTests,
+      blockedTests: blocked,
       criticalBugs: critBugs,
-      flakyTests: flakyCount,
+      flakyTests: flaky,
       releaseRisk,
+      totalTests: total,
+      executed: total - pending,
+      change: 0,
+    },
+    testPassRate: {
+      rate: passRate,
+      passed,
+      total,
+      change: 0,
+      sparkline: passRateSparkline,
+    },
+    defectDensity: {
+      density: defectDensityValue,
+      change: 0,
+      sparkline: defectDensitySparkline,
+    },
+    openDefects: {
+      total: totalOpenBugsComputed,
+      critical: critBugs,
+      high: highBugs,
+      medium: medBugs,
+      low: lowBugs,
+    },
+    automationCoverage: {
+      rate: total ? Math.round(((total - pending) / total) * 100) : 0,
+      change: 0,
+    },
+    requirementsCoverage: {
+      rate: total ? Math.round((passed / total) * 100) : 0,
+      change: 0,
     },
     failureAnalysis,
     advancedBlockers: testCases
@@ -137,14 +404,14 @@ const _getSQASections = async (workspaceId) => {
     releaseRiskBreakdown: {
       risk: releaseRisk,
       criticalBugs: critBugs,
-      highFailures: failedTests,
-      flakyTests: flakyCount,
+      highFailures: failed,
+      flakyTests: flaky,
     },
     qualityTrends: {
-      failureRate: { now: failureRate, lastWeek: Math.max(0, failureRate - 2) },
+      failureRate: { now: failureRate, lastWeek: 0 },
       passRate: {
-        now: 100 - failureRate,
-        lastWeek: Math.max(0, 98 - failureRate),
+        now: passRate,
+        lastWeek: 0,
       },
     },
     regressionFailures: testCases
@@ -163,6 +430,41 @@ const _getSQASections = async (workspaceId) => {
         impact: 'VOLATILE',
       }))
       .slice(0, 4),
+    testExecutionSummary: getTestExecutionSummaryPresenter(
+      passed,
+      failed,
+      blocked,
+      pending
+    ),
+    testExecutionTrend,
+    defectsTrend,
+    defectsByStatus,
+    topDefects,
+    flakyTestSummary: {
+      total: flaky,
+      rate: total ? Math.round((flaky / total) * 1000) / 10 : 0,
+      change: 0,
+      tests: testCases
+        .filter((t) => t.isFlaky)
+        .map((t) => ({ id: t.title, rate: 0 })),
+    },
+    testCoverage,
+    myWork,
+    automationDashboard: [
+      { label: 'Automated Tests', value: (total - pending).toLocaleString() },
+      { label: 'Automation Pass Rate', value: `${passRate}%` },
+      { label: 'Maintenance Required', value: blocked.toLocaleString() },
+      {
+        label: 'Execution Time Saved',
+        value: `${Math.round((total - pending) * 3.5)} mins`,
+      },
+      {
+        label: 'Automation Coverage',
+        value: `${total ? Math.round(((total - pending) / total) * 100) : 0}%`,
+      },
+    ],
+    recentActivity,
+    upcomingDeadlines,
   };
 };
 
@@ -280,12 +582,13 @@ const _getHRSections = async (workspaceId) => {
         .lean(),
     ]);
 
-  const CAPACITY_PER_USER = 40 * 60;
+  const CAPACITY_PER_USER = businessRules.staffing.userWeeklyCapacityMins;
 
   const activeUsers = users.filter((u) => u.status === 'Active');
   const deactivatedUsers = users.filter((u) => u.status === 'Deactivated');
 
   const getDepartment = (user) => {
+    if (user.department) return user.department;
     const title = (user.jobTitle || '').toLowerCase();
     const role = (user.role || '').toLowerCase();
     if (
@@ -1052,7 +1355,7 @@ const _getHRSections = async (workspaceId) => {
 const getOperationsDashboard = async (userId, workspaceId, role) => {
   const r = (role || '').toUpperCase();
   if (r === 'SQA' || r === 'SENIOR_QA_ENGINEER' || r === 'QA_LEAD') {
-    return await _getSQASections(workspaceId);
+    return await _getSQASections(workspaceId, userId);
   } else if (r.includes('QA')) {
     return await _getQASections(workspaceId);
   } else if (r === 'HR' || r === 'WORKSPACE_ADMIN' || r === 'ADMIN') {

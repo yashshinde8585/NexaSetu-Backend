@@ -39,6 +39,7 @@ const uploadLimiter = rateLimit({
     prefix: 'rl:task-upload:',
     windowMs: 1 * 60 * 1000,
   }),
+  validate: { singleCount: false },
 });
 
 const router = express.Router();

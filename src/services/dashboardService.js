@@ -17,7 +17,10 @@ const getDashboardStats = async (user, sprintId) => {
     .filter((p) => p.sprint?.toString() === sprintId)
     .map((p) => p._id);
 
-  const baseMatch = { project: { $in: projectIds } };
+  const baseMatch = {
+    workspaceId: user.workspaceId,
+    project: { $in: projectIds },
+  };
   if (sprintFilter) {
     baseMatch.$or = [
       { sprint: sprintFilter },
@@ -94,6 +97,7 @@ const getDashboardStats = async (user, sprintId) => {
                       {
                         $and: [
                           { $ne: ['$status', 'done'] },
+                          { $ne: ['$dueDate', null] },
                           { $lt: ['$dueDate', new Date()] },
                         ],
                       },
@@ -169,6 +173,7 @@ const getDashboardStats = async (user, sprintId) => {
                             ],
                           },
                           { $ne: ['$status', 'done'] },
+                          { $ne: ['$dueDate', null] },
                           { $lt: ['$dueDate', new Date()] },
                         ],
                       },
@@ -183,7 +188,7 @@ const getDashboardStats = async (user, sprintId) => {
         },
       },
     ]),
-    Task.find({ project: { $in: projectIds } })
+    Task.find({ workspaceId: user.workspaceId, project: { $in: projectIds } })
       .sort({ updatedAt: -1 })
       .limit(5)
       .populate('project', 'name')

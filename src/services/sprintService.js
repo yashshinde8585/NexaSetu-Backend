@@ -60,18 +60,39 @@ const getAllSprints = async (user, projectId) => {
   return sprints;
 };
 
-const getSprint = async (id) => {
-  const sprint = await Sprint.findById(id).populate('project');
+const getSprint = async (user, id) => {
+  const sprint = await Sprint.findOne({
+    _id: id,
+    workspaceId: user.workspaceId,
+  }).populate('project');
   if (!sprint) {
     throw new AppError('No sprint found with that ID', 404);
   }
   return sprint;
 };
 
-const updateSprint = async (id, data) => {
-  const sprint = await Sprint.findByIdAndUpdate(id, data, {
-    new: true,
-    runValidators: true,
+const updateSprint = async (user, id, data) => {
+  const sprint = await Sprint.findOneAndUpdate(
+    { _id: id, workspaceId: user.workspaceId },
+    data,
+    {
+      new: true,
+      runValidators: true,
+    }
+  );
+  if (!sprint) {
+    throw new AppError('No sprint found with that ID', 404);
+  }
+
+  await invalidateCache(sprint.workspaceId, 'sprint');
+
+  return sprint;
+};
+
+const deleteSprint = async (user, id) => {
+  const sprint = await Sprint.findOneAndDelete({
+    _id: id,
+    workspaceId: user.workspaceId,
   });
   if (!sprint) {
     throw new AppError('No sprint found with that ID', 404);
@@ -82,19 +103,11 @@ const updateSprint = async (id, data) => {
   return sprint;
 };
 
-const deleteSprint = async (id) => {
-  const sprint = await Sprint.findByIdAndDelete(id);
-  if (!sprint) {
-    throw new AppError('No sprint found with that ID', 404);
-  }
-
-  await invalidateCache(sprint.workspaceId, 'sprint');
-
-  return sprint;
-};
-
-const syncSprintHealth = async (id) => {
-  const sprint = await Sprint.findById(id);
+const syncSprintHealth = async (user, id) => {
+  const sprint = await Sprint.findOne({
+    _id: id,
+    workspaceId: user.workspaceId,
+  });
   if (!sprint) throw new AppError('Sprint not found', 404);
 
   const tasks = await Task.find({ sprint: sprint._id });
@@ -122,11 +135,16 @@ const syncSprintHealth = async (id) => {
     );
   }
 
+  const totalCount = tasks.length;
   sprint.metricsSnapshot.push({
     burnRate:
-      tasks.filter((t) => t.status === 'done').length / tasks.length || 0,
+      totalCount > 0
+        ? tasks.filter((t) => t.status === 'done').length / totalCount
+        : 0,
     completionPercentage:
-      (tasks.filter((t) => t.status === 'done').length / tasks.length) * 100,
+      totalCount > 0
+        ? (tasks.filter((t) => t.status === 'done').length / totalCount) * 100
+        : 0,
     pressure: sprint.pressureIndex,
   });
 

@@ -7,10 +7,13 @@ const cacheMiddleware = (entity = 'route', ttlSeconds = 60) => {
       return next();
     }
 
+    const rawUrl = req.originalUrl || req.url;
+    const normalizedUrl = rawUrl.replace(/^\/api\/v1\//, '/api/');
+
     const key = cacheManager.generateKey(
       req.user?.workspaceId || 'global',
       entity,
-      req.originalUrl || req.url
+      normalizedUrl
     );
 
     try {

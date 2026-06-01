@@ -95,10 +95,12 @@ projectSchema.pre(/^find/, async function () {
     query.workspaceId === undefined &&
     !this.getOptions().bypassTenantSafety
   ) {
-    logger.warn(
-      `[TENANT-SAFETY] Query executed without workspaceId filter on Project collection: %o`,
-      query
-    );
+    const msg = `[TENANT-SAFETY] Query executed without workspaceId filter on Project collection: ${JSON.stringify(query)}`;
+    if (process.env.ENFORCE_TENANT_SAFETY === 'true') {
+      throw new Error(msg);
+    } else {
+      logger.warn(msg);
+    }
   }
 });
 
