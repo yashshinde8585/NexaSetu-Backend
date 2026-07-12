@@ -1,147 +1,169 @@
-# NexaSetu Orchestration Engine (Backend)
+# NexaSetu Backend — Event-Driven Sprint Orchestration Server
 
-[![Node.js](https://img.shields.io/badge/Node.js-339933?style=for-the-badge&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
-[![Express](https://img.shields.io/badge/Express-000000?style=for-the-badge&logo=express&logoColor=white)](https://expressjs.com/)
-[![MongoDB](https://img.shields.io/badge/MongoDB-47A248?style=for-the-badge&logo=mongodb&logoColor=white)](https://www.mongodb.com/)
-[![Redis](https://img.shields.io/badge/Redis-DC382D?style=for-the-badge&logo=redis&logoColor=white)](https://redis.io/)
-
-### The System Problem
-Traditional project management backends are passive data stores. They function as simple CRUD wrappers that rely on constant human intervention to maintain accuracy. When code activity happens in the real world (GitHub), the system stays silent until a human manually bridges the gap.
-
-### The Pain
-High latency between action and record. Stale project health metrics. API blocking during complex AI computations. Fragmented logs that track *what* changed, but never *why* or by which autonomous process.
-
-### The Insight
-A backend for modern engineering shouldn't just store data; it should be an **Event-Driven Orchestrator**. It must react to the heartbeat of the development lifecycle and manage state transitions autonomously through specialized service agents, ensuring the core API remains non-blocking and highly available.
-
-### The Solution
-NexaSetu Orchestration Engine is a high-performance backend built on Node.js and Express 5. It utilizes a **Queued Agent Architecture** powered by Redis and BullMQ to handle natural language directives, GitHub webhooks, and cascading project shifts asynchronously. It transforms a passive database into a proactive execution partner.
-
-### The Outcome
-Deterministic autonomous synchronization. Ultra-low latency responses. Hardened enterprise-grade security. A transparent AI audit trail that explains every autonomous decision made by the system.
+NexaSetu Backend is an Express 5 API server and asynchronous worker engine. It ingests GitHub repository webhook streams, executes natural language project commands, and orchestrates sprint timelines using background worker queues.
 
 ---
 
-## One-Line Core Idea
-A high-performance event orchestrator that transforms project management from passive storage to autonomous execution.
+## 🏗️ Architecture Design & Job Flow
 
----
-
-## Key Features
-
-- **Autonomous Agent Fleet:**
-    - **AgentOrchestrator:** The central nervous system that dispatches system events to specialized agents.
-    - **Harvester Agent:** Ingests external activity (GitHub) and maps it to internal task states.
-    - **Scheduler Agent:** Calculates project timeline shifts and resolves cascading dependency conflicts.
-- **Magic Bar Service:** A high-velocity NLP engine that parses unstructured prompts into actionable system triggers.
-- **Background Execution Pipeline:** Offloads heavy AI and synchronization tasks to **BullMQ** workers to maintain zero-latency API responsiveness.
-- **Engineering Performance Indicators (EPI):** A specialized service layer for calculating deep-space metrics like PR velocity and code churn.
-- **Idempotency Layer:** System-wide protection against duplicate requests and race conditions in distributed environments.
-
----
-
-## Tech Stack
-
-- **Runtime:** Node.js (v18+)
-- **Framework:** Express 5 (Next-gen request handling)
-- **Primary Database:** MongoDB (Mongoose 9 ODM)
-- **In-Memory Store:** Redis (Caching, Rate-limiting, and Queueing)
-- **Job Orchestration:** BullMQ (Durable background processing)
-- **Security:** Helmet, bcryptjs, JWT, rate-limit-redis
-- **Validation:** Zod (Type-safe schema enforcement)
-- **Logging:** Winston (Structured JSON logging)
-
----
-
-## Architecture Overview
-
-NexaSetu uses a **Layered Service Architecture** with an asynchronous execution core:
-
-1.  **Request Layer:** Express handles incoming REST/Socket requests.
-2.  **Middleware Layer:** Enforces Auth, Security, Idempotency, and Rate-limiting.
-3.  **Controller Layer:** Routes requests to the appropriate domain service.
-4.  **Service Layer (The Brain):** Domain logic where agents and normalizers operate.
-5.  **Queue Layer:** Heavy/Long-running tasks are pushed to Redis for background execution.
-6.  **Persistence Layer:** MongoDB stores the relational project graph and AI audit logs.
-
----
-
-## Folder Structure
-
-```text
-src/
-├── config/             # DB, Redis, and environment orchestration
-├── controllers/        # Request-response lifecycle management
-├── models/             # Mongoose data schemas (Domain Models)
-├── routes/             # RESTful API & Versioned endpoint definitions
-├── services/           # Business logic & Autonomous AI Agents
-├── queues/             # BullMQ workers and job definitions
-├── middleware/         # Security, Auth, Telemetry, and Validation
-├── validations/        # Zod schema definitions for API inputs
-├── utils/              # System-wide helpers (Logger, Normalizers)
-├── jobs/               # Recurring system maintenance (Cron)
-├── socket.js           # Real-time event orchestration bridge
-└── app.js              # Server initialization and middleware mounting
+```mermaid
+graph TD
+    GH[GitHub Webhook Payload] -->|HTTP POST| API[Express API Gateway]
+    Client[React Client SPA] -->|HTTP REST / Cookies| API
+    Client <-->|WebSockets| SocketServer[Socket.io Engine]
+    
+    API -->|Validate Inputs| Zod[Zod Schemas]
+    Zod -->|Dispatch Jobs| BullMQ[BullMQ Job Queue]
+    BullMQ <-->|Manage Queues| Redis[(Redis Broker & Cache)]
+    
+    Worker[Background Queue Workers] <-->|Consume Jobs| Redis
+    Worker -->|Write Updates / Logs| Mongo[(MongoDB Persistent DB)]
+    Worker -->|Emit Completion| SocketServer
 ```
 
 ---
 
-## API Documentation
+## 📂 Backend Project Structure
 
-- **Auth Hub:** `POST /api/v1/auth/login`, `POST /api/v1/auth/register` (HttpOnly Cookie JWT)
-- **Project Engine:** `GET /api/v1/projects`, `POST /api/v1/projects` (Includes health scoring)
-- **Task Orchestrator:** `GET /api/v1/tasks`, `PATCH /api/v1/tasks/:id` (Triggers agent events)
-- **Magic Command:** `POST /api/v1/magic/execute` (Natural language intent parsing)
-- **Engineering Analytics:** `GET /api/v1/epi/metrics` (Performance indicators)
-- **System Audit:** `GET /api/v1/admin/ai-logs` (Transparent AI logic trees)
-
----
-
-## Database Design
-
-The system utilizes MongoDB for its flexibility in handling evolving project graphs:
-- **Workspace/Project/Task:** The core hierarchical structure.
-- **AILog:** High-fidelity record of every autonomous agent decision.
-- **ActionRequest:** A staging area for AI-suggested changes requiring human approval.
-- **AuditLog:** System-wide telemetry of all human and automated mutations.
-
----
-
-## Security Practices
-
-- **Zero-Trust Auth:** Stateful JWT implementation via `HttpOnly` cookies to mitigate XSS.
-- **Distributed Rate Limiting:** Redis-backed throttling to prevent DDoS and brute-force attacks.
-- **CSP & Hardening:** Implementation of **Helmet** with strict Content Security Policies.
-- **Input Sanitization:** Deep cleansing of all incoming data via `Zod` and `express-mongo-sanitize`.
-- **Logic Isolation:** Agents run in isolated service contexts with strict `ExecutionPolicy` enforcement.
+```text
+src/
+├── config/             # Mongoose DB, IORedis, and environment configurations
+├── controllers/        # Express request-response lifecycle handlers
+├── models/             # Mongoose MDB schemas (Tasks, Projects, Sprints, AI Logs)
+├── routes/             # RESTful API routing (versioned under /api/v1/)
+├── services/           # Domain business logic (GitHub API wrappers, NLP parsers)
+├── queues/             # BullMQ queue managers and worker thread handlers
+├── middleware/         # Auth guard, CSRF/Helmet security, Zod input validation
+├── validations/        # Strict Zod schemas for API payload validation
+├── utils/              # Winston JSON Logger, error classes, date normalizers
+├── jobs/               # Recurring cron timers (daily performance rollups)
+├── socket.js           # Socket.io connection registries and namespace emitters
+└── app.js              # Express app startup and middleware configurations
+```
 
 ---
 
-## Performance Optimizations
+## ⚡ Asynchronous Job Queue & Worker Pipeline
 
-- **Non-Blocking Architecture:** Offloading AI and sync tasks to **BullMQ** prevents event-loop starvation.
-- **Distributed Caching:** Redis caches pre-calculated EPI metrics and project health scores.
-- **Pre-flight Caching:** 24h CORS pre-flight results to minimize latency on cross-origin requests.
-- **Connection Pooling:** Robust Mongoose and IORedis connection management with automatic retries.
+To keep the main API thread responsive, heavy external operations (e.g., fetching repository metadata or processing AI sprint summaries) are offloaded to **BullMQ** workers backed by **Redis**:
 
----
-
-## Code Quality Review
-
-- **Modularity:** High. Service-based architecture allows for independent scaling of domain logic.
-- **Observability:** Centralized logging with **Winston** and telemetry middleware for real-time monitoring.
-- **Resilience:** Redis fallback mechanisms ensure the system remains operational even during cache outages.
-- **Maintainability:** Consistent use of versioned routing and standardized error responses.
+- **Concurrency Control:** Configured to run `3` concurrent job consumers per process thread.
+- **Retry Strategy:** Automatic exponential backoff retries with a `1000ms` initial delay and up to `5` retry attempts.
+- **Failure Management:** Failed jobs are automatically moved to a "Failed" queue state and logged via a structured Winston logger for administrator auditing.
+- **Webhook Buffer:** Webhook payloads from GitHub are acknowledged immediately (returning HTTP `202`) and queued for async ingestion to protect the server from transaction spikes during batch pushes.
 
 ---
 
-## Limitations / Improvements
+## 📝 API Endpoints Reference
 
-- **CPU-Intensive Agents:** As the number of active agents grows, they should be decoupled into microservices to avoid monolith resource contention.
-- **Database Scaling:** While MongoDB handles the project graph well, high-volume time-series data for EPIs may eventually require a specialized store.
-- **Real-time Latency:** Socket events are currently processed in-process; for large-scale deployments, a Redis Pub/Sub adapter would be required.
+### 1. Magic Bar Command Execution
+- **Endpoint:** `POST /api/v1/magic/execute`
+- **Authentication:** Required (HTTP-Only Cookie JWT)
+- **Request Payload:**
+  ```json
+  {
+    "prompt": "/task create \"Refactor database index\" --assign alex",
+    "projectId": "60d5ec49f83c2c5468d6ef2c"
+  }
+  ```
+- **Success Response (`200 OK`):**
+  ```json
+  {
+    "success": true,
+    "action": "task_created",
+    "data": {
+      "id": "60d5ec49f83c2c5468d6ef8d",
+      "title": "Refactor database index",
+      "assignedTo": "alex",
+      "status": "todo"
+    }
+  }
+  ```
+
+### 2. General Endpoints
+
+| Route | Method | Auth | Payload | Description |
+| --- | --- | --- | --- | --- |
+| `/api/v1/auth/register` | `POST` | Public | `{ email, password, name }` | Register new user |
+| `/api/v1/auth/login` | `POST` | Public | `{ email, password }` | Authenticate & set JWT cookie |
+| `/api/v1/projects` | `GET` | Required | None | Fetch all synced projects |
+| `/api/v1/tasks/:id` | `PATCH` | Required | `{ status, assigneeId }` | Update task details |
+| `/api/v1/epi/metrics` | `GET` | Required | Query params: `?projectId` | Get PR velocity/code metrics |
 
 ---
 
-## Conclusion
-The NexaSetu Orchestration Engine is built for the high-velocity requirements of modern engineering. By moving away from passive CRUD patterns toward an event-driven agent architecture, it provides the reliability and autonomy needed to manage the next generation of software projects.
+## 🗄️ Database Schema & Indexing
+
+The platform utilizes **MongoDB** via Mongoose to store hierarchical sprint and task dependencies:
+
+- **Key Collections:**
+  - `Workspace`: Top-level user container.
+  - `Project`: References repository IDs and keeps sync status.
+  - `Task`: Holds description, assignee, prerequisite tasks (for ReactFlow dependencies), and GitHub issue references.
+  - `AILog`: Unstructured document store auditing natural language directives.
+- **Index Strategies:**
+  - `Compound Index` on `{ projectId: 1, status: 1 }` to optimize dashboard query filtering.
+  - `Single-field Index` on `githubIssueId` to resolve webhook updates to internal task rows instantly.
+
+---
+
+## 🛠️ Architectural Trade-Offs
+
+- **MongoDB vs PostgreSQL:** The project dependency graph and AI command audit logs are highly fluid and polymorphic. MongoDB's schema flexibility allows task objects to hold dynamic attributes and dependency arrays without migrations.
+- **BullMQ vs Kafka:** The backend does not require high-throughput multi-consumer stream processing. BullMQ utilizes the existing Redis instance, keeping infrastructural complexity and operating costs low.
+- **Express vs Fastify:** While Fastify yields slightly higher throughput, Express 5's middleware compatibility with **Socket.io** and established HTTP-only cookie wrappers allowed for more secure and rapid implementation.
+
+---
+
+## ⚙️ Setup & Deployment
+
+### Environment Configuration
+Create a `.env` file in the root backend directory:
+```env
+PORT=5000
+MONGODB_URI=mongodb://localhost:27017/nexasetu
+REDIS_URL=redis://localhost:6379
+JWT_SECRET=your_jwt_signing_key
+SUPABASE_URL=your_supabase_project_url
+SUPABASE_KEY=your_supabase_anon_key
+GITHUB_TOKEN=your_github_personal_access_token
+```
+
+### Docker Compose Local Setup
+You can spin up local MongoDB and Redis instances using the included docker-compose file:
+```yaml
+version: '3.8'
+services:
+  mongodb:
+    image: mongo:6.0
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+
+  redis:
+    image: redis:7.0-alpine
+    ports:
+      - "6379:6379"
+
+volumes:
+  mongo-data:
+```
+Launch using:
+```bash
+docker-compose up -d
+```
+
+### Running Server
+1. Install dependencies:
+   ```bash
+   npm install
+   ```
+2. Start development mode with hot-reloading:
+   ```bash
+   npm run dev
+   ```
+3. Start production server:
+   ```bash
+   npm run start
+   ```
