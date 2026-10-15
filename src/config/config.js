@@ -15,6 +15,13 @@ const REQUIRED_ENV_VARS = [
   'ENCRYPTION_KEY',
 ];
 
+// Sanitize environment variables by trimming whitespace/newlines and stripping wrapping quotes
+REQUIRED_ENV_VARS.forEach((key) => {
+  if (typeof process.env[key] === 'string') {
+    process.env[key] = process.env[key].trim().replace(/^["']|["']$/g, '');
+  }
+});
+
 const missingVars = REQUIRED_ENV_VARS.filter((key) => !process.env[key]);
 
 if (missingVars.length > 0) {
@@ -29,7 +36,7 @@ if (missingVars.length > 0) {
     '\x1b[31m---------------------------------------------------------\x1b[0m'
   );
   console.error(
-    '\x1b[31mApplication startup aborted. Please check your .env file.\x1b[0m'
+    '\x1b[31mApplication startup aborted. Please check your environment variables (.env file or hosting dashboard).\x1b[0m'
   );
   process.exit(1);
 }
@@ -51,7 +58,7 @@ if (
     '\x1b[31m---------------------------------------------------------\x1b[0m'
   );
   console.error(
-    '\x1b[31mApplication startup aborted. Please check your .env file.\x1b[0m'
+    '\x1b[31mApplication startup aborted. Please check your environment variables (.env file or hosting dashboard).\x1b[0m'
   );
   process.exit(1);
 }
