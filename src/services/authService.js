@@ -109,6 +109,20 @@ const registerUser = async (userData) => {
         createdUser._id,
         session
       );
+
+      const Subscription = require('../models/Subscription');
+      await Subscription.create(
+        [
+          {
+            userId: createdUser._id,
+            workspaceId,
+            plan: plan || 'free',
+            status: 'active',
+            startDate: new Date(),
+          },
+        ],
+        { session }
+      );
     }
 
     metricsService
@@ -128,6 +142,13 @@ const loginUser = async (email, password) => {
   const user = await User.findOne({ email }).select('+password');
   if (!user)
     throw new AppError('Account not found with this email address.', 401);
+
+  if (user.status === 'Deactivated') {
+    throw new AppError(
+      'Your account has been deactivated. Please contact your workspace administrator.',
+      403
+    );
+  }
 
   if (user.lockUntil && user.lockUntil > Date.now()) {
     const minutes = Math.ceil((user.lockUntil - Date.now()) / 60000);
@@ -202,6 +223,10 @@ const refreshAccessToken = async (token) => {
 
   const user = await User.findById(session.userId);
   if (!user) throw new AppError('User no longer exists', 401);
+  if (user.status === 'Deactivated') {
+    await revokeSession(token);
+    throw new AppError('Your account has been deactivated.', 403);
+  }
 
   const { accessToken } = generateTokens(user._id);
   return { user, accessToken };

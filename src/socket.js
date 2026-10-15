@@ -95,9 +95,23 @@ const init = (server) => {
           userId = verified.sub;
 
           const User = require('./models/User');
-          const user = await User.findOne({ clerkUserId: userId }).select(
+          let user = await User.findOne({ clerkUserId: userId }).select(
             '_id workspaceId role jobTitle'
           );
+
+          if (!user) {
+            const clerkUser = await clerkClient.users.getUser(userId);
+            const email = clerkUser?.emailAddresses?.[0]?.emailAddress;
+            if (email) {
+              user = await User.findOne({ email }).select(
+                '_id workspaceId role jobTitle'
+              );
+              if (user) {
+                user.clerkUserId = userId;
+                await user.save();
+              }
+            }
+          }
 
           if (!user) {
             logger.warn(
@@ -107,6 +121,12 @@ const init = (server) => {
               new Error(
                 'Authentication failed: Profile synchronization pending'
               )
+            );
+          }
+
+          if (user.status === 'Deactivated') {
+            return next(
+              new Error('Authentication failed: Account has been deactivated')
             );
           }
 
@@ -125,13 +145,19 @@ const init = (server) => {
 
           const User = require('./models/User');
           const user = await User.findById(decoded.id).select(
-            '_id workspaceId role jobTitle'
+            '_id workspaceId role jobTitle status'
           );
 
           if (!user)
             return next(
               new Error('Authentication failed: User no longer exists')
             );
+
+          if (user.status === 'Deactivated') {
+            return next(
+              new Error('Authentication failed: Account has been deactivated')
+            );
+          }
 
           socket.user = {
             id: user._id,
