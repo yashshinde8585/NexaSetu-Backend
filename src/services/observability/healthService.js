@@ -1,12 +1,15 @@
 const mongoose = require('mongoose');
 const os = require('os');
+const { isRedisConnected } = require('../../config/redis');
 
 const getSystemHealth = async () => {
   const dbStatus = mongoose.connection.readyState === 1 ? 'UP' : 'DOWN';
+  const redisStatus = isRedisConnected() ? 'UP' : 'DOWN';
 
   return {
-    status: dbStatus === 'UP' ? 'HEALTHY' : 'DEGRADED',
+    status: dbStatus === 'UP' && redisStatus === 'UP' ? 'HEALTHY' : 'DEGRADED',
     database: dbStatus,
+    cache: redisStatus,
     uptime: process.uptime(),
     memoryUsage: process.memoryUsage(),
     cpuLoad: os.loadavg(),
@@ -15,14 +18,14 @@ const getSystemHealth = async () => {
 
 const getSystemIntegrity = async () => {
   const dbStatus = mongoose.connection.readyState === 1 ? 'UP' : 'DOWN';
-  const redisStatus = 'UP'; // Placeholder, in a real app check Redis connection
+  const redisStatus = isRedisConnected() ? 'UP' : 'DOWN';
 
   return {
-    status: 'success',
+    status: dbStatus === 'UP' && redisStatus === 'UP' ? 'success' : 'degraded',
     timestamp: new Date().toISOString(),
     components: {
-      database: { status: dbStatus, latency: '1ms' },
-      cache: { status: redisStatus, latency: '0.5ms' },
+      database: { status: dbStatus, latency: dbStatus === 'UP' ? '1ms' : 'N/A' },
+      cache: { status: redisStatus, latency: redisStatus === 'UP' ? '0.5ms' : 'N/A' },
       orchestrator: { status: 'OPERATIONAL' },
     },
     integrity: {

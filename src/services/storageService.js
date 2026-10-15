@@ -3,7 +3,6 @@ const Workspace = require('../models/Workspace');
 const AppError = require('../utils/appError');
 const logger = require('../utils/logger');
 const { STORAGE_CONSTANTS } = require('../utils/constants');
-const { v4: uuidv4 } = require('uuid');
 
 const withTimeout = async (promise, timeoutMs = 8000) => {
   let timeout;

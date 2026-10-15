@@ -46,6 +46,14 @@ exports.protect = catchAsync(async (req, res, next) => {
     const cachedUser = await withTimeout(redis.get(cacheKey), 500);
     if (cachedUser) {
       req.user = JSON.parse(cachedUser);
+      if (req.user.status === 'Deactivated') {
+        return next(
+          new AppError(
+            'Your account has been deactivated. Please contact your workspace administrator.',
+            403
+          )
+        );
+      }
       return next();
     }
   }
@@ -69,6 +77,20 @@ exports.protect = catchAsync(async (req, res, next) => {
           const decoded = jwt.verify(token, config.jwt.secret);
           user = await User.findById(decoded.id).select('-password');
           if (user) {
+            if (user.passwordChangedAt) {
+              const changedTimestamp = parseInt(
+                user.passwordChangedAt.getTime() / 1000,
+                10
+              );
+              if (decoded.iat && decoded.iat < changedTimestamp) {
+                return next(
+                  new AppError(
+                    'User recently changed password! Please log in again.',
+                    401
+                  )
+                );
+              }
+            }
             decodedToken = { sub: user.clerkUserId || user._id.toString() };
           } else {
             return next(
@@ -112,7 +134,27 @@ exports.protect = catchAsync(async (req, res, next) => {
             user.clerkUserId = userId;
             await user.save();
           } else {
-            return next(new AppError('User not found in local database.', 401));
+            logger.info(
+              `[AUTH-JIT] Auto-provisioning new Clerk user ${email} (${userId})`
+            );
+            const name =
+              `${clerkUser.firstName || ''} ${clerkUser.lastName || ''}`.trim() ||
+              email.split('@')[0];
+            const authService = require('../services/authService');
+
+            const newUserData = {
+              name,
+              email,
+              password: crypto.randomBytes(32).toString('hex'),
+              clerkUserId: userId,
+              role: 'WORKSPACE_ADMIN',
+              workspaceName: `${name}'s Hub`,
+              admin: name,
+              plan: 'enterprise',
+            };
+
+            const createdUser = await authService.registerUser(newUserData);
+            user = await User.findById(createdUser._id).select('-password');
           }
         }
       }
@@ -181,16 +223,33 @@ exports.protect = catchAsync(async (req, res, next) => {
     }
   }
 
+  if (user.status === 'Deactivated') {
+    return next(
+      new AppError(
+        'Your account has been deactivated. Please contact your workspace administrator.',
+        403
+      )
+    );
+  }
+
   // Recover missing workspace context automatically
   if (!user.workspaceId) {
-    const workspace = await Workspace.findOne({
+    let workspace = await Workspace.findOne({
       $or: [{ admin: user._id }, { owner: user._id }],
     }).select('_id');
 
-    if (workspace) {
-      user.workspaceId = workspace._id;
-      await User.updateOne({ _id: user._id }, { workspaceId: workspace._id });
+    if (!workspace) {
+      const workspaceService = require('../services/workspaceService');
+      workspace = await workspaceService.provisionWorkspace({
+        name: `${user.name || 'User'}'s Hub`,
+        adminName: user.name,
+        plan: 'free',
+      });
+      await workspaceService.transferOwnership(workspace._id, user._id);
     }
+
+    user.workspaceId = workspace._id;
+    await User.updateOne({ _id: user._id }, { workspaceId: workspace._id });
   }
 
   // 3. Store in cache for subsequent requests (5 minute TTL)
@@ -231,7 +290,7 @@ exports.restrictTo =
   (req, res, next) => {
     const hasRole = roles.includes(req.user.role);
     const hasJobTitle = roles.some(
-      (role) => req.user.jobTitle?.replace(' ', '_').toUpperCase() === role
+      (role) => req.user.jobTitle?.replace(/\s+/g, '_').toUpperCase() === role
     );
 
     if (!hasRole && !hasJobTitle) {
@@ -322,6 +381,25 @@ exports.optionalProtect = catchAsync(async (req, res, next) => {
           if (user) {
             user.clerkUserId = userId;
             await user.save();
+          } else {
+            const name =
+              `${clerkUser.firstName || ''} ${clerkUser.lastName || ''}`.trim() ||
+              email.split('@')[0];
+            const authService = require('../services/authService');
+
+            const newUserData = {
+              name,
+              email,
+              password: crypto.randomBytes(32).toString('hex'),
+              clerkUserId: userId,
+              role: 'WORKSPACE_ADMIN',
+              workspaceName: `${name}'s Hub`,
+              admin: name,
+              plan: 'enterprise',
+            };
+
+            const createdUser = await authService.registerUser(newUserData);
+            user = await User.findById(createdUser._id).select('-password');
           }
         }
       }
