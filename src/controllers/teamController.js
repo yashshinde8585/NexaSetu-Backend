@@ -1,44 +1,58 @@
-const User = require('../models/User');
-const Project = require('../models/Project');
-const Invitation = require('../models/Invitation');
 const teamService = require('../services/teamService');
 const auditService = require('../services/auditService');
+const adminService = require('../services/adminService');
 const catchAsync = require('../utils/catchAsync');
-const { getProjectAccessQuery } = require('../utils/queryHelpers');
+const ResponseBuilder = require('../utils/responseBuilder');
 const { isStrategicLead } = require('../utils/authHelpers');
 
-// Handles workspace personnel provisioning, team invitations, and role-based access management.
-
-// Dispatches a role-specific invitation to a new user via token provisioning.
 exports.inviteUser = catchAsync(async (req, res, next) => {
   const { email, role, projectId } = req.body;
   if (!email || !role)
-    return res.status(400).json({ status: 'fail', message: 'Missing fields' });
+    return ResponseBuilder.error(res, 'Missing fields', 'MISSING_FIELDS', 400);
+
+  // Security Hardening: Ensure non-admins can only invite to projects they belong to
+  const isAdmin =
+    req.user.role === 'WORKSPACE_ADMIN' || req.user.role === 'ADMIN';
+  if (!isAdmin && projectId) {
+    const { canAccessResource } = require('../utils/authHelpers');
+    const hasAccess = await canAccessResource(req.user, projectId, 'project');
+    if (!hasAccess) {
+      return ResponseBuilder.error(
+        res,
+        'Unauthorized project assignment. Managers can only invite to their own sectors.',
+        'UNAUTHORIZED_PROJECT',
+        403
+      );
+    }
+  }
 
   const isLeadOrAdmin = isStrategicLead(req.user);
   if (!isLeadOrAdmin) {
     const allowedRoles = ['PROJECT_MEMBER', 'RESTRICTED'];
     if (!allowedRoles.includes(role)) {
-      return res.status(403).json({
-        status: 'fail',
-        message:
-          'Unauthorized role assignment. Only Engineers and Interns can be recruited by non-admins.',
-      });
+      return ResponseBuilder.error(
+        res,
+        'Unauthorized role assignment.',
+        'UNAUTHORIZED_ROLE',
+        403
+      );
     }
   }
 
-  // Provision via Token Strategy
   const result = await teamService.provisionUser(
     { email, role, projectId },
     req.user.workspaceId,
     req.user._id,
-    'INVITE'
+    'BIRTH'
   );
 
   if (result.status === 'EXISTING') {
-    return res
-      .status(400)
-      .json({ status: 'fail', message: 'User already has an account' });
+    return ResponseBuilder.error(
+      res,
+      'User already has an account',
+      'USER_EXISTS',
+      400
+    );
   }
 
   await auditService.log({
@@ -49,61 +63,45 @@ exports.inviteUser = catchAsync(async (req, res, next) => {
     details: { email, role, projectId },
   });
 
-  res.status(200).json({
-    status: 'success',
-    data: {
-      invitation: {
-        email: result.invitation.email,
-        role: result.invitation.role,
-        token: '********', // Redacted for security
-      },
+  return ResponseBuilder.success(res, {
+    invitation: {
+      email: result.invitation.email,
+      role: result.invitation.role,
+      token: '********',
     },
   });
 });
 
-// Validates and extracts invitation details using an active provisioning token.
 exports.getInviteByToken = catchAsync(async (req, res, next) => {
-  const { token } = req.params;
-  const invitation = await Invitation.findOne({
-    token,
-    status: 'pending',
-    expiresAt: { $gt: Date.now() },
-  });
+  const invitation = await teamService.getInviteByToken(req.params.token);
 
-  if (!invitation)
-    return res
-      .status(404)
-      .json({ status: 'fail', message: 'Invalid or expired invitation' });
-
-  res.status(200).json({
-    status: 'success',
-    data: {
-      invitation: {
-        email: invitation.email,
-        role: invitation.role,
-        projectId: invitation.projectId,
-      },
+  return ResponseBuilder.success(res, {
+    invitation: {
+      email: invitation.email,
+      role: invitation.role,
+      projectId: invitation.projectId,
     },
   });
 });
 
-// Provisions multiple users and roles simultaneously into the workspace.
 exports.inviteMultipleUsers = catchAsync(async (req, res, next) => {
   const { invites } = req.body;
   if (!invites || !Array.isArray(invites) || invites.length === 0) {
-    return res
-      .status(400)
-      .json({ status: 'fail', message: 'No invitations provided' });
+    return ResponseBuilder.error(
+      res,
+      'No invitations provided',
+      'MISSING_INVITES',
+      400
+    );
   }
 
   const { provisionedUsers, failedInvites } = await teamService.bulkProvision(
     invites,
     req.user.workspaceId,
-    req.user._id,
+    req.user,
     isStrategicLead(req.user)
   );
 
-  // 📝 Audit logging
   await auditService.log({
     action: 'BULK_PROVISION',
     req,
@@ -111,89 +109,83 @@ exports.inviteMultipleUsers = catchAsync(async (req, res, next) => {
     details: { count: provisionedUsers.length, failed: failedInvites.length },
   });
 
-  res.status(200).json({
-    status: 'success',
+  return ResponseBuilder.success(res, {
+    provisionedUsers,
+    failedInvites,
+    message: 'Squad provisioning complete.',
+  });
+});
+
+exports.getWorkspaceTeam = catchAsync(async (req, res, next) => {
+  const { page = 1, limit = 20, search = '', projectId } = req.query;
+  const result = await teamService.getWorkspaceTeam(
+    req.user,
+    isStrategicLead(req.user),
+    page,
+    limit,
+    search,
+    projectId
+  );
+
+  return ResponseBuilder.success(res, {
+    pagination: {
+      total: result.total,
+      page: result.page,
+      limit: result.limit,
+      pages: result.pages,
+    },
     data: {
-      provisionedUsers,
-      failedInvites,
-      message: 'Squad provisioning complete.',
+      items: result.items,
+      stats: result.stats,
     },
   });
 });
 
-// Retrieves active workspace personnel and pending invitations with access control filtering.
-exports.getWorkspaceTeam = catchAsync(async (req, res, next) => {
-  const { page = 1, limit = 20 } = req.query;
-  const skip = (parseInt(page) - 1) * parseInt(limit);
-  const limitValue = parseInt(limit);
+exports.getWorkspaceRoles = catchAsync(async (req, res, next) => {
+  const roleDefinitions = await adminService.getRoleDefinitions(
+    req.user.workspaceId
+  );
+  return ResponseBuilder.success(res, { roles: roleDefinitions });
+});
 
-  const workspaceId = req.user.workspaceId;
+exports.removeInvitation = catchAsync(async (req, res, next) => {
+  await teamService.removeInvitation(req.user, req.params.id);
+  return ResponseBuilder.success(res, null, 204);
+});
 
-  let memberQuery = { workspaceId };
-  let invitationQuery = {
-    workspaceId,
-    status: 'pending',
-    expiresAt: { $gt: Date.now() },
-  };
+exports.updateMemberProject = catchAsync(async (req, res, next) => {
+  const { projectId } = req.body;
+  const { id: memberId } = req.params;
 
-  if (!isStrategicLead(req.user)) {
-    // Restricted Visibility: Only see personnel in projects you are a member of
-    const authorizedProjects = await Project.find(
-      getProjectAccessQuery(req.user)
-    ).select('_id');
-    const authorizedProjectIds = authorizedProjects.map((p) => p._id);
-
-    memberQuery.assignedProjectId = { $in: authorizedProjectIds };
-    invitationQuery.projectId = { $in: authorizedProjectIds };
+  // Security: Strategic leads can move anyone, others must have project access
+  const isAdmin =
+    req.user.role === 'WORKSPACE_ADMIN' || req.user.role === 'ADMIN';
+  if (!isAdmin && projectId) {
+    const { canAccessResource } = require('../utils/authHelpers');
+    const hasAccess = await canAccessResource(req.user, projectId, 'project');
+    if (!hasAccess) {
+      return ResponseBuilder.error(
+        res,
+        'Unauthorized sector allocation.',
+        'UNAUTHORIZED_ALLOCATION',
+        403
+      );
+    }
   }
 
-  const [members, totalMembers, invitations, totalInvitations] = await Promise.all([
-    User.find(memberQuery)
-      .select('name email role jobTitle createdAt assignedProjectId')
-      .populate('assignedProjectId', 'name')
-      .skip(skip)
-      .limit(limitValue)
-      .sort('name')
-      .lean(),
-    User.countDocuments(memberQuery),
-    Invitation.find(invitationQuery)
-      .select('email role expiresAt projectId')
-      .populate('projectId', 'name')
-      .skip(skip)
-      .limit(limitValue)
-      .lean(),
-    Invitation.countDocuments(invitationQuery),
-  ]);
+  const updatedMember = await teamService.updateMemberProject(
+    req.user,
+    memberId,
+    projectId
+  );
 
-  res.status(200).json({
-    status: 'success',
-    pagination: {
-      members: {
-        total: totalMembers,
-        page: parseInt(page),
-        limit: limitValue,
-        pages: Math.ceil(totalMembers / limitValue),
-      },
-      invitations: {
-        total: totalInvitations,
-        page: parseInt(page),
-        limit: limitValue,
-        pages: Math.ceil(totalInvitations / limitValue),
-      },
-    },
-    data: { members, invitations },
+  await auditService.log({
+    action: 'MEMBER_REASSIGN',
+    req,
+    entityType: 'USER',
+    entityId: memberId,
+    details: { newProjectId: projectId },
   });
-});
 
-/**
- * Retrieves dynamic organizational role definitions for current workspace
- */
-exports.getWorkspaceRoles = catchAsync(async (req, res, next) => {
-  const adminService = require('../services/adminService');
-  const roleDefinitions = await adminService.getRoleDefinitions(req.user.workspaceId);
-
-  res.status(200).json({
-    status: 'success',
-    data: { roles: roleDefinitions }
-  });
+  return ResponseBuilder.success(res, { member: updatedMember });
 });

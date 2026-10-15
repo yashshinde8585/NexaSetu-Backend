@@ -1,41 +1,30 @@
-/**
- * Utility functions for dashboard data formatting and mapping.
- */
+const { parseDate, getDateDiff } = require('./common');
 
-/**
- * Format a date into a human-readable due date string
- * @param {Date} date 
- * @param {Object} options - { relative: boolean }
- * @returns {string}
- */
-exports.formatDueDate = (date, options = {}) => {
-  if (!date) return 'No Date';
-  const now = new Date();
-  const d = new Date(date);
-  const diffTime = d.getTime() - now.getTime();
-  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-  
+// Format a date to human-readable string (e.g., Today, Tomorrow, Overdue)
+exports.formatDueDate = (date, options = {}, now = new Date()) => {
+  const d = parseDate(date);
+  if (!d) return 'No Date';
+
+  const diffDays = Math.ceil(getDateDiff(d, now, 'days'));
+
   if (diffDays === 0) return 'Today';
   if (diffDays === 1) return 'Tomorrow';
   if (diffDays < 0) return `${Math.abs(diffDays)}d Overdue`;
-  
+
   if (options.relative && diffDays < 7) {
     return `+${diffDays} days`;
   }
-  
+
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 };
 
+// Format a date to relative "time ago" string
+exports.formatTimeAgo = (date, now = new Date()) => {
+  const d = parseDate(date);
+  if (!d) return 'unknown';
 
-/**
- * Format a date into a "time ago" string
- * @param {Date} date 
- * @returns {string}
- */
-exports.formatTimeAgo = (date) => {
-  const d = new Date(date);
-  const seconds = Math.floor((new Date() - d) / 1000);
-  
+  const seconds = Math.floor(getDateDiff(now, d, 'seconds'));
+
   if (seconds < 60) return `${seconds}s ago`;
   const minutes = Math.floor(seconds / 60);
   if (minutes < 60) return `${minutes}m ago`;
@@ -45,35 +34,34 @@ exports.formatTimeAgo = (date) => {
   return `${days}d ago`;
 };
 
-/**
- * Calculate progress percentage safely
- * @param {number} total 
- * @param {number} completed 
- * @returns {Object}
- */
+// Calculate progress percentage with safety checks
 exports.calculateProgress = (total, completed) => {
   return {
     completed,
     total,
-    percentage: total > 0 ? Math.round((completed / total) * 100) : 0
+    percentage: total > 0 ? Math.round((completed / total) * 100) : 0,
   };
 };
 
-/**
- * Map a task document to a standard dashboard task object
- * @param {Object} t - Task document
- * @returns {Object}
- */
-exports.mapTaskToDashboard = (t) => {
+// Transform task document to dashboard-optimized object
+exports.mapTaskToDashboard = (t, now = new Date()) => {
+  const dueDate = parseDate(t.dueDate);
+  const projectKey = t.project?.key || 'NC';
+  const taskNumber =
+    t.taskNumber || parseInt(t._id?.toString().slice(-4), 16) || 1001;
   return {
     id: t._id,
     title: t.title,
     status: t.status,
     priority: t.priority,
-    due: exports.formatDueDate(t.dueDate),
-    isOverdue: t.dueDate && new Date(t.dueDate) < new Date() && t.status !== 'done',
+    due: exports.formatDueDate(t.dueDate, {}, now),
+    isOverdue: dueDate && dueDate < now && t.status !== 'done',
     blocked: t.blocked || (t.dependencies && t.dependencies.length > 0),
     createdAt: t.createdAt,
-    createdFormatted: exports.formatDueDate(t.createdAt)
+    createdFormatted: exports.formatDueDate(t.createdAt, {}, now),
+    taskKey: `${projectKey}-${taskNumber}`,
+    category: t.category || 'backend',
+    projectId: t.project?._id || t.project || null,
+    sprintId: t.sprint?._id || t.sprint || null,
   };
 };

@@ -1,52 +1,124 @@
 const Redis = require('ioredis');
+const config = require('./config');
+const logger = require('../utils/logger');
 
 let redisClient;
+let bullRedisClient;
 
-/**
- * Initializes the Redis memory hub using ioredis.
- * This acts as our primary high-speed cache for Mission Discussion and Project Intelligence.
- * Built with industrial-grade error handling and automatic database fallback.
- */
-const connectRedis = () => {
-    try {
-        const redisUrl = process.env.REDIS_URL || 'redis://127.0.0.1:6380';
-        
-        redisClient = new Redis(redisUrl, {
-            maxRetriesPerRequest: null,
-            retryStrategy: (times) => {
-                const delay = Math.min(times * 100, 3000);
-                return delay;
-            },
-            reconnectOnError: (err) => {
-                const targetError = 'READONLY';
-                if (err.message.includes(targetError)) {
-                    return true;
-                }
-                return false;
-            }
-        });
+const logThrottle = {
+  lastError: 0,
+  lastDegraded: 0,
+  errorCount: 0,
+  INTERVAL: 60000,
+};
 
-        let lastErrorLog = 0;
-        const LOG_THROTTLE = 30000; // 30s tactical silence
+const throttleLog = (type, message, level = 'warn') => {
+  const now = Date.now();
+  if (now - logThrottle[type] > logThrottle.INTERVAL) {
+    logger[level](message);
+    logThrottle[type] = now;
+  }
+};
 
-        redisClient.on('error', (err) => {
-            const now = Date.now();
-            if (now - lastErrorLog > LOG_THROTTLE) {
-                console.warn('[MEMORY HUB] Background synchronization active (Grid Offline):', err.message);
-                lastErrorLog = now;
-            }
-        });
+const getRetryStrategy = (clientName) => (times) => {
+  const delay = Math.min(times * 100, 10000);
+  if (times > 20) {
+    throttleLog(
+      'lastError',
+      `[REDIS] ${clientName} - Persistent connection failure after ${times} attempts. Check REDIS_URL.`,
+      'error'
+    );
+  } else {
+    logger.info(`[REDIS] ${clientName} - Reconnecting... attempt ${times}`);
+  }
+  return delay;
+};
 
-        redisClient.on('connect', () => {
-            console.log('[MEMORY HUB] Strategic memory grid synchronized');
-        });
+const createClient = (name, options = {}) => {
+  const client = new Redis(config.redis.url, {
+    maxRetriesPerRequest: 20,
+    connectTimeout: 15000,
+    retryStrategy: getRetryStrategy(name),
+    ...options,
+  });
 
-        console.log(`[MEMORY HUB] Attempting bridge to memory grid at ${redisUrl}...`);
-    } catch (err) {
-        console.warn('[MEMORY HUB] Fatal bridge failure. Reverting to primary database retrieval.');
-    }
+  client.on('connect', () => logger.info(`[REDIS] ${name} link established`));
+  client.on('ready', () =>
+    logger.info(`[REDIS] ${name} fully synchronized (READY)`)
+  );
+  client.on('error', (err) => {
+    throttleLog('lastError', `[REDIS] ${name} error: ${err.message}`, 'error');
+  });
+  client.on('reconnecting', (ms) =>
+    logger.info(`[REDIS] ${name} reconnecting in ${ms}ms...`)
+  );
+  client.on('end', () => logger.warn(`[REDIS] ${name} connection closed`));
+
+  return client;
+};
+
+const connectRedis = async () => {
+  try {
+    redisClient = createClient('CacheClient', { enableReadyCheck: true });
+    bullRedisClient = createClient('QueueClient', {
+      maxRetriesPerRequest: null,
+    });
+
+    redisClient.once('ready', async () => {
+      try {
+        const info = await redisClient.info('server');
+        const versionMatch = info.match(/redis_version:([0-9\.]+)/);
+        const version = versionMatch ? versionMatch[1] : 'unknown';
+        logger.info(`[REDIS] Server version detected: ${version}`);
+      } catch (err) {}
+    });
+
+    return { redisClient, bullRedisClient };
+  } catch (err) {
+    logger.error(`[REDIS] Fatal bridge failure: ${err.message}`);
+    throw err;
+  }
 };
 
 const getRedisClient = () => redisClient;
+const getBullRedisClient = () => bullRedisClient;
 
-module.exports = { connectRedis, getRedisClient };
+const isRedisConnected = () => {
+  return redisClient && redisClient.status === 'ready';
+};
+
+const isQueueConnected = () => {
+  return bullRedisClient && bullRedisClient.status === 'ready';
+};
+
+const withTimeout = async (promise, timeoutMs = 2000, fallback = null) => {
+  let timeout;
+  const timeoutPromise = new Promise((resolve) => {
+    timeout = setTimeout(() => {
+      logger.warn(
+        `[REDIS-TIMEOUT] Operation timed out after ${timeoutMs}ms. Falling back.`
+      );
+      resolve(fallback);
+    }, timeoutMs);
+  });
+
+  try {
+    const result = await Promise.race([promise, timeoutPromise]);
+    clearTimeout(timeout);
+    return result;
+  } catch (err) {
+    clearTimeout(timeout);
+    logger.error(`[REDIS-ERROR] Operation failed: ${err.message}`);
+    return fallback;
+  }
+};
+
+module.exports = {
+  connectRedis,
+  createClient,
+  getRedisClient,
+  getBullRedisClient,
+  isRedisConnected,
+  isQueueConnected,
+  withTimeout,
+};

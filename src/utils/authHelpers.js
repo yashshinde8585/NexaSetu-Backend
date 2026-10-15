@@ -1,10 +1,11 @@
-// Normalizes role constraints and administrative boundaries globally across the system workspace.
+const { normalizeRole, normalizeJobTitle } = require('./common');
+
 const ROLE_MAPPING = {
   ADMIN: 'WORKSPACE_ADMIN',
   WORKSPACE_ADMIN: 'WORKSPACE_ADMIN',
   MANAGER: 'WORKSPACE_MANAGER',
   WORKSPACE_MANAGER: 'WORKSPACE_MANAGER',
-  VP_ENGINEERING: 'WORKSPACE_MANAGER', // Strategic oversight
+  VP_ENGINEERING: 'WORKSPACE_MANAGER',
   ENGINEERING_MANAGER: 'WORKSPACE_MANAGER',
   TECH_LEAD: 'TECH_LEAD',
   SENIOR_ENGINEER: 'SENIOR_ENGINEER',
@@ -16,25 +17,45 @@ const ROLE_MAPPING = {
 };
 
 const isManagerOrAdmin = (user) => {
-  const role = (user.role || '').trim().toUpperCase();
-  return ['WORKSPACE_ADMIN', 'WORKSPACE_MANAGER'].includes(role);
+  const effectiveRole = mapRole(user.role);
+  return ['WORKSPACE_ADMIN', 'WORKSPACE_MANAGER'].includes(effectiveRole);
 };
 
 const isStrategicLead = (user) => {
-  const role = (user.role || '').trim().toUpperCase();
-  const isLead = (user.jobTitle || '').toUpperCase().includes('LEAD');
-  return ['WORKSPACE_ADMIN', 'WORKSPACE_MANAGER'].includes(role) || isLead;
+  const effectiveRole = mapRole(user.role);
+  const isLead = normalizeJobTitle(user.jobTitle).includes('LEAD');
+  return (
+    ['WORKSPACE_ADMIN', 'WORKSPACE_MANAGER'].includes(effectiveRole) || isLead
+  );
 };
 
 const hasLeadRestriction = (user) => {
-  return (user.jobTitle || '').toUpperCase().includes('LEAD');
+  return normalizeJobTitle(user.jobTitle).includes('LEAD');
 };
 
 const mapRole = (roleName) => {
   return (
-    ROLE_MAPPING[(roleName || '').toUpperCase()] ||
-    ROLE_MAPPING['PROJECT_MEMBER']
+    ROLE_MAPPING[normalizeRole(roleName)] || ROLE_MAPPING['PROJECT_MEMBER']
   );
+};
+
+const canAccessResource = async (user, resourceId, type) => {
+  if (!user || !resourceId || !user.workspaceId) return false;
+
+  if (user.role === 'WORKSPACE_ADMIN') return true;
+
+  try {
+    const mongoose = require('mongoose');
+    const Model = mongoose.models[type === 'project' ? 'Project' : 'Task'];
+    if (!Model) return false;
+
+    const resource = await Model.findById(resourceId).select('workspaceId');
+    if (!resource) return false;
+
+    return resource.workspaceId.toString() === user.workspaceId.toString();
+  } catch (err) {
+    return false;
+  }
 };
 
 module.exports = {
@@ -43,4 +64,5 @@ module.exports = {
   isStrategicLead,
   hasLeadRestriction,
   mapRole,
+  canAccessResource,
 };

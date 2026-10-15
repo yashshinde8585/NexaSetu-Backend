@@ -1,303 +1,228 @@
+const authService = require('../services/authService');
+const storageService = require('../services/storageService');
 const User = require('../models/User');
-const jwt = require('jsonwebtoken');
-const config = require('../config/config');
-const Workspace = require('../models/Workspace');
-const mongoose = require('mongoose');
-const Invitation = require('../models/Invitation');
-const Session = require('../models/Session');
 const catchAsync = require('../utils/catchAsync');
-const { ROLE_MAPPING, mapRole } = require('../utils/authHelpers');
+const config = require('../config/config');
+const logger = require('../utils/logger');
+const ResponseBuilder = require('../utils/responseBuilder');
+const { monitorClientStatus } = require('../utils/requestGuard');
 
-// Manages user authentication, registration, workspace provisioning, and session handling.
-// Helper to generate a short-lived access token for immediate API authorization.
-const signAccessToken = (id) => {
-  return jwt.sign({ id }, config.jwt.secret, {
-    expiresIn: config.jwt.expiresIn, // Tactical short-lived window
+const cookieOptions = config.jwt.cookieOptions;
+
+const { toUserDTO } = require('../utils/dtoMapper');
+
+const sendAuthResponse = async (user, statusCode, req, res) => {
+  const { accessToken, refreshToken } = authService.generateTokens(user._id);
+
+  await authService.createSession(user._id, refreshToken, {
+    userAgent: req.headers['user-agent'],
+    ipAddress: req.ip,
   });
-};
 
-// Helper to generate a long-lived refresh token stored securely for session continuity.
-const signRefreshToken = (id) => {
-  return jwt.sign({ id }, config.jwt.refreshSecret, {
-    expiresIn: config.jwt.refreshExpiresIn, // Strategic long-term window
-  });
-};
-
-const createSendToken = async (user, statusCode, res) => {
-  const accessToken = signAccessToken(user._id);
-  const refreshToken = signRefreshToken(user._id);
-
-  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
-  
-  // Persistence: Store the refresh token in a dedicated session document.
-  await Session.create({
-    userId: user._id,
-    token: refreshToken,
-    expiresAt,
-    userAgent: res.req?.headers['user-agent'],
-    ipAddress: res.req?.ip
-  });
-  
-  // Optional: Clean up older sessions for this user (Keep last 5)
-  const userSessions = await Session.find({ userId: user._id }).sort({ createdAt: -1 });
-  if (userSessions.length > 5) {
-    const sessionsToRemove = userSessions.slice(5).map(s => s._id);
-    await Session.deleteMany({ _id: { $in: sessionsToRemove } });
-  }
-
-  const cookieOptions = {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'Lax',
-  };
+  const baseOptions = { ...cookieOptions };
+  delete baseOptions.maxAge;
 
   res.cookie('jwt', accessToken, {
-    ...cookieOptions,
-    expires: new Date(Date.now() + 15 * 60 * 1000 + 60000), // 16 minutes (access token + buffer)
+    ...baseOptions,
+    expires: new Date(Date.now() + 8 * 60 * 60 * 1000),
   });
 
   res.cookie('refreshToken', refreshToken, {
-    ...cookieOptions,
-    expires: expiresAt,
+    ...baseOptions,
+    expires: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
   });
 
-  // Remove sensitive fields from operational output
-  user.password = undefined;
-  user.refreshTokens = undefined;
+  const safeUser = toUserDTO(user);
 
-  res.status(statusCode).json({
+  return res.status(statusCode).json({
+    success: true,
     status: 'success',
+    code: 'SUCCESS',
     token: accessToken,
-    data: {
-      user,
-    },
+    data: { user: safeUser },
+    message: 'Operation successful',
   });
 };
 
 exports.registerUser = catchAsync(async (req, res, next) => {
-  const {
-    name,
-    email,
-    password,
-    role,
-    assignedProjectId,
-    workspaceName,
-    plan,
-  } = req.body;
+  const guard = monitorClientStatus(req);
+  const user = await authService.registerUser(req.body);
 
-  // Manual validation has been replaced by Zod middleware contracts in authRoutes.js
-
-  // 1. Check for existing user
-  const existingUser = await User.findOne({ email });
-  if (existingUser)
-    return res.status(400).json({ status: 'fail', message: 'This email is already registered. Please try logging in.' });
-
-  const userId = new mongoose.Types.ObjectId();
-  let workspaceId;
-  let finalRole;
-  let finalJobTitle;
-
-  // Resolve the invitation token if the user is joining an existing workspace.
-  const invitation = await Invitation.findOne({ email, status: 'pending' });
-
-  if (invitation) {
-    workspaceId = invitation.workspaceId;
-    finalRole = mapRole(invitation.role) || 'PROJECT_MEMBER';
-    finalJobTitle = 'Software Engineer';
-  } else {
-    // Provision a brand new workspace for a completely new customer.
-    finalRole = 'WORKSPACE_ADMIN';
-    const finalWorkspaceDisplayName = workspaceName || `${name}'s Hub`;
-    finalJobTitle =
-      req.body.jobTitle ||
-      (plan?.includes('executive')
-        ? 'Chief Technology Officer'
-        : 'Workspace Administrator');
-
-    const newWorkspace = await Workspace.create({
-      name: finalWorkspaceDisplayName,
-      admin: userId,
-      subscription: { plan: plan || 'free' },
-    });
-    workspaceId = newWorkspace._id;
-  }
-
-  const user = await User.create({
-    _id: userId,
-    name,
-    email,
-    password,
-    role: finalRole,
-    jobTitle: finalJobTitle,
-    workspaceId,
-    assignedProjectId: (invitation ? invitation.projectId : null) || assignedProjectId,
-    passwordChangedAt: Date.now(),
-  });
-
-  if (invitation) {
-    invitation.status = 'accepted';
-    await invitation.save();
-  }
-
-  createSendToken(user, 201, res);
+  guard.throwIfAborted();
+  await sendAuthResponse(user, 201, req, res);
 });
 
 exports.loginUser = catchAsync(async (req, res, next) => {
+  const guard = monitorClientStatus(req);
   const { email, password } = req.body;
-  
-  const user = await User.findOne({ email }).select('+password');
-  
-  if (!user) {
-    return res.status(401).json({ status: 'fail', message: 'Account not found with this email address.' });
-  }
 
-  // 1. Check if account is locked
-  if (user.lockUntil && user.lockUntil > Date.now()) {
-    return res.status(403).json({ 
-      status: 'fail', 
-      message: `Account is temporarily locked due to multiple failed attempts. Try again in ${Math.ceil((user.lockUntil - Date.now()) / 60000)} minutes.` 
-    });
-  }
+  const user = await authService.loginUser(email, password);
 
-  // 2. Validate password
-  if (!(await user.comparePassword(password))) {
-    // Increment failed attempts
-    user.failedLoginAttempts = (user.failedLoginAttempts || 0) + 1;
-    
-    if (user.failedLoginAttempts >= 5) {
-      user.lockUntil = new Date(Date.now() + 30 * 60 * 1000); // 30 minute lock
-      await user.save({ validateBeforeSave: false });
-      return res.status(403).json({ status: 'fail', message: 'Too many failed attempts. Account locked for 30 minutes.' });
-    }
-    
-    await user.save({ validateBeforeSave: false });
-    return res.status(401).json({ status: 'fail', message: `Incorrect password. ${5 - user.failedLoginAttempts} attempts remaining.` });
-  }
-
-  // 3. Reset failed attempts on success
-  user.failedLoginAttempts = 0;
-  user.lockUntil = undefined;
-  await user.save({ validateBeforeSave: false });
-
-  createSendToken(user, 200, res);
+  guard.throwIfAborted();
+  await sendAuthResponse(user, 200, req, res);
 });
 
-exports.logoutUser = catchAsync(async (req, res) => {
+exports.logoutUser = catchAsync(async (req, res, next) => {
   const { refreshToken } = req.cookies;
+  if (refreshToken) await authService.revokeSession(refreshToken);
 
-  if (refreshToken) {
-    // Revoke the specific tactical refresh token from the database
-    await Session.deleteOne({ token: refreshToken });
-  }
+  const clearOptions = {
+    ...cookieOptions,
+    expires: new Date(Date.now() + 1000),
+  };
+  res.cookie('jwt', 'loggedout', clearOptions);
+  res.cookie('refreshToken', 'loggedout', clearOptions);
 
-  res.cookie('jwt', 'loggedout', {
-    expires: new Date(Date.now() + 10 * 1000),
-    httpOnly: true,
-  });
-
-  res.cookie('refreshToken', 'loggedout', {
-    expires: new Date(Date.now() + 10 * 1000),
-    httpOnly: true,
-  });
-
-  res.status(200).json({ status: 'success', message: 'Logged out successfully' });
+  return ResponseBuilder.success(res, null, 200, 'Logged out successfully');
 });
 
 exports.refreshAccessToken = catchAsync(async (req, res, next) => {
   const { refreshToken } = req.cookies;
+  if (!refreshToken)
+    return ResponseBuilder.error(
+      res,
+      'Session expired',
+      'SESSION_EXPIRED',
+      401
+    );
 
-  if (!refreshToken) {
-    return res.status(401).json({ status: 'fail', message: 'No refresh token provided' });
-  }
-
-  // 1. Verify existence of the token in our session registry
-  const session = await Session.findOne({ token: refreshToken });
-  if (!session) {
-    return res.status(401).json({ status: 'fail', message: 'Invalid refresh token or session revoked' });
-  }
-
-  const user = await User.findById(session.userId);
-  if (!user) {
-    return res.status(401).json({ status: 'fail', message: 'User no longer exists' });
-  }
-
-  // 2. Validate token signature and expiration
   try {
-    const decoded = jwt.verify(refreshToken, config.jwt.refreshSecret);
-    
-    if (decoded.id !== user._id.toString()) {
-      throw new Error('Identity mismatch');
-    }
-
-    // 3. Optional: Implement Refresh Token Rotation (Recommended for high security)
-    // For now, we'll just issue a new Access Token
-    const accessToken = signAccessToken(user._id);
+    const { accessToken } = await authService.refreshAccessToken(refreshToken);
 
     res.cookie('jwt', accessToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'Lax',
-      expires: new Date(Date.now() + 15 * 60 * 1000),
+      ...cookieOptions,
+      expires: new Date(Date.now() + 8 * 60 * 60 * 1000),
     });
 
-    res.status(200).json({
+    return res.status(200).json({
+      success: true,
       status: 'success',
       token: accessToken,
     });
   } catch (err) {
-    // If token is invalid/expired, purge it from session collection
-    await Session.deleteOne({ token: refreshToken });
-    return res.status(401).json({ status: 'fail', message: 'Refresh token expired or invalid' });
+    if (refreshToken) await authService.revokeSession(refreshToken);
+    return ResponseBuilder.error(
+      res,
+      'Invalid session',
+      'INVALID_SESSION',
+      401
+    );
   }
 });
 
 exports.getMe = catchAsync(async (req, res, next) => {
-  res.status(200).json({
-    status: 'success',
-    data: {
-      user: req.user,
-    },
-  });
+  return ResponseBuilder.success(res, { user: toUserDTO(req.user) });
 });
 
 exports.activateInvitation = catchAsync(async (req, res, next) => {
   const { token, name, password } = req.body;
-  if (!token || !name || !password)
-    return res.status(400).json({ status: 'fail', message: 'Missing activation data.' });
+  if (!token || !name || !password) {
+    return ResponseBuilder.error(
+      res,
+      'Missing activation data.',
+      'MISSING_DATA',
+      400
+    );
+  }
 
-  const invitation = await Invitation.findOne({
-    token,
-    status: 'pending',
-    expiresAt: { $gt: Date.now() },
-  });
-  
-  if (!invitation)
-    return res.status(400).json({ status: 'fail', message: 'Invalid or expired invitation.' });
+  const user = await authService.activateInvitation(token, name, password);
+  await sendAuthResponse(user, 201, req, res);
+});
 
-  const user = await User.create({
-    name,
-    email: invitation.email,
-    password,
-    role: mapRole(invitation.role),
-    jobTitle: (invitation.role === 'INTERN' ? 'Intern' : 'Software Engineer'),
-    workspaceId: invitation.workspaceId,
-    assignedProjectId: invitation.projectId,
-  });
+exports.forgotPassword = catchAsync(async (req, res, next) => {
+  const resetToken = await authService.forgotPassword(req.body.email);
+  logger.info(
+    `[MOCK EMAIL] Password reset token for ${req.body.email}: ${resetToken}`
+  );
 
-  invitation.status = 'accepted';
-  await invitation.save();
+  return ResponseBuilder.success(
+    res,
+    null,
+    200,
+    'Token sent to email (Mocked in logs)'
+  );
+});
 
-  createSendToken(user, 201, res);
+exports.resetPassword = catchAsync(async (req, res, next) => {
+  const user = await authService.resetPassword(
+    req.params.token,
+    req.body.password
+  );
+  await sendAuthResponse(user, 200, req, res);
 });
 
 exports.completeTour = catchAsync(async (req, res, next) => {
-  const user = await User.findByIdAndUpdate(
-    req.user._id,
-    { hasSeenTour: true },
-    { new: true }
+  const user = await authService.completeTour(req.user._id);
+  return ResponseBuilder.success(res, { user });
+});
+
+exports.updateAvatar = catchAsync(async (req, res, next) => {
+  if (!req.file) {
+    return ResponseBuilder.error(
+      res,
+      'No image file provided.',
+      'MISSING_FILE',
+      400
+    );
+  }
+
+  const publicUrl = await storageService.uploadFile(
+    req.file.buffer,
+    req.file.originalname
   );
-  res.status(200).json({
-    status: 'success',
-    data: { user },
-  });
+
+  if (req.user.profilePicture) {
+    await storageService.deleteFile(req.user.profilePicture).catch((err) => {
+      logger.error(`[AVATAR_CLEANUP_ERROR]: ${err.message}`);
+    });
+  }
+
+  const updatedUser = await authService.updateAvatar(req.user, publicUrl);
+
+  return ResponseBuilder.success(
+    res,
+    { user: updatedUser },
+    200,
+    'Profile picture updated successfully'
+  );
+});
+
+exports.changePassword = catchAsync(async (req, res, next) => {
+  const { currentPassword, newPassword, confirmPassword } = req.body;
+
+  if (!currentPassword || !newPassword || !confirmPassword) {
+    return ResponseBuilder.error(
+      res,
+      'All fields are required.',
+      'MISSING_FIELDS',
+      400
+    );
+  }
+
+  if (newPassword !== confirmPassword) {
+    return ResponseBuilder.error(
+      res,
+      'New passwords do not match.',
+      'PASSWORD_MISMATCH',
+      400
+    );
+  }
+
+  if (newPassword.length < 8) {
+    return ResponseBuilder.error(
+      res,
+      'New password must be at least 8 characters.',
+      'PASSWORD_TOO_SHORT',
+      400
+    );
+  }
+
+  await authService.changePassword(req.user._id, currentPassword, newPassword);
+
+  return ResponseBuilder.success(
+    res,
+    null,
+    200,
+    'Password updated successfully.'
+  );
 });

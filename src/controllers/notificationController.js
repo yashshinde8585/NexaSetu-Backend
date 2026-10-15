@@ -1,16 +1,9 @@
-const Notification = require('../models/Notification');
+const notificationService = require('../services/notificationService');
 const catchAsync = require('../utils/catchAsync');
-const { resolveWorkspaceId } = require('../utils/workspaceHelper');
 
 // Retrieve all notifications for the authenticated user within their active workspace.
 exports.getMyNotifications = catchAsync(async (req, res, next) => {
-  const notifications = await Notification.find({
-    recipient: req.user?._id,
-    workspaceId: resolveWorkspaceId(req.user),
-  })
-    .sort('-createdAt')
-    .limit(20)
-    .populate('sender', 'name email');
+  const notifications = await notificationService.getMyNotifications(req.user);
 
   res.status(200).json({
     status: 'success',
@@ -21,20 +14,10 @@ exports.getMyNotifications = catchAsync(async (req, res, next) => {
 
 // Update notification state to 'read' for processed system events.
 exports.markAsRead = catchAsync(async (req, res, next) => {
-  const { id } = req.params;
-
-  const notification = await Notification.findOneAndUpdate(
-    { _id: id, recipient: req.user?._id },
-    { isRead: true },
-    { new: true }
+  const notification = await notificationService.markAsRead(
+    req.user,
+    req.params.id
   );
-
-  if (!notification) {
-    return res.status(404).json({
-      status: 'fail',
-      message: 'Notification not found or access denied',
-    });
-  }
 
   res.status(200).json({
     status: 'success',
@@ -44,10 +27,7 @@ exports.markAsRead = catchAsync(async (req, res, next) => {
 
 // Batch update all notifications to read for cleared workspaces.
 exports.markAllAsRead = catchAsync(async (req, res, next) => {
-  await Notification.updateMany(
-    { recipient: req.user?._id, isRead: false },
-    { isRead: true }
-  );
+  await notificationService.markAllAsRead(req.user);
 
   res.status(200).json({
     status: 'success',
@@ -57,10 +37,7 @@ exports.markAllAsRead = catchAsync(async (req, res, next) => {
 
 // Permanently remove all notifications for the authenticated user to clear workspace clutter.
 exports.deleteAllMyNotifications = catchAsync(async (req, res, next) => {
-  await Notification.deleteMany({
-    recipient: req.user?._id,
-    workspaceId: resolveWorkspaceId(req.user),
-  });
+  await notificationService.deleteAllMyNotifications(req.user);
 
   res.status(204).json({
     status: 'success',

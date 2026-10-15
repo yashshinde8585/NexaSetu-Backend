@@ -1,72 +1,205 @@
 const { Octokit } = require('octokit');
 const aiService = require('./aiService');
 const Task = require('../models/Task');
-const { decrypt } = require('../utils/crypto');
+const User = require('../models/User');
+const Project = require('../models/Project');
+const Workspace = require('../models/Workspace');
+const AgentOrchestrator = require('../services/agentOrchestrator');
+const { encrypt, decrypt } = require('../utils/crypto');
 const logger = require('../utils/logger');
+const AppError = require('../utils/appError');
+const CircuitBreaker = require('../utils/circuitBreaker');
 
-// Service for GitHub repository synchronization and task extraction.
+const logGithubError = (contextMessage, error, level = 'error') => {
+  const status = error.status || (error.response && error.response.status);
+  const headers = error.response?.headers || {};
+  const limit = headers['x-ratelimit-limit'] || headers['X-Ratelimit-Limit'];
+  const remaining =
+    headers['x-ratelimit-remaining'] || headers['X-Ratelimit-Remaining'];
+  const reset = headers['x-ratelimit-reset'] || headers['X-Ratelimit-Reset'];
 
-exports.getOctokit = (accessToken) => {
-  // Access token is stored encrypted in the database; decrypt before use.
+  const logMsg = `[GITHUB-DIAGNOSTICS] ${contextMessage} - Message: ${error.message} (Status: ${status || 'unknown'}, Remaining: ${remaining || 'N/A'}, Limit: ${limit || 'N/A'}, Reset: ${reset || 'N/A'})`;
+  if (level === 'warn') {
+    logger.warn(logMsg);
+  } else {
+    logger.error(logMsg);
+  }
+};
+
+const githubBreaker = new CircuitBreaker('GitHub_API', {
+  failureThreshold: 3,
+  resetTimeout: 30000,
+});
+
+const getOctokit = (accessToken) => {
   const token = accessToken.includes(':') ? decrypt(accessToken) : accessToken;
   return new Octokit({ auth: token });
 };
 
-exports.getUserRepositories = async (accessToken) => {
-  const octokit = exports.getOctokit(accessToken);
-  const { data } = await octokit.rest.repos.listForAuthenticatedUser({
-    sort: 'updated',
-    per_page: 50,
-  });
-  return data.map((repo) => ({
-    id: repo.id,
-    name: repo.name,
-    fullName: repo.full_name,
-    owner: repo.owner.login,
-    description: repo.description,
-    url: repo.html_url,
-  }));
-};
+const connectGithub = async (user, accessToken) => {
+  if (!accessToken) {
+    throw new AppError('GitHub Access Token is required', 400);
+  }
 
-// Retry wrapper for handling transient API errors and rate limits.
-const retry = async (fn, retries = 2, delay = 1000) => {
   try {
-    return await fn();
+    const octokit = getOctokit(accessToken);
+    const { data: githubUser } = await githubBreaker.execute(() =>
+      octokit.rest.users.getAuthenticated()
+    );
+
+    await Workspace.findByIdAndUpdate(user.workspaceId, {
+      'integrations.github.connected': true,
+      'integrations.github.accessToken': encrypt(accessToken),
+      'integrations.github.githubId': githubUser.id.toString(),
+      'integrations.github.lastSync': new Date(),
+    });
+
+    return {
+      githubId: githubUser.id,
+      githubUsername: githubUser.login,
+    };
   } catch (error) {
-    if (retries <= 0 || (error.status && error.status < 500 && error.status !== 429)) throw error;
-    await new Promise((resolve) => setTimeout(resolve, delay));
-    return retry(fn, retries - 1, delay * 2);
+    logGithubError('Connection Error', error);
+    const statusCode =
+      error.status || (error.response && error.response.status);
+
+    if (statusCode === 401) {
+      throw new AppError(
+        'Invalid Personal Access Token. Please check your token and try again.',
+        401
+      );
+    }
+    if (statusCode === 403) {
+      throw new AppError(
+        'Insufficient permissions or rate limited. Ensure your token has the required scopes.',
+        403
+      );
+    }
+    if (error.code === 11000) {
+      throw new AppError(
+        'This GitHub account is already linked to another workspace.',
+        409
+      );
+    }
+
+    throw new AppError(
+      error.message ||
+        'Failed to connect GitHub account. Please verify your network and token.',
+      statusCode || 500
+    );
   }
 };
 
-exports.getRepositoryActivity = async (accessToken, owner, repo) => {
-  const octokit = exports.getOctokit(accessToken);
+const getUserRepositories = async (user) => {
+  const userDoc = await User.findById(user._id);
+  if (!userDoc.githubAccessToken) {
+    throw new AppError('GitHub not connected', 400);
+  }
+
+  try {
+    const octokit = getOctokit(userDoc.githubAccessToken);
+    const { data } = await githubBreaker.execute(
+      () =>
+        octokit.rest.repos.listForAuthenticatedUser({
+          sort: 'updated',
+          per_page: 50,
+        }),
+      () => {
+        throw new AppError('GitHub API is temporarily unavailable', 503);
+      }
+    );
+    return data.map((repo) => ({
+      id: repo.id,
+      name: repo.name,
+      fullName: repo.full_name,
+      owner: repo.owner.login,
+      description: repo.description,
+      url: repo.html_url,
+    }));
+  } catch (error) {
+    logGithubError(`List repositories for user ${user._id}`, error);
+    throw error;
+  }
+};
+
+const linkProject = async (user, projectId, repoInfo) => {
+  if (!projectId || !repoInfo) {
+    throw new AppError('Project ID and Repository info are required', 400);
+  }
+
+  const isAdminOrManager = [
+    'WORKSPACE_ADMIN',
+    'WORKSPACE_MANAGER',
+    'ADMIN',
+    'MANAGER',
+  ].includes(user.role);
+
+  const filter = { _id: projectId, workspaceId: user.workspaceId };
+  if (!isAdminOrManager) {
+    filter.createdBy = user._id;
+  }
+
+  const project = await Project.findOneAndUpdate(
+    filter,
+    { githubRepo: repoInfo },
+    { returnDocument: 'after' }
+  );
+
+  if (!project) {
+    throw new AppError('Project not found or not authorized', 404);
+  }
+
+  return project;
+};
+
+const getRepositoryActivity = async (accessToken, owner, repo) => {
+  const octokit = getOctokit(accessToken);
+
+  const retry = async (fn, retries = 2, delay = 1000) => {
+    try {
+      return await fn();
+    } catch (error) {
+      if (
+        retries <= 0 ||
+        (error.status && error.status < 500 && error.status !== 429)
+      )
+        throw error;
+      await new Promise((resolve) => setTimeout(resolve, delay));
+      return retry(fn, retries - 1, delay * 2);
+    }
+  };
 
   let commits = [];
   try {
-    // Fetch latest commits with retry logic.
-    const { data } = await retry(() => octokit.rest.repos.listCommits({
-      owner,
-      repo,
-      per_page: 20,
-    }));
+    const { data } = await githubBreaker.execute(() =>
+      retry(() =>
+        octokit.rest.repos.listCommits({
+          owner,
+          repo,
+          per_page: 20,
+        })
+      )
+    );
     commits = data;
   } catch (err) {
-    console.warn(`[GITHUB RECON] Commits unreachable for ${owner}/${repo}:`, err.message);
+    logGithubError(`Commits unreachable for ${owner}/${repo}`, err, 'warn');
   }
 
   let prs = [];
   try {
-    // Fetch pull requests with retry logic.
-    const { data } = await retry(() => octokit.rest.repos.listPullRequests({
-      owner,
-      repo,
-      state: 'all',
-      per_page: 20,
-    }));
+    const { data } = await githubBreaker.execute(() =>
+      retry(() =>
+        octokit.rest.repos.listPullRequests({
+          owner,
+          repo,
+          state: 'all',
+          per_page: 20,
+        })
+      )
+    );
     prs = data;
   } catch (err) {
-    console.warn(`[GITHUB RECON] PRs unreachable for ${owner}/${repo}:`, err.message);
+    logGithubError(`PRs unreachable for ${owner}/${repo}`, err, 'warn');
   }
 
   const activity = [
@@ -92,10 +225,9 @@ exports.getRepositoryActivity = async (accessToken, owner, repo) => {
   return activity;
 };
 
-exports.generateTaskSuggestions = async (activity, projectId) => {
+const generateTaskSuggestions = async (activity, projectId) => {
   const suggestions = [];
 
-  // Batch lookup existing tasks to prevent N+1 overhead.
   const existingGithubIds = await Task.find({
     githubId: { $in: activity.map((a) => a.id) },
     project: projectId,
@@ -105,7 +237,6 @@ exports.generateTaskSuggestions = async (activity, projectId) => {
   const resourceService = require('./resourceService');
 
   for (const item of activity) {
-    // Parse commit messages for task resolution keywords (e.g., Fixes #123).
     const taskRefs = item.message.match(/(?:Fixes|Closes|Resolves)\s#(\d+)/gi);
     if (taskRefs) {
       for (const ref of taskRefs) {
@@ -116,14 +247,12 @@ exports.generateTaskSuggestions = async (activity, projectId) => {
         });
 
         if (task && task.status !== 'done') {
-          // Map GitHub status to internal task status.
           if (item.type === 'pull_request' && item.status === 'closed') {
             task.status = 'done';
             task.completedAt = new Date();
           } else if (item.type === 'pull_request') {
             task.status = 'in_review';
           } else {
-            // Transition underlying system units to an active operational state.
             task.status = 'in_progress';
           }
           await task.save();
@@ -131,13 +260,11 @@ exports.generateTaskSuggestions = async (activity, projectId) => {
       }
     }
 
-    // Skip if the task already exists.
     if (existingIdsSet.has(item.id)) continue;
 
     suggestions.push(item);
   }
 
-  // Batch process AI extractions and database creations in parallel for performance.
   const taskCreations = await Promise.all(
     suggestions.map(async (item) => {
       try {
@@ -151,25 +278,152 @@ exports.generateTaskSuggestions = async (activity, projectId) => {
           isAiGenerated: true,
         };
       } catch (error) {
-        logger.error(`AI Task Extraction failed for item ${item.id}: ${error.message}`);
+        logger.error(
+          `AI Task Extraction failed for item ${item.id}: ${error.message}`
+        );
         return null;
       }
     })
   );
 
   const filteredTasks = taskCreations.filter((t) => t !== null);
-  
+
   if (filteredTasks.length > 0) {
-    const createdTasks = await Task.insertMany(filteredTasks);
-    
-    // Automatically assign the new tasks using resource logic.
+    const createdTasks = await Task.create(filteredTasks);
+
     for (const task of createdTasks) {
-      resourceService.autoAssignTask(task._id).catch(err => 
-        logger.warn(`Auto-assignment failed for task ${task._id}: ${err.message}`)
-      );
+      resourceService
+        .autoAssignTask(task._id)
+        .catch((err) =>
+          logger.warn(
+            `Auto-assignment failed for task ${task._id}: ${err.message}`
+          )
+        );
     }
     return createdTasks;
   }
 
   return [];
+};
+
+const getActivitySuggestions = async (user, projectId) => {
+  const isAdminOrManager = [
+    'WORKSPACE_ADMIN',
+    'WORKSPACE_MANAGER',
+    'ADMIN',
+    'MANAGER',
+  ].includes(user.role);
+
+  const projectFilter = { _id: projectId, workspaceId: user.workspaceId };
+  if (!isAdminOrManager) {
+    projectFilter.members = user._id;
+  }
+
+  const project = await Project.findOne(projectFilter);
+
+  if (!project || !project.githubRepo) {
+    throw new AppError(
+      'Project not found, not linked to GitHub, or access denied',
+      403
+    );
+  }
+
+  const userDoc = await User.findById(user._id);
+  if (!userDoc.githubAccessToken) {
+    throw new AppError('GitHub not connected', 400);
+  }
+
+  const activity = await getRepositoryActivity(
+    userDoc.githubAccessToken,
+    project.githubRepo.owner,
+    project.githubRepo.repo
+  );
+
+  for (const item of activity) {
+    AgentOrchestrator.handleEvent({
+      type: 'GITHUB_ACTIVITY',
+      project: projectId,
+      user: user._id,
+      entityId: item.nodeId,
+      entityType: 'github_event',
+      payload: {
+        projectId,
+        githubId: item.nodeId,
+        type: item.type,
+        message: item.message,
+        author: item.author,
+        statusHint: item.type === 'commit' ? 'done' : 'in_progress',
+      },
+    }).catch((err) => {
+      logger.error(
+        `[AgentOrchestrator Error] Failed to handle GitHub activity ${item.nodeId}: %s`,
+        err.message
+      );
+    });
+  }
+
+  return await generateTaskSuggestions(activity, projectId);
+};
+
+const approveTasks = async (user, projectId, tasks) => {
+  if (!projectId || !tasks || !Array.isArray(tasks)) {
+    throw new AppError('Project ID and tasks array are required', 400);
+  }
+
+  const isAdminOrManager = [
+    'WORKSPACE_ADMIN',
+    'WORKSPACE_MANAGER',
+    'ADMIN',
+    'MANAGER',
+  ].includes(user.role);
+  const projectFilter = { _id: projectId, workspaceId: user.workspaceId };
+  if (!isAdminOrManager) {
+    projectFilter.members = user._id;
+  }
+
+  const project = await Project.findOne(projectFilter);
+  if (!project) {
+    throw new AppError('Access denied to this project', 403);
+  }
+
+  const existingGithubIds = await Task.find({
+    githubId: {
+      $in: tasks.filter((t) => t && t.githubId).map((t) => t.githubId),
+    },
+    project: projectId,
+  }).distinct('githubId');
+
+  const existingSet = new Set(existingGithubIds);
+
+  const tasksToCreate = tasks
+    .filter((t) => t && t.githubId && !existingSet.has(t.githubId))
+    .map((t) => ({
+      title: t.title,
+      description:
+        t.description || `Imported from GitHub ${t.type}: ${t.originalMessage}`,
+      project: projectId,
+      status: t.status,
+      source: 'github',
+      githubId: t.githubId,
+      assignedUser: user._id,
+      createdBy: user._id,
+    }));
+
+  let createdTasks = [];
+  if (tasksToCreate.length > 0) {
+    createdTasks = await Task.create(tasksToCreate);
+  }
+
+  return createdTasks;
+};
+
+module.exports = {
+  getOctokit,
+  connectGithub,
+  getUserRepositories,
+  linkProject,
+  getActivitySuggestions,
+  getRepositoryActivity,
+  generateTaskSuggestions,
+  approveTasks,
 };

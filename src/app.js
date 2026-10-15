@@ -1,29 +1,177 @@
 const express = require('express');
+const compression = require('compression');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
-const dotenv = require('dotenv');
-const config = require('./config/config');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
-const { RedisStore } = require('rate-limit-redis');
-const { getRedisClient } = require('./config/redis');
-
-dotenv.config();
-
-const isProduction = process.env.NODE_ENV === 'production';
-const REQUIRED_ENV = [
-  'JWT_SECRET',
-  'GROQ_API_KEY',
-  isProduction ? 'DB_ATLAS_URI' : 'DB_LOCAL_URI',
-];
-REQUIRED_ENV.forEach((key) => {
-  if (!process.env[key]) {
-    console.error(`[FATAL] Missing environment variable: ${key}`);
-    process.exit(1);
-  }
-});
+const config = require('./config/config');
+const { isRedisConnected } = require('./config/redis');
+const logger = require('./utils/logger');
+const SmartRateLimitStore = require('./utils/SmartRateLimitStore');
+const mongoSanitize = require('./middlewares/nosqlSanitizeMiddleware');
+const crypto = require('crypto');
 
 const app = express();
+
+app.set('trust proxy', 1);
+
+app.use(compression());
+
+app.use(
+  cors({
+    origin:
+      config.env === 'development' ? 'http://localhost:5173' : config.clientUrl,
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+    allowedHeaders: [
+      'Content-Type',
+      'Authorization',
+      'X-Requested-With',
+      'Accept',
+      'Idempotency-Key',
+      'X-Idempotency-Key',
+      'x-idempotency-key',
+      'X-CSRF-Token',
+      'x-csrf-token',
+    ],
+    maxAge: 86400,
+  })
+);
+
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'", "'unsafe-inline'"],
+        styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+        imgSrc: ["'self'", 'data:', 'https:', 'http:'],
+        connectSrc: ["'self'", 'https:', 'http:', 'ws:', 'wss:'],
+        fontSrc: ["'self'", 'https://fonts.gstatic.com'],
+        objectSrc: ["'none'"],
+        upgradeInsecureRequests: [],
+      },
+    },
+  })
+);
+
+app.use(
+  express.json({
+    limit: '15kb',
+    verify: (req, res, buf) => {
+      if (req.originalUrl.includes('/webhooks')) {
+        req.rawBody = buf;
+      }
+    },
+  })
+);
+app.use(mongoSanitize());
+app.use((err, req, res, next) => {
+  if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
+    return res.status(400).json({
+      status: 'fail',
+      code: 'MALFORMED_JSON',
+      message:
+        'The request body contains malformed JSON. Please check your syntax.',
+    });
+  }
+  next(err);
+});
+app.use(express.urlencoded({ extended: true, limit: '15kb' }));
+app.use(cookieParser());
+
+const csrfProtection = require('./middlewares/csrfMiddleware');
+app.use(csrfProtection());
+
+const telemetry = require('./middlewares/telemetryMiddleware');
+const idempotency = require('./middlewares/idempotencyMiddleware');
+const normalizeUnicode = require('./middlewares/normalizationMiddleware');
+
+const timeoutHandler = require('./middlewares/timeoutHandler');
+
+app.use(telemetry);
+app.use(normalizeUnicode);
+app.use(idempotency());
+
+app.use(timeoutHandler(15000));
+
+const { runWithContext } = require('./utils/context');
+
+app.use((req, res, next) => {
+  const requestId = req.headers['x-request-id'] || crypto.randomUUID();
+  req.id = requestId;
+  const start = Date.now();
+
+  runWithContext({ requestId }, () => {
+    let logged = false;
+    const logRequest = () => {
+      if (logged) return;
+      logged = true;
+      const duration = Date.now() - start;
+      const status = res.statusCode;
+      const finished = res.writableFinished || res.finished;
+      logger.info(
+        `[API] ${req.method} ${req.url} - ${status} [${duration}ms]${finished ? '' : ' (aborted)'}`
+      );
+    };
+
+    res.on('finish', logRequest);
+    res.on('close', logRequest);
+
+    next();
+  });
+});
+
+const createLimiter = (prefix, max, windowMs = 60 * 60 * 1000) =>
+  rateLimit({
+    windowMs,
+    max,
+    message: {
+      status: 'fail',
+      code: 'TOO_MANY_REQUESTS',
+      message: 'Operational limit exceeded. Please wait before retrying.',
+    },
+    standardHeaders: true,
+    legacyHeaders: false,
+    store: new SmartRateLimitStore({
+      prefix: `rl:${prefix}:`,
+      windowMs,
+    }),
+    skip: (req) => config.isTest,
+    validate: { singleCount: false },
+  });
+
+// Public health check (bypass global rate limit for monitoring)
+const healthRoutes = require('./routes/healthRoutes');
+app.use('/api/health', healthRoutes);
+
+// Clerk Webhooks (bypass rate limiter)
+const webhookRoutes = require('./routes/webhookRoutes');
+app.use(['/api/v1/webhooks', '/api/webhooks'], webhookRoutes);
+
+// Swagger Documentation
+const setupSwagger = require('./config/swagger');
+setupSwagger(app);
+
+const isDev = config.env === 'development';
+app.use('/api', createLimiter('global', isDev ? 10000 : 5000, 15 * 60 * 1000));
+
+app.use(
+  ['/api/auth/login', '/api/v1/auth/login'],
+  createLimiter('auth-login', 15, 5 * 60 * 1000)
+);
+
+app.use(
+  [
+    '/api/auth/forgot-password',
+    '/api/v1/auth/forgot-password',
+    '/api/auth/reset-password',
+    '/api/v1/auth/reset-password',
+  ],
+  createLimiter('auth-reset', 10, 15 * 60 * 1000)
+);
+
+const v1Router = express.Router();
 
 const authRoutes = require('./routes/authRoutes');
 const projectRoutes = require('./routes/projectRoutes');
@@ -31,140 +179,64 @@ const taskRoutes = require('./routes/taskRoutes');
 const aiRoutes = require('./routes/aiRoutes');
 const githubRoutes = require('./routes/githubRoutes');
 const dashboardRoutes = require('./routes/dashboardRoutes');
+const teamRoutes = require('./routes/teamRoutes');
+const sprintRoutes = require('./routes/sprintRoutes');
+const adminRoutes = require('./routes/adminRoutes');
+const engineeringRoutes = require('./routes/engineeringRoutes');
+const leadershipRoutes = require('./routes/leadershipRoutes');
+const operationsRoutes = require('./routes/operationsRoutes');
 const resourceRoutes = require('./routes/resourceRoutes');
 const actionRoutes = require('./routes/actionRoutes');
 const magicBarRoutes = require('./routes/magicBarRoutes');
-const teamRoutes = require('./routes/teamRoutes');
-const sprintRoutes = require('./routes/sprintRoutes');
 const strategicIntentRoutes = require('./routes/strategicIntentRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
 const commentRoutes = require('./routes/commentRoutes');
 const epiRoutes = require('./routes/epiRoutes');
+const billingRoutes = require('./routes/billingRoutes');
+const rbacRoutes = require('./routes/rbacRoutes');
+const executionRoutes = require('./routes/executionRoutes');
+const observabilityRoutes = require('./routes/observabilityRoutes');
+const metricsRoutes = require('./routes/metricsRoutes');
+const directiveRoutes = require('./routes/directiveRoutes');
+v1Router.use('/auth', authRoutes);
+v1Router.use('/projects', projectRoutes);
+v1Router.use('/tasks', taskRoutes);
+v1Router.use('/ai', aiRoutes);
+v1Router.use('/github', githubRoutes);
+v1Router.use('/dashboard', dashboardRoutes);
+v1Router.use('/team', teamRoutes);
+v1Router.use('/sprints', sprintRoutes);
+v1Router.use('/resources', resourceRoutes);
+v1Router.use('/actions', actionRoutes);
+v1Router.use('/magic', magicBarRoutes);
+v1Router.use('/strategic', strategicIntentRoutes);
+v1Router.use('/notifications', notificationRoutes);
+v1Router.use('/comments', commentRoutes);
+v1Router.use('/epi', epiRoutes);
+v1Router.use('/billing', billingRoutes);
 
-// New Unified Workspace Routes
-const engineeringWorkspaceRoutes = require('./routes/engineeringRoutes');
-const leadershipWorkspaceRoutes = require('./routes/leadershipRoutes');
-const operationsWorkspaceRoutes = require('./routes/operationsRoutes');
-const adminRoutes = require('./routes/adminRoutes');
+v1Router.use('/rbac', rbacRoutes);
+v1Router.use('/execution', executionRoutes);
+v1Router.use('/observability', observabilityRoutes);
+v1Router.use('/metrics', metricsRoutes);
+v1Router.use('/directives', directiveRoutes);
 
+v1Router.use('/engineering', engineeringRoutes);
+v1Router.use('/leadership', leadershipRoutes);
+v1Router.use('/operations', operationsRoutes);
+v1Router.use('/admin', adminRoutes);
 
-app.use(
-  cors({
-    origin:
-      process.env.NODE_ENV === 'development'
-        ? true
-        : process.env.CLIENT_URL || 'http://localhost:5173',
-    credentials: true,
-  })
-);
+// Mounted above rate limiter
+app.use(['/api/v1', '/api'], v1Router);
 
-app.use(helmet());
-app.use(cookieParser());
-
-// Custom NoSQL Injection Protection for Express 5 (In-place sanitization)
 app.use((req, res, next) => {
-  const sanitize = (obj) => {
-    if (obj && typeof obj === 'object') {
-      Object.keys(obj).forEach((key) => {
-        if (key.startsWith('$')) {
-          delete obj[key];
-        } else {
-          sanitize(obj[key]);
-        }
-      });
-    }
-  };
-  sanitize(req.body);
-  sanitize(req.query);
-  sanitize(req.params);
-  next();
+  res.status(404).json({
+    status: 'fail',
+    message: `Can't find ${req.method} ${req.originalUrl} on this server! Check route mounting.`,
+  });
 });
 
-// Configure rate limiting with Redis store for distributed scalability
-const globalLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: process.env.NODE_ENV === 'development' ? 5000 : 500,
-  message: 'Too many requests from this IP, please try again after 15 minutes.',
-  store: new RedisStore({
-    sendCommand: (...args) => {
-      const client = getRedisClient();
-      return client ? client.call(...args) : Promise.reject(new Error('Redis client not available'));
-    },
-    prefix: 'rl:global:',
-  }),
-});
-
-const authLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000,
-  max: 20,
-  message: 'Too many login attempts. Please try again after an hour.',
-  store: new RedisStore({
-    sendCommand: (...args) => {
-      const client = getRedisClient();
-      return client ? client.call(...args) : Promise.reject(new Error('Redis client not available'));
-    },
-    prefix: 'rl:auth:',
-  }),
-});
-
-const aiLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000,
-  max: 50,
-  message: 'AI allowance exceeded for this hour. Please try again later.',
-  store: new RedisStore({
-    sendCommand: (...args) => {
-      const client = getRedisClient();
-      return client ? client.call(...args) : Promise.reject(new Error('Redis client not available'));
-    },
-    prefix: 'rl:ai:',
-  }),
-});
-
-app.use('/api', globalLimiter);
-app.use('/api/auth/login', authLimiter);
-app.use('/api/ai', aiLimiter);
-
-app.use(express.json({ limit: '15kb' }));
-app.use('/api/auth', authRoutes);
-app.use('/api/projects', projectRoutes);
-app.use('/api/tasks', taskRoutes);
-app.use('/api/ai', aiRoutes);
-app.use('/api/github', githubRoutes);
-app.use('/api/dashboard', dashboardRoutes);
-app.use('/api/resources', resourceRoutes);
-app.use('/api/actions', actionRoutes);
-app.use('/api/magic', magicBarRoutes);
-app.use('/api/team', teamRoutes);
-app.use('/api/sprints', sprintRoutes);
-app.use('/api/strategic', strategicIntentRoutes);
-app.use('/api/notifications', notificationRoutes);
-app.use('/api/comments', commentRoutes);
-app.use('/api/epi', epiRoutes);
-
-// Unified Workspaces
-
-app.use('/api/v1/engineering', engineeringWorkspaceRoutes);
-app.use('/api/v1/leadership', leadershipWorkspaceRoutes);
-app.use('/api/v1/operations', operationsWorkspaceRoutes);
-app.use('/api/v1/admin', adminRoutes);
-
-
-app.get('/', (req, res) => {
-  res.json({ message: 'NexaSetu API is running!' });
-});
-
-// Global error handling middleware
-const globalErrorHandler = require('./middleware/errorMiddleware');
+const globalErrorHandler = require('./middlewares/errorMiddleware');
 app.use(globalErrorHandler);
-
-// Handle unmatched routes
-app.use((req, res, next) => {
-  res
-    .status(404)
-    .json({
-      status: 'fail',
-      message: `Route ${req.originalUrl} not found on this server`,
-    });
-});
 
 module.exports = app;

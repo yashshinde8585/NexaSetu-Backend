@@ -1,124 +1,169 @@
-# 🛰️ NexaSetu Backend — AI-Driven Orchestration API
+# NexaSetu Backend — Event-Driven Sprint Orchestration Server
 
-[![Node.js](https://img.shields.io/badge/Node.js-339933?style=for-the-badge&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
-[![Express](https://img.shields.io/badge/Express-000000?style=for-the-badge&logo=express&logoColor=white)](https://expressjs.com/)
-[![MongoDB](https://img.shields.io/badge/MongoDB-47A248?style=for-the-badge&logo=mongodb&logoColor=white)](https://www.mongodb.com/)
-
-**NexaSetu Backend** is the high-performance nucleus of the NexaSetu ecosystem. It provides the secure infrastructure, autonomous agents, and AI intent-parsing engine required to orchestrate complex project management workflows at scale.
+NexaSetu Backend is an Express 5 API server and asynchronous worker engine. It ingests GitHub repository webhook streams, executes natural language project commands, and orchestrates sprint timelines using background worker queues.
 
 ---
 
-## 🔗 Ecosystem Links
+## 🏗️ Architecture Design & Job Flow
 
-- **Frontend UI:** [GitHub Repository](https://github.com/yashshinde88585/NexaSetu-frontend-.git)
-
----
-
-## 🔥 Key Technical Capabilities
-
-### 🧠 AI Orchestration & Intent Engine
-The core intelligence layer that powers the **Magic Bar** and autonomous features.
-- **Intent Parsing:** High-velocity NLP mapping from unstructured strings into actionable system triggers.
-- **Staged Action Execution:** Complex AI-suggested actions are staged, validated against `ExecutionPolicy`, and held for human approval.
-- **Autonomous Agent Fleet:** Specialized agents (`Portfolio`, `Harvester`, `Scheduler`) perform continuous health checks and resource optimization.
-
-### 🛡️ Secure Session Infrastructure
-Designed for enterprise-grade security and zero-trust environments.
-- **Stateful JWT Auth:** Secure `HttpOnly` cookie-based sessions, mitigating XSS and session hijacking.
-- **Rate-Limiting & Protection:** Integrated `express-rate-limit` and `helmet` headers for hardening.
-- **Squad Provisioning Engine:** High-velocity multi-user creation with instant, email-based temporary credentials.
-
-### 📊 Real-Time Project Insights
-Data-driven analytics that move beyond basic CRUD operations.
-- **Project Health Algorithms:** Automatically detects at-risk projects based on task velocity and resource bottlenecks.
-- **Unified Activity Stream:** Aggregates both human and AI-generated events into a single, searchable audit log.
-- **GitHub Syncing:** Seamless repository integration using **Octokit** to track development activity alongside project metrics.
-
----
-
-## 🚀 Tech Stack
-
-- **Server:** Node.js (Runtime) & Express 5 (Framework)
-- **Database:** MongoDB with Mongoose (ODM)
-- **Authentication:** JSON Web Tokens (JWT) & Cookie-Parser
-- **AI Integration:** Hugging Face Inference API / Multi-agent services
-- **Version Control API:** Octokit (GitHub REST & GraphQL API)
-- **Security:** Helmet, BcryptJS, Express Rate Limit
-- **Testing:** Jest & Supertest
-
----
-
-## 🛠️ Installation & Setup
-
-### Prerequisites
-- [Node.js](https://nodejs.org/) (v18.x or higher)
-- [MongoDB](https://www.mongodb.com/try/download/community) (Local or Atlas)
-- Hugging Face Access Token
-- GitHub Personal Access Token (for Octokit)
-
-### 1. Clone the Repository
-```bash
-git clone https://github.com/yourusername/nexasetu-backend.git
-cd nexasetu-backend
-```
-
-### 2. Install Dependencies
-```bash
-npm install
-```
-
-### 3. Environment Configuration
-Create a `.env` file in the root directory:
-```env
-PORT=5000
-MONGODB_URI=mongodb://localhost:27017/nexasetu
-JWT_SECRET=your_super_secret_key
-HF_TOKEN=your_huggingface_token
-GITHUB_TOKEN=your_github_token
-NODE_ENV=development
-```
-
-### 4. Run the Server
-```bash
-# Development (with nodemon)
-npm run dev
-
-# Production
-npm start
+```mermaid
+graph TD
+    GH[GitHub Webhook Payload] -->|HTTP POST| API[Express API Gateway]
+    Client[React Client SPA] -->|HTTP REST / Cookies| API
+    Client <-->|WebSockets| SocketServer[Socket.io Engine]
+    
+    API -->|Validate Inputs| Zod[Zod Schemas]
+    Zod -->|Dispatch Jobs| BullMQ[BullMQ Job Queue]
+    BullMQ <-->|Manage Queues| Redis[(Redis Broker & Cache)]
+    
+    Worker[Background Queue Workers] <-->|Consume Jobs| Redis
+    Worker -->|Write Updates / Logs| Mongo[(MongoDB Persistent DB)]
+    Worker -->|Emit Completion| SocketServer
 ```
 
 ---
 
-## 📁 Source Overview
+## 📂 Backend Project Structure
 
 ```text
 src/
-├── config/         # Database and environment configurations
-├── controllers/    # Request handling logic (MagicBar, Dashboard, Auth)
-├── middleware/     # Auth, Error handling, and Rate-limiting
-├── models/         # Mongoose schemas (User, Project, Task, Activity)
-├── routes/         # API endpoint definitions
-├── services/       # Core business logic (Agents, ML services, Action Executor)
-├── utils/          # Shared helper functions
-└── app.js          # Express app initialization
+├── config/             # Mongoose DB, IORedis, and environment configurations
+├── controllers/        # Express request-response lifecycle handlers
+├── models/             # Mongoose MDB schemas (Tasks, Projects, Sprints, AI Logs)
+├── routes/             # RESTful API routing (versioned under /api/v1/)
+├── services/           # Domain business logic (GitHub API wrappers, NLP parsers)
+├── queues/             # BullMQ queue managers and worker thread handlers
+├── middleware/         # Auth guard, CSRF/Helmet security, Zod input validation
+├── validations/        # Strict Zod schemas for API payload validation
+├── utils/              # Winston JSON Logger, error classes, date normalizers
+├── jobs/               # Recurring cron timers (daily performance rollups)
+├── socket.js           # Socket.io connection registries and namespace emitters
+└── app.js              # Express app startup and middleware configurations
 ```
 
 ---
 
-## 🧪 Testing
+## ⚡ Asynchronous Job Queue & Worker Pipeline
 
-The backend includes a comprehensive suite of unit and integration tests using Jest.
+To keep the main API thread responsive, heavy external operations (e.g., fetching repository metadata or processing AI sprint summaries) are offloaded to **BullMQ** workers backed by **Redis**:
+
+- **Concurrency Control:** Configured to run `3` concurrent job consumers per process thread.
+- **Retry Strategy:** Automatic exponential backoff retries with a `1000ms` initial delay and up to `5` retry attempts.
+- **Failure Management:** Failed jobs are automatically moved to a "Failed" queue state and logged via a structured Winston logger for administrator auditing.
+- **Webhook Buffer:** Webhook payloads from GitHub are acknowledged immediately (returning HTTP `202`) and queued for async ingestion to protect the server from transaction spikes during batch pushes.
+
+---
+
+## 📝 API Endpoints Reference
+
+### 1. Magic Bar Command Execution
+- **Endpoint:** `POST /api/v1/magic/execute`
+- **Authentication:** Required (HTTP-Only Cookie JWT)
+- **Request Payload:**
+  ```json
+  {
+    "prompt": "/task create \"Refactor database index\" --assign alex",
+    "projectId": "60d5ec49f83c2c5468d6ef2c"
+  }
+  ```
+- **Success Response (`200 OK`):**
+  ```json
+  {
+    "success": true,
+    "action": "task_created",
+    "data": {
+      "id": "60d5ec49f83c2c5468d6ef8d",
+      "title": "Refactor database index",
+      "assignedTo": "alex",
+      "status": "todo"
+    }
+  }
+  ```
+
+### 2. General Endpoints
+
+| Route | Method | Auth | Payload | Description |
+| --- | --- | --- | --- | --- |
+| `/api/v1/auth/register` | `POST` | Public | `{ email, password, name }` | Register new user |
+| `/api/v1/auth/login` | `POST` | Public | `{ email, password }` | Authenticate & set JWT cookie |
+| `/api/v1/projects` | `GET` | Required | None | Fetch all synced projects |
+| `/api/v1/tasks/:id` | `PATCH` | Required | `{ status, assigneeId }` | Update task details |
+| `/api/v1/epi/metrics` | `GET` | Required | Query params: `?projectId` | Get PR velocity/code metrics |
+
+---
+
+## 🗄️ Database Schema & Indexing
+
+The platform utilizes **MongoDB** via Mongoose to store hierarchical sprint and task dependencies:
+
+- **Key Collections:**
+  - `Workspace`: Top-level user container.
+  - `Project`: References repository IDs and keeps sync status.
+  - `Task`: Holds description, assignee, prerequisite tasks (for ReactFlow dependencies), and GitHub issue references.
+  - `AILog`: Unstructured document store auditing natural language directives.
+- **Index Strategies:**
+  - `Compound Index` on `{ projectId: 1, status: 1 }` to optimize dashboard query filtering.
+  - `Single-field Index` on `githubIssueId` to resolve webhook updates to internal task rows instantly.
+
+---
+
+## 🛠️ Architectural Trade-Offs
+
+- **MongoDB vs PostgreSQL:** The project dependency graph and AI command audit logs are highly fluid and polymorphic. MongoDB's schema flexibility allows task objects to hold dynamic attributes and dependency arrays without migrations.
+- **BullMQ vs Kafka:** The backend does not require high-throughput multi-consumer stream processing. BullMQ utilizes the existing Redis instance, keeping infrastructural complexity and operating costs low.
+- **Express vs Fastify:** While Fastify yields slightly higher throughput, Express 5's middleware compatibility with **Socket.io** and established HTTP-only cookie wrappers allowed for more secure and rapid implementation.
+
+---
+
+## ⚙️ Setup & Deployment
+
+### Environment Configuration
+Create a `.env` file in the root backend directory:
+```env
+PORT=5000
+MONGODB_URI=mongodb://localhost:27017/nexasetu
+REDIS_URL=redis://localhost:6379
+JWT_SECRET=your_jwt_signing_key
+SUPABASE_URL=your_supabase_project_url
+SUPABASE_KEY=your_supabase_anon_key
+GITHUB_TOKEN=your_github_personal_access_token
+```
+
+### Docker Compose Local Setup
+You can spin up local MongoDB and Redis instances using the included docker-compose file:
+```yaml
+version: '3.8'
+services:
+  mongodb:
+    image: mongo:6.0
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+
+  redis:
+    image: redis:7.0-alpine
+    ports:
+      - "6379:6379"
+
+volumes:
+  mongo-data:
+```
+Launch using:
 ```bash
-npm test
+docker-compose up -d
 ```
 
----
-
-## 🤝 Contributing
-
-1. Fork the Project
-2. Create your Feature Branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your Changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the Branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
-
+### Running Server
+1. Install dependencies:
+   ```bash
+   npm install
+   ```
+2. Start development mode with hot-reloading:
+   ```bash
+   npm run dev
+   ```
+3. Start production server:
+   ```bash
+   npm run start
+   ```

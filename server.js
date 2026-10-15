@@ -1,81 +1,132 @@
-const dotenv = require('dotenv');
-dotenv.config();
-
-const { connectRedis } = require('./src/config/redis');
-const { initOrchestratorQueue } = require('./src/queues/orchestratorQueue');
-
-// Initialize Redis cache before loading app to satisfy RedisStore script loading
-connectRedis();
-initOrchestratorQueue();
-
+const config = require('./src/config/config');
+const logger = require('./src/utils/logger');
+const { connectRedis, getRedisClient } = require('./src/config/redis');
+const {
+  initOrchestratorQueue,
+  initOrchestratorWorker,
+} = require('./src/jobs/orchestratorQueue');
+const {
+  initAiExtractionQueue,
+  initAiExtractionWorker,
+} = require('./src/jobs/aiExtractionQueue');
+const {
+  initStorageQueue,
+  initStorageWorker,
+} = require('./src/jobs/storageQueue');
+const {
+  initMagicBarQueue,
+  initMagicBarWorker,
+} = require('./src/jobs/magicBarQueue');
+const { initCronQueue, initCronWorker } = require('./src/jobs/cronQueue');
+const workerManager = require('./src/utils/workerManager');
 const http = require('http');
-const socketIO = require('./src/socket');
-const app = require('./src/app');
-const connectDB = require('./src/config/db');
-const cronService = require('./src/services/cronService');
+const mongoose = require('mongoose');
 
-const PORT = process.env.PORT || 5000;
-const server = http.createServer(app);
+async function bootstrap() {
+  try {
+    logger.info(`[BOOTSTRAP] Initializing services in ${config.env} mode...`);
 
-// Setup real-time communication hub
-socketIO.init(server);
+    const connectDB = require('./src/config/db');
+    const infraPromise = Promise.all([connectRedis(), connectDB()]);
 
-// API Health Check
-app.get('/api/health', (req, res) => {
-  res.json({
-    status: 'operational',
-    service: 'NexaSetu Central Hub',
-    timestamp: new Date().toISOString()
-  });
-});
+    initOrchestratorQueue();
+    initAiExtractionQueue();
+    initMagicBarQueue();
+    initCronQueue();
+    await initStorageQueue();
 
-// Start database connection and server
-connectDB().then(() => {
-  cronService.start();
-  server.listen(PORT, () => {
-    console.log(`[NEXA-SETU] API Server running on http://localhost:${PORT}`);
-    console.log(`[NEXA-SETU] Real-Time Signal Hub initialized`);
-  });
-});
-
-/**
- * Graceful Shutdown Protocol
- * Closes connections cleanly to prevent data corruption.
- */
-const gracefulShutdown = () => {
-  console.log('[SHUTDOWN] Closing server and dependencies...');
-  server.close(async () => {
-    console.log('[SHUTDOWN] HTTP server closed.');
-    const mongoose = require('mongoose');
-    const { getRedisClient } = require('./src/config/redis');
-    
-    await mongoose.connection.close();
-    console.log('[SHUTDOWN] Database connection closed.');
-    
-    const redis = getRedisClient();
-    if (redis && redis.isOpen) {
-        await redis.quit();
-        console.log('[SHUTDOWN] Redis connection closed.');
+    if (process.env.RUN_WORKERS === 'true') {
+      logger.info(
+        '[BOOTSTRAP] Initializing Workers in API process (RUN_WORKERS=true)'
+      );
+      initOrchestratorWorker();
+      initAiExtractionWorker();
+      initStorageWorker();
+      initMagicBarWorker();
+      initCronWorker();
     }
-    
-    process.exit(0);
-  });
-};
 
-process.on('SIGTERM', gracefulShutdown);
-process.on('SIGINT', gracefulShutdown);
+    logger.info('[BOOTSTRAP] Redis & Queue Services initialized');
 
-/**
- * Global Exception and Rejection Listeners
- * Prevents asynchronous errors from crashing the process silently.
- */
+    await infraPromise;
+
+    logger.info('[BOOTSTRAP] Database & Cache Connectivity established');
+
+    const app = require('./src/app');
+    const socketIO = require('./src/socket');
+    const cronService = require('./src/services/cronService');
+
+    const server = http.createServer(app);
+
+    server.timeout = 30000;
+    server.headersTimeout = 31000;
+    server.keepAliveTimeout = 5000;
+    logger.info('[BOOTSTRAP] Network timeouts enforced');
+
+    socketIO.init(server);
+    cronService.start();
+    logger.info('[BOOTSTRAP] Real-time & Scheduled services synchronized');
+
+    server.listen(config.port, () => {
+      logger.info(
+        `[NEXA-SETU] API Server listening on port ${config.port} [${config.env}]`
+      );
+    });
+
+    const shutdown = async (signal) => {
+      logger.info(`[SHUTDOWN] Signal ${signal} detected. Purging resources...`);
+
+      server.close(async () => {
+        try {
+          await socketIO.close();
+          await workerManager.shutdown();
+
+          await mongoose.connection.close();
+          const redis = getRedisClient();
+          if (redis) await redis.quit();
+
+          logger.info('[SHUTDOWN] All connections terminated. Goodbye.');
+          process.exit(0);
+        } catch (err) {
+          logger.error(`[SHUTDOWN] Cleanup failure: ${err.message}`);
+          process.exit(1);
+        }
+      });
+
+      setTimeout(() => {
+        logger.error('[SHUTDOWN] Force exit triggered after timeout.');
+        process.exit(1);
+      }, 10000);
+    };
+
+    process.on('SIGTERM', () => shutdown('SIGTERM'));
+    process.on('SIGINT', () => shutdown('SIGINT'));
+  } catch (err) {
+    logger.error(`[FATAL] Bootstrap failed: ${err.message}`);
+    process.exit(1);
+  }
+}
+
+const { notify } = require('./src/utils/notify');
+
 process.on('unhandledRejection', (reason, promise) => {
-  console.error('[FATAL] Unhandled Rejection at:', promise, 'reason:', reason);
-  gracefulShutdown();
+  logger.error(
+    '[UNHANDLED-REJECTION] Promise rejection unhandled: %s',
+    reason?.stack || reason
+  );
+  notify('CRITICAL', 'Unhandled Rejection detected', {
+    reason: reason?.message || reason,
+    stack: reason?.stack,
+  }).catch((err) => {
+    logger.error('Failed to send unhandled rejection alert: %s', err.message);
+  });
 });
 
-process.on('uncaughtException', (err) => {
-  console.error('[FATAL] Uncaught Exception:', err.message);
-  console.error(err.stack);
+process.on('uncaughtException', async (err) => {
+  await notify('CRITICAL', `Uncaught Exception: ${err.message}`, {
+    stack: err.stack,
+  });
   process.exit(1);
 });
+
+bootstrap();

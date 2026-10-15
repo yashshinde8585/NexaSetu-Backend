@@ -1,9 +1,9 @@
-// Utility functions for AI response parsing and prompt sanitization.
+const crypto = require('crypto');
+
 exports.extractAndParseJSON = (text) => {
-  if (!text) return null;
+  if (!text || typeof text !== 'string') return null;
 
   try {
-    // Extract JSON string from potentially unstructured LLM output.
     const firstBrace = text.indexOf('{');
     const lastBrace = text.lastIndexOf('}');
     const firstBracket = text.indexOf('[');
@@ -23,53 +23,36 @@ exports.extractAndParseJSON = (text) => {
 
     if (!jsonStr) return null;
 
-    // Strip markdown wrappers and extra formatting artifacts.
-    jsonStr = jsonStr
+    const cleanStr = jsonStr
       .replace(/```json/g, '')
       .replace(/```/g, '')
+      .replace(/,\s*([\]}])/g, '$1')
       .trim();
 
-    // Fix common trailing comma issues in LLM-generated JSON.
-    jsonStr = jsonStr.replace(/,\s*([\]}])/g, '$1');
-
-    return JSON.parse(jsonStr);
+    return JSON.parse(cleanStr);
   } catch (error) {
-    console.warn(
-      `[aiHelpers] Failed to parse AI JSON: ${error.message}. Raw text: ${text.substring(0, 100)}...`
-    );
     return null;
   }
 };
 
-/**
- * Truncates text based on character estimate to avoid context window overflow.
- * @param {string} text - The input text.
- * @param {number} maxTokens - Maximum allowed tokens (estimated).
- */
 exports.truncateToWindow = (text, maxTokens = 4000) => {
   if (!text) return '';
-  const maxChars = maxTokens * 4; // Dynamic heuristic
-  if (text.length <= maxChars) return text;
-  return text.substring(0, maxChars) + '... [TRUNCATED]';
+  const maxChars = maxTokens * 4;
+  return text.length <= maxChars
+    ? text
+    : text.substring(0, maxChars) + '... [TRUNCATED]';
 };
 
-/**
- * Strips control characters and escapes delimiters used in system prompt templates.
- * Prevents basic system prompt engineering or injection.
- */
 exports.sanitizeInput = (text) => {
   if (!text || typeof text !== 'string') return '';
   return text
-    .replace(/[\u0000-\u001F\u007F-\u009F]/g, '') // Remove control characters
-    .replace(/\[/g, '&#91;') // Escape prompt start delimiter
-    .replace(/\]/g, '&#93;') // Escape prompt end delimiter
+    .replace(/[\u0000-\u001F\u007F-\u009F]/g, '')
+    .replace(/\[/g, '&#91;')
+    .replace(/\]/g, '&#93;')
     .trim();
 };
 
-/**
- * Generates a SHA-256 hash for deterministic intent caching.
- */
 exports.generateHash = (text) => {
-  const crypto = require('crypto');
+  if (!text) return '';
   return crypto.createHash('sha256').update(text).digest('hex');
 };

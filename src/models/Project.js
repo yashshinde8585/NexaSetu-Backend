@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const logger = require('../utils/logger');
 
 const projectSchema = new mongoose.Schema(
   {
@@ -6,22 +7,43 @@ const projectSchema = new mongoose.Schema(
       type: String,
       required: [true, 'Project name is required'],
       trim: true,
+      index: true,
+    },
+    description: {
+      type: String,
+      trim: true,
+    },
+    type: {
+      type: String,
+      default: 'Product Development',
+    },
+    priority: {
+      type: String,
+      enum: ['Low', 'Medium', 'High', 'Critical'],
+      default: 'Medium',
+    },
+    status: {
+      type: String,
+      enum: ['active', 'draft', 'archived'],
+      default: 'active',
     },
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
       required: true,
+      index: true,
     },
     members: [
       {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'User',
+        index: true,
       },
     ],
     githubRepo: {
       owner: String,
       repo: String,
-      fullName: String,
+      fullName: { type: String, index: true, sparse: true },
     },
     sprint: {
       type: mongoose.Schema.Types.ObjectId,
@@ -35,11 +57,13 @@ const projectSchema = new mongoose.Schema(
       type: String,
       uppercase: true,
       trim: true,
+      required: true,
     },
     workspaceId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Workspace',
       required: true,
+      index: true,
     },
   },
   {
@@ -47,23 +71,37 @@ const projectSchema = new mongoose.Schema(
   }
 );
 
-// Auto-generate project key if not provided
 projectSchema.pre('save', function () {
   if (!this.key && this.name) {
-    // Take first 3-4 letters of name, remove spaces, uppercase
     this.key = this.name
       .replace(/[^a-zA-Z]/g, '')
       .substring(0, 3)
       .toUpperCase();
 
-    // If name is too short, pad with X
     while (this.key.length < 3) {
       this.key += 'X';
     }
   }
 });
 
-// Indexing for workspace-specific project retrieval
+// Strategic Compound Indexes
+projectSchema.index({ workspaceId: 1, key: 1 }, { unique: true });
 projectSchema.index({ workspaceId: 1, name: 1 });
+projectSchema.index({ workspaceId: 1, members: 1 });
+
+projectSchema.pre(/^find/, async function () {
+  const query = this.getQuery();
+  if (
+    query.workspaceId === undefined &&
+    !this.getOptions().bypassTenantSafety
+  ) {
+    const msg = `[TENANT-SAFETY] Query executed without workspaceId filter on Project collection: ${JSON.stringify(query)}`;
+    if (process.env.ENFORCE_TENANT_SAFETY === 'true') {
+      throw new Error(msg);
+    } else {
+      logger.warn(msg);
+    }
+  }
+});
 
 module.exports = mongoose.model('Project', projectSchema);

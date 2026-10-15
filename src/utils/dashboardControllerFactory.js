@@ -15,12 +15,16 @@ module.exports = (service, dataMap, extraData = {}) => {
 
     if (Array.isArray(dataMap)) {
       // Execute each method in the array
-      const promises = dataMap.map(methodName => service[methodName](userId, workspaceId));
+      const promises = dataMap.map((methodName) =>
+        service[methodName](userId, workspaceId)
+      );
       const results = await Promise.all(promises);
-      
+
       dataMap.forEach((methodName, index) => {
         // Remove 'get' prefix and camelCase the key
-        const key = methodName.replace(/^get/, '').replace(/^[A-Z]/, c => c.toLowerCase());
+        const key = methodName
+          .replace(/^get/, '')
+          .replace(/^[A-Z]/, (c) => c.toLowerCase());
         resultData[key] = results[index];
       });
     } else if (typeof dataMap === 'function') {
@@ -31,8 +35,8 @@ module.exports = (service, dataMap, extraData = {}) => {
       status: 'success',
       data: {
         ...resultData,
-        ...extraData
-      }
+        ...extraData,
+      },
     });
   });
 };

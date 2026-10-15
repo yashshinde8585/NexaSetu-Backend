@@ -1,8 +1,9 @@
-// Processes algorithmic timeline shifts and system health evaluations for core entities.
-exports.calculateDelayStatus = (task) => {
-  const now = new Date();
-  const dueDate = task.dueDate ? new Date(task.dueDate) : null;
-  const completedAt = task.completedAt ? new Date(task.completedAt) : null;
+const { parseDate } = require('./common');
+
+// Calculate if a task is Delayed, At Risk, or On Track
+exports.calculateDelayStatus = (task, now = new Date()) => {
+  const dueDate = parseDate(task.dueDate);
+  const completedAt = parseDate(task.completedAt);
 
   if (!dueDate) return 'On Track';
 
@@ -14,7 +15,6 @@ exports.calculateDelayStatus = (task) => {
     return 'Delayed';
   }
 
-  // Elevate status arrays reflecting imminent timeframe warnings automatically.
   const hoursRemaining = (dueDate - now) / (1000 * 60 * 60);
   if (hoursRemaining < 24) {
     return 'At Risk';
@@ -23,6 +23,7 @@ exports.calculateDelayStatus = (task) => {
   return 'On Track';
 };
 
+// Add business days to a date skipping weekends
 exports.addBusinessDays = (date, days) => {
   const resultDate = new Date(date);
   let daysAdded = 0;
@@ -30,7 +31,6 @@ exports.addBusinessDays = (date, days) => {
   while (daysAdded < days) {
     resultDate.setDate(resultDate.getDate() + 1);
     const dayOfWeek = resultDate.getDay();
-    // Calculate explicit business day exclusions aggressively bypassing weekends.
     if (dayOfWeek !== 0 && dayOfWeek !== 6) {
       daysAdded++;
     }

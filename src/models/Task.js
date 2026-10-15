@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const logger = require('../utils/logger');
 
 const taskSchema = new mongoose.Schema(
   {
@@ -6,6 +7,7 @@ const taskSchema = new mongoose.Schema(
       type: String,
       required: [true, 'Task title is required'],
       trim: true,
+      index: true,
     },
     description: {
       type: String,
@@ -15,6 +17,7 @@ const taskSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Project',
       required: true,
+      index: true,
     },
     workspaceId: {
       type: mongoose.Schema.Types.ObjectId,
@@ -24,16 +27,27 @@ const taskSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ['todo', 'in_progress', 'in_review', 'done'],
+      enum: [
+        'todo',
+        'in_progress',
+        'blocked',
+        'in_review',
+        'approved',
+        'rejected',
+        'done',
+      ],
       default: 'todo',
+      index: true,
     },
     assignedUser: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
+      index: true,
     },
     sprint: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Sprint',
+      index: true,
     },
     source: {
       type: String,
@@ -47,10 +61,22 @@ const taskSchema = new mongoose.Schema(
     githubId: {
       type: String,
       sparse: true,
+      index: true,
     },
     dueDate: {
       type: Date,
       required: false,
+      index: true,
+    },
+    startDate: {
+      type: Date,
+      required: false,
+      index: true,
+    },
+    durationUnit: {
+      type: String,
+      enum: ['minutes', 'hours', 'days'],
+      default: 'minutes',
     },
     startedAt: {
       type: Date,
@@ -65,17 +91,20 @@ const taskSchema = new mongoose.Schema(
       {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'Task',
+        index: true,
       },
     ],
     parentId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Task',
       default: null,
+      index: true,
     },
     type: {
       type: String,
-      enum: ['intent', 'epic', 'story', 'task', 'bug'],
+      enum: ['intent', 'epic', 'story', 'task', 'bug', 'spike', 'tech_debt'],
       default: 'task',
+      index: true,
     },
     strategicWeight: {
       v: { type: Number, default: 0 },
@@ -86,6 +115,7 @@ const taskSchema = new mongoose.Schema(
     sasScore: {
       type: Number,
       default: 0,
+      index: true,
     },
     embedding: {
       type: [Number],
@@ -94,6 +124,7 @@ const taskSchema = new mongoose.Schema(
     taskNumber: {
       type: Number,
       required: false,
+      index: true,
     },
     githubUrl: {
       type: String,
@@ -103,6 +134,7 @@ const taskSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
       required: false,
+      index: true,
     },
     timelineHistory: [
       {
@@ -116,6 +148,7 @@ const taskSchema = new mongoose.Schema(
       type: String,
       enum: ['low', 'medium', 'high', 'urgent'],
       default: 'medium',
+      index: true,
     },
     estimatedDuration: {
       type: Number,
@@ -130,6 +163,7 @@ const taskSchema = new mongoose.Schema(
     blocked: {
       type: Boolean,
       default: false,
+      index: true,
     },
     blockedReason: {
       type: String,
@@ -143,35 +177,109 @@ const taskSchema = new mongoose.Schema(
         completed: { type: Boolean, default: false },
       },
     ],
+    reviewers: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User',
+      },
+    ],
+    reviewStatus: {
+      type: String,
+      enum: [
+        'pending',
+        'code_review',
+        'test_validation',
+        'approved',
+        'rejected',
+      ],
+      default: 'pending',
+    },
+    escalationOwner: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      index: true,
+    },
+    isEscalated: {
+      type: Boolean,
+      default: false,
+    },
+    reviewNotes: {
+      type: String,
+      trim: true,
+    },
+    strategicDirective: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Directive',
+      index: true,
+    },
+    category: {
+      type: String,
+      enum: ['backend', 'frontend', 'qa', 'design', 'other'],
+      index: true,
+    },
+    attachments: [
+      {
+        name: {
+          type: String,
+          required: [true, 'Attachment name is required'],
+        },
+        url: {
+          type: String,
+          required: false,
+        },
+        storagePath: {
+          type: String,
+          required: [true, 'Storage path is required'],
+        },
+        size: {
+          type: Number,
+          required: [true, 'File size is required'],
+        },
+        type: {
+          type: String,
+          required: [true, 'MIME type is required'],
+        },
+        uploadedAt: {
+          type: Date,
+          default: Date.now,
+        },
+      },
+    ],
   },
   {
     timestamps: true,
   }
 );
 
-// Dashboard aggregation optimization with workspace isolation
-taskSchema.index({ workspaceId: 1, project: 1, status: 1, type: 1, dueDate: 1 });
-taskSchema.index({ workspaceId: 1, assignedUser: 1, status: 1, type: 1 });
-taskSchema.index({ project: 1, status: 1 }); // Frequent filter for project views
+taskSchema.index({ workspaceId: 1, project: 1, status: 1, type: 1 });
+taskSchema.index({ workspaceId: 1, assignedUser: 1, status: 1 });
+taskSchema.index({ workspaceId: 1, status: 1, dueDate: 1 });
+taskSchema.index({ workspaceId: 1, type: 1, status: 1 });
+taskSchema.index({ project: 1, taskNumber: 1 }, { unique: true });
 
-// Auto-increment task number per project (Distributed & Parallel ready)
 taskSchema.pre('save', async function () {
+  if (this.timelineHistory && this.timelineHistory.length > 100) {
+    this.timelineHistory = this.timelineHistory.slice(-100);
+  }
+
   if (this.isNew) {
-    const { getRedisClient } = require('../config/redis');
+    const { getRedisClient, isRedisConnected } = require('../config/redis');
     const redis = getRedisClient();
     const projectKey = `project:${this.project}:lastTaskNumber`;
 
     try {
-      if (redis && redis.status === 'ready') {
+      if (isRedisConnected()) {
         const nextNumber = await redis.incr(projectKey);
         this.taskNumber = nextNumber;
-        
-        // Sync back to MongoDB periodically or in the background for durability
-        // For now, we update it in the background
+
         const Project = mongoose.model('Project');
-        Project.updateOne({ _id: this.project }, { lastTaskNumber: nextNumber }).catch(() => {});
+        Project.updateOne(
+          { _id: this.project },
+          { lastTaskNumber: nextNumber }
+        ).catch((err) => {
+          logger.error(err);
+        });
       } else {
-        // Fallback to legacy atomic increment if Redis is offline
         const Project = mongoose.model('Project');
         const project = await Project.findByIdAndUpdate(
           this.project,
@@ -180,11 +288,37 @@ taskSchema.pre('save', async function () {
         );
         if (project) {
           this.taskNumber = project.lastTaskNumber;
+        } else {
+          throw new Error('Project not found');
         }
       }
     } catch (err) {
-      console.warn('[TASK-NUMBER] Sequence generation failed, using timestamp fallback');
+      logger.error(err);
+      if (err.code === 11000) throw err;
       this.taskNumber = Date.now();
+    }
+  }
+});
+
+taskSchema.pre(/^find/, async function () {
+  const query = this.getQuery();
+  if (
+    query.workspaceId === undefined &&
+    !this.getOptions().bypassTenantSafety
+  ) {
+    const { getContext } = require('../utils/context');
+    const store = getContext();
+    const requestId = store.requestId || 'unknown';
+    const actor = store.user
+      ? `User(id=${store.user.id}, role=${store.user.role})`
+      : 'System/Anonymous';
+
+    const msg = `[TENANT-SAFETY] Query executed without workspaceId filter on Task collection: ${JSON.stringify(query)} | Actor: ${actor} | RequestId: ${requestId}`;
+
+    if (process.env.ENFORCE_TENANT_SAFETY === 'true') {
+      throw new Error(msg);
+    } else {
+      logger.warn(msg);
     }
   }
 });
