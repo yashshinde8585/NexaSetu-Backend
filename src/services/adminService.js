@@ -66,19 +66,17 @@ const formatOverview = (
 };
 
 const formatUsers = (users, teams) => {
-  return users
-    .filter((u) => u.role !== 'WORKSPACE_ADMIN')
-    .map((u) => ({
-      id: u._id,
-      name: u.name,
-      email: u.email,
-      role: u.role,
-      status: u.status || 'Active',
-      lastActive: u.lastActive || u.updatedAt,
-      teams: teams
-        .filter((t) => t.members.some((m) => m.toString() === u._id.toString()))
-        .map((t) => t.name),
-    }));
+  return users.map((u) => ({
+    id: u._id,
+    name: u.name,
+    email: u.email,
+    role: u.role,
+    status: u.status || 'Active',
+    lastActive: u.lastActive || u.updatedAt,
+    teams: teams
+      .filter((t) => t.members.some((m) => m.toString() === u._id.toString()))
+      .map((t) => t.name),
+  }));
 };
 
 const formatIntegrations = (workspace) => {
@@ -390,7 +388,12 @@ const getAdminDashboard = async (workspaceId, filters = {}) => {
         { clerkUserId: { $exists: true, $ne: null } },
       ],
     }),
-    User.countDocuments({ workspaceId, updatedAt: { $lt: ninetyDaysAgo } }),
+    User.countDocuments({
+      workspaceId,
+      status: { $ne: 'Deactivated' },
+      createdAt: { $lt: ninetyDaysAgo },
+      updatedAt: { $lt: ninetyDaysAgo },
+    }),
     User.countDocuments({ workspaceId, failedLoginAttempts: { $gt: 3 } }),
   ]);
 
