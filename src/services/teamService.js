@@ -278,14 +278,27 @@ const getWorkspaceTeamStats = async (workspaceId) => {
   const activePerformersSet = new Set(
     activePerformerIds.map((id) => id.toString())
   );
-  const recentUsers = await User.find({
+  const nonDeactivatedUsers = await User.find({
     workspaceId,
-    createdAt: { $gte: thirtyDaysAgo },
+    status: { $ne: 'Deactivated' },
   })
-    .select('_id')
+    .select('_id status createdAt updatedAt lastActive')
     .lean();
-  recentUsers.forEach((u) => activePerformersSet.add(u._id.toString()));
-  const activeCount = activePerformersSet.size;
+
+  nonDeactivatedUsers.forEach((u) => {
+    const lastActiveTime = u.lastActive || u.updatedAt || u.createdAt;
+    if (
+      lastActiveTime &&
+      Date.now() - new Date(lastActiveTime).getTime() <= 30 * 24 * 60 * 60 * 1000
+    ) {
+      activePerformersSet.add(u._id.toString());
+    }
+  });
+
+  const activeCount = Math.min(
+    activePerformersSet.size,
+    nonDeactivatedUsers.length
+  );
 
   const prevActivePerformerIds = await AuditLog.distinct('performer', {
     workspaceId,
@@ -296,12 +309,19 @@ const getWorkspaceTeamStats = async (workspaceId) => {
   );
   const prevRecentUsers = await User.find({
     workspaceId,
-    createdAt: { $gte: sixtyDaysAgo, $lt: thirtyDaysAgo },
+    status: { $ne: 'Deactivated' },
+    $or: [
+      { createdAt: { $gte: sixtyDaysAgo, $lt: thirtyDaysAgo } },
+      { updatedAt: { $gte: sixtyDaysAgo, $lt: thirtyDaysAgo } },
+    ],
   })
     .select('_id')
     .lean();
   prevRecentUsers.forEach((u) => prevActivePerformersSet.add(u._id.toString()));
-  const prevActiveCount = prevActivePerformersSet.size;
+  const prevActiveCount = Math.min(
+    prevActivePerformersSet.size,
+    nonDeactivatedUsers.length
+  );
   const activeGrowth =
     prevActiveCount > 0
       ? parseFloat(
@@ -356,15 +376,15 @@ const getWorkspaceTeamStats = async (workspaceId) => {
   }
 
   // 4. Inactive Users (> 90d)
-  const activeUsers90d = await AuditLog.distinct('performer', {
-    workspaceId,
-    timestamp: { $gte: ninetyDaysAgo },
+  const inactiveUsers = nonDeactivatedUsers.filter((u) => {
+    if (activePerformersSet.has(u._id.toString())) return false;
+    const lastActiveTime = u.lastActive || u.updatedAt || u.createdAt;
+    const isOlderThan90d = new Date(u.createdAt) < ninetyDaysAgo;
+    const noRecentActivity =
+      !lastActiveTime || new Date(lastActiveTime) < ninetyDaysAgo;
+    return isOlderThan90d && noRecentActivity;
   });
-  const activeUsers90dSet = new Set(activeUsers90d.map((id) => id.toString()));
-  const allUsersList = await User.find({ workspaceId }).select('_id').lean();
-  const inactiveCount = allUsersList.filter(
-    (u) => !activeUsers90dSet.has(u._id.toString())
-  ).length;
+  const inactiveCount = inactiveUsers.length;
 
   const activeUsersPrev90d = await AuditLog.distinct('performer', {
     workspaceId,
@@ -373,13 +393,10 @@ const getWorkspaceTeamStats = async (workspaceId) => {
   const activeUsersPrev90dSet = new Set(
     activeUsersPrev90d.map((id) => id.toString())
   );
-  const allUsersAsOf30dList = await User.find({
-    workspaceId,
-    createdAt: { $lt: thirtyDaysAgo },
-  })
-    .select('_id')
-    .lean();
-  const inactiveCountAsOf30d = allUsersAsOf30dList.filter(
+  const usersOlderThan90d = nonDeactivatedUsers.filter(
+    (u) => new Date(u.createdAt) < ninetyDaysAgo
+  );
+  const inactiveCountAsOf30d = usersOlderThan90d.filter(
     (u) => !activeUsersPrev90dSet.has(u._id.toString())
   ).length;
   const inactiveGrowth =
@@ -407,7 +424,9 @@ const getWorkspaceTeamStats = async (workspaceId) => {
     );
     const usersAtThatTime = await User.find({
       workspaceId,
-      createdAt: { $lte: dateLimit },
+      status: { $ne: 'Deactivated' },
+      createdAt: { $lte: activityLimit },
+      updatedAt: { $lte: activityLimit },
     })
       .select('_id')
       .lean();
@@ -587,9 +606,15 @@ const getWorkspaceTeam = async (
     // Determine status (Active, Inactive, Deactivated)
     let displayStatus = m.status || 'Active';
     if (displayStatus !== 'Deactivated') {
-      const inactiveThreshold = 14 * 24 * 60 * 60 * 1000; // 14 days
-      if (Date.now() - new Date(lastActiveTime).getTime() > inactiveThreshold) {
+      const isOlderThan30d =
+        Date.now() - new Date(m.createdAt).getTime() > 30 * 24 * 60 * 60 * 1000;
+      const noRecentActivity =
+        Date.now() - new Date(lastActiveTime).getTime() >
+        30 * 24 * 60 * 60 * 1000;
+      if (isOlderThan30d && noRecentActivity) {
         displayStatus = 'Inactive';
+      } else {
+        displayStatus = 'Active';
       }
     }
     return {

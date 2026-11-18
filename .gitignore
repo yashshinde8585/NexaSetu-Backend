@@ -28,3 +28,6 @@ coverage/
 .vscode/
 *.swp
 *.log
+
+*.test.jsx
+*.test.js
