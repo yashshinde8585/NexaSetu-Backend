@@ -1,4 +1,8 @@
 const Subscription = require('../models/Subscription');
+const User = require('../models/User');
+const Project = require('../models/Project');
+const Sprint = require('../models/Sprint');
+const Invitation = require('../models/Invitation');
 const { PLANS } = require('../config/plans');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
@@ -67,14 +71,41 @@ exports.getSubscription = catchAsync(async (req, res, next) => {
     });
   }
 
-  const planConfig = PLANS[subscription.plan.toUpperCase()];
+  const planKey = (subscription.plan || 'free').toUpperCase();
+  const planConfig = PLANS[planKey] || PLANS.FREE;
+
+  // Retrieve verified workspace counts
+  const [activeUsersCount, pendingInvitesCount, projectCount, sprintCount] =
+    await Promise.all([
+      User.countDocuments({ workspaceId, status: { $ne: 'Deactivated' } }).catch(() => 0),
+      Invitation.countDocuments({
+        workspaceId,
+        status: 'pending',
+        expiresAt: { $gt: Date.now() },
+      }).catch(() => 0),
+      Project.countDocuments({ workspaceId, status: { $ne: 'archived' } }).catch(() => 0),
+      Sprint.countDocuments({ workspaceId }).catch(() => 0),
+    ]);
+
+  const totalSeats = activeUsersCount + pendingInvitesCount;
+  const subObj = subscription.toObject ? subscription.toObject() : { ...subscription };
+  subObj.usage = {
+    ...(subObj.usage || {}),
+    projects: projectCount,
+    sprints: sprintCount,
+    users: totalSeats > 0 ? totalSeats : (subObj.usage?.users || 1),
+    activeUsers: activeUsersCount,
+    pendingInvites: pendingInvitesCount,
+    aiUsage: subObj.usage?.aiUsage || 0,
+  };
 
   res.status(200).json({
     status: 'success',
     data: {
-      subscription,
+      subscription: subObj,
       limits: planConfig.features,
       planName: planConfig.name,
+      usage: subObj.usage,
     },
   });
 });
