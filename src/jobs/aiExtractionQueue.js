@@ -22,7 +22,7 @@ const initAiExtractionQueue = () => {
     },
   });
   workerManager.registerQueue(aiExtractionQueue);
-  logger.info('[QUEUE] AI Extraction Queue initialized.');
+  logger.debug('[Queues] AI extraction queue registered');
 };
 
 const initAiExtractionWorker = () => {
@@ -125,7 +125,7 @@ const initAiExtractionWorker = () => {
     }
   });
 
-  logger.info('[QUEUE] AI Extraction Worker operational.');
+  logger.debug('[Workers] AI extraction worker started');
 };
 
 const getAiExtractionQueue = () => aiExtractionQueue;

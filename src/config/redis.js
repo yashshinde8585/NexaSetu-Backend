@@ -25,11 +25,11 @@ const getRetryStrategy = (clientName) => (times) => {
   if (times > 20) {
     throttleLog(
       'lastError',
-      `[REDIS] ${clientName} - Persistent connection failure after ${times} attempts. Check REDIS_URL.`,
+      `[Redis] ${clientName} connection failed after ${times} attempts. Check REDIS_URL.`,
       'error'
     );
   } else {
-    logger.info(`[REDIS] ${clientName} - Reconnecting... attempt ${times}`);
+    logger.debug(`[Redis] ${clientName} retry attempt ${times}`);
   }
   return delay;
 };
@@ -42,17 +42,15 @@ const createClient = (name, options = {}) => {
     ...options,
   });
 
-  client.on('connect', () => logger.info(`[REDIS] ${name} link established`));
-  client.on('ready', () =>
-    logger.info(`[REDIS] ${name} fully synchronized (READY)`)
-  );
+  client.on('connect', () => logger.debug(`[Redis] ${name} connected`));
+  client.on('ready', () => logger.debug(`[Redis] ${name} ready`));
   client.on('error', (err) => {
-    throttleLog('lastError', `[REDIS] ${name} error: ${err.message}`, 'error');
+    throttleLog('lastError', `[Redis] ${name} error: ${err.message}`, 'error');
   });
   client.on('reconnecting', (ms) =>
-    logger.info(`[REDIS] ${name} reconnecting in ${ms}ms...`)
+    logger.warn(`[Redis] ${name} reconnecting in ${ms}ms`)
   );
-  client.on('end', () => logger.warn(`[REDIS] ${name} connection closed`));
+  client.on('end', () => logger.warn(`[Redis] ${name} connection closed`));
 
   return client;
 };
@@ -69,13 +67,15 @@ const connectRedis = async () => {
         const info = await redisClient.info('server');
         const versionMatch = info.match(/redis_version:([0-9\.]+)/);
         const version = versionMatch ? versionMatch[1] : 'unknown';
-        logger.info(`[REDIS] Server version detected: ${version}`);
-      } catch (err) {}
+        logger.info(`[Redis] Connection ready (v${version})`);
+      } catch (err) {
+        logger.info('[Redis] Connection ready');
+      }
     });
 
     return { redisClient, bullRedisClient };
   } catch (err) {
-    logger.error(`[REDIS] Fatal bridge failure: ${err.message}`);
+    logger.error(`[Redis] Initialization failed: ${err.message}`);
     throw err;
   }
 };

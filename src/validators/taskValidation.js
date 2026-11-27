@@ -29,6 +29,11 @@ const createTaskSchema = z
     type: z
       .enum(['intent', 'epic', 'story', 'task', 'bug', 'spike', 'tech_debt'])
       .optional(),
+    storyPoints: z
+      .number()
+      .min(0, 'Story points cannot be negative')
+      .nullable()
+      .optional(),
     estimatedDuration: z.number().min(0).optional(),
     attachments: z
       .array(
@@ -68,6 +73,11 @@ const updateTaskSchema = z
     priority: z.enum(['low', 'medium', 'high', 'urgent']).optional(),
     type: z
       .enum(['intent', 'epic', 'story', 'task', 'bug', 'spike', 'tech_debt'])
+      .optional(),
+    storyPoints: z
+      .number()
+      .min(0, 'Story points cannot be negative')
+      .nullable()
       .optional(),
     estimatedDuration: z.number().min(0).optional(),
     blocked: z.boolean().optional(),

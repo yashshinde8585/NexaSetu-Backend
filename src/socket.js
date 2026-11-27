@@ -177,7 +177,7 @@ const init = (server) => {
     const { registerHandlers } = require('./socket/socketHandlers');
 
     io.on(EVENTS.CONNECTION, (socket) => {
-      logger.info(`[SOCKET] Authenticated: ${socket.user?.id || socket.id}`);
+      logger.debug(`[Socket] Connected: ${socket.user?.id || socket.id}`);
 
       if (socket.user?.id) {
         socket.join(socket.user.id.toString());
@@ -187,22 +187,18 @@ const init = (server) => {
       registerHandlers(socket);
 
       socket.on(EVENTS.DISCONNECT, (reason) => {
-        logger.info(`[SOCKET] Session ended: ${socket.id} (${reason})`);
+        logger.debug(`[Socket] Disconnected: ${socket.id} (${reason})`);
       });
 
       socket.on(EVENTS.ERROR, (err) => {
-        logger.error(
-          `[SOCKET] Operational error for ${socket.id}: ${err.message}`
-        );
+        logger.error(`[Socket] Error for ${socket.id}: ${err.message}`);
       });
     });
 
-    logger.info(
-      '[SOCKET] Real-time Hub initialized with security and horizontal scaling'
-    );
+    logger.info('[Socket] Real-time server initialized');
     return io;
   } catch (err) {
-    logger.error(`[SOCKET] Critical initialization failure: ${err.message}`);
+    logger.error(`[Socket] Initialization failed: ${err.message}`);
     throw err;
   }
 };
@@ -219,9 +215,7 @@ const getIO = () => {
 const getEmitter = () => {
   if (emitter) return emitter;
 
-  logger.info(
-    '[SOCKET] Initializing standalone Redis emitter for worker process'
-  );
+  logger.debug('[Socket] Initializing Redis emitter for worker process');
   const pubClient = createClient('WorkerEmitter', {
     maxRetriesPerRequest: null,
   });
@@ -231,10 +225,10 @@ const getEmitter = () => {
 
 const close = async () => {
   if (io) {
-    logger.info('[SOCKET] Shutting down real-time hub...');
+    logger.info('[Socket] Closing real-time server...');
     await new Promise((resolve) => {
       io.close(() => {
-        logger.info('[SOCKET] Hub connections terminated');
+        logger.info('[Socket] Real-time server closed');
         resolve();
       });
     });

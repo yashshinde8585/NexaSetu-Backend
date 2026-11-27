@@ -8,6 +8,8 @@ const validate = require('../middlewares/validateMiddleware');
 const {
   createSprintSchema,
   updateSprintSchema,
+  addTasksSchema,
+  completeSprintSchema,
 } = require('../validators/sprintValidation');
 
 const router = express.Router();
@@ -140,6 +142,40 @@ router.get('/:id/finalize', sprintStatsController.finalizeSprint);
  *         description: Successful response
  */
 router.get('/:id/report', sprintStatsController.getSprintReportData);
+
+router.post(
+  '/:id/start',
+  requirePermission(PERMISSIONS.EDIT_SPRINT),
+  sprintController.startSprint
+);
+
+router.post(
+  '/:id/complete',
+  requirePermission(PERMISSIONS.EDIT_SPRINT),
+  validate(completeSprintSchema),
+  sprintController.completeSprint
+);
+
+router.get('/:id/tasks', sprintController.getSprintTasks);
+
+router.post(
+  '/:id/tasks',
+  requirePermission(PERMISSIONS.EDIT_SPRINT),
+  validate(addTasksSchema),
+  sprintController.addTasksToSprint
+);
+
+router.delete(
+  '/:id/tasks/:taskId',
+  requirePermission(PERMISSIONS.EDIT_SPRINT),
+  sprintController.removeTaskFromSprint
+);
+
+router.get('/:id/burndown', sprintController.getSprintBurndown);
+
+router.post('/:id/ai-plan', sprintController.getAiSprintPlanning);
+
+router.get('/:id/ai-health', sprintController.getAiSprintHealth);
 
 /**
  * @swagger

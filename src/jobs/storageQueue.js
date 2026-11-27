@@ -31,13 +31,15 @@ const initStorageQueue = async () => {
         jobId: 'daily-orphan-cleanup',
       }
     );
-    logger.info('[QUEUE] Storage Cleanup Repeatable Job scheduled.');
+    logger.debug('[Jobs] Storage cleanup job registered');
   } catch (err) {
-    logger.error(`[QUEUE] Failed to schedule repeatable job: ${err.message}`);
+    logger.error(
+      `[Jobs] Failed to register storage cleanup job: ${err.message}`
+    );
   }
 
   workerManager.registerQueue(storageQueue);
-  logger.info('[QUEUE] Storage Queue initialized.');
+  logger.debug('[Queues] Storage queue registered');
 };
 
 const initStorageWorker = () => {
@@ -118,7 +120,7 @@ const initStorageWorker = () => {
     }
   });
 
-  logger.info('[QUEUE] Storage Worker operational.');
+  logger.debug('[Workers] Storage worker started');
 };
 
 const getStorageQueue = () => storageQueue;
