@@ -13,6 +13,10 @@ const sprintSchema = new mongoose.Schema(
       type: String,
       trim: true,
     },
+    description: {
+      type: String,
+      trim: true,
+    },
     startDate: {
       type: Date,
       required: true,
@@ -62,6 +66,42 @@ const sprintSchema = new mongoose.Schema(
         completionPercentage: Number,
         activeBlockers: Number,
         pressure: Number,
+      },
+    ],
+    startedAt: {
+      type: Date,
+    },
+    completedAt: {
+      type: Date,
+    },
+    committedPoints: {
+      type: Number,
+      default: 0,
+    },
+    completedPoints: {
+      type: Number,
+      default: 0,
+    },
+    committedTasksCount: {
+      type: Number,
+      default: 0,
+    },
+    completedTasksCount: {
+      type: Number,
+      default: 0,
+    },
+    completionSnapshot: {
+      type: mongoose.Schema.Types.Mixed,
+    },
+    dailySnapshots: [
+      {
+        date: String,
+        idealRemaining: Number,
+        actualRemaining: Number,
+        totalCommitted: Number,
+        completedPoints: Number,
+        tasksDone: Number,
+        tasksRemaining: Number,
       },
     ],
     createdBy: {

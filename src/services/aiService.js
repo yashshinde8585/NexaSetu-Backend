@@ -65,6 +65,47 @@ const parseAndFormatAIResponse = (text) => {
   };
 };
 
+const generateHeuristicTask = (text) => {
+  if (!text || typeof text !== 'string') {
+    return {
+      title: 'Untitled Task',
+      description: '',
+      status: 'todo',
+      priority: 'medium',
+      type: 'task',
+      estimatedDuration: 30,
+    };
+  }
+
+  const clean = text.trim();
+  const firstLine = clean
+    .split('\n')[0]
+    .replace(/^[#*\-•\s]+/, '')
+    .trim();
+  const title = (firstLine.length > 3 ? firstLine : clean).substring(0, 100);
+
+  const lower = clean.toLowerCase();
+  const isBug =
+    /\b(bug|fix|error|issue|crash|fail|broken|hotfix|leak|regression)\b/i.test(
+      lower
+    );
+  const isUrgent =
+    /\b(urgent|critical|blocker|asap|p0|high priority|severity 1)\b/i.test(
+      lower
+    );
+  const isFeature =
+    /\b(feature|add|create|implement|build|support|new)\b/i.test(lower);
+
+  return {
+    title: title || 'Untitled Task',
+    description: clean.substring(0, 500),
+    status: 'todo',
+    priority: isUrgent ? 'high' : isBug ? 'high' : 'medium',
+    type: isBug ? 'bug' : isFeature ? 'story' : 'task',
+    estimatedDuration: isBug ? 45 : 30,
+  };
+};
+
 const trackUsage = async (workspaceId, usage) => {
   if (!isRedisConnected() || !usage) return;
 
@@ -114,24 +155,31 @@ exports.extractTaskFromText = async (text, signal = null) => {
     },
   ];
 
-  const response = await aiBreaker.fire(messages, { signal });
-  const result = parseAndFormatAIResponse(response.content);
+  try {
+    const response = await aiBreaker.fire(messages, { signal });
+    const result = parseAndFormatAIResponse(response.content);
 
-  if (!result) {
-    throw new Error('AI Processing Error: Failed to parse mission parameters');
-  }
+    if (!result) {
+      throw new Error('Failed to parse extracted task data');
+    }
 
-  if (isRedisConnected()) {
-    const cacheKey = cacheManager.generateKey(
-      'global',
-      'ai',
-      `extract:${intentHash}`
+    if (isRedisConnected()) {
+      const cacheKey = cacheManager.generateKey(
+        'global',
+        'ai',
+        `extract:${intentHash}`
+      );
+      cacheManager.set(cacheKey, result, CACHE_EXPIRATION).catch(() => {});
+      trackUsage('global', response.usage);
+    }
+
+    return result;
+  } catch (err) {
+    logger.warn(
+      `[AI-Service] AI extraction failed (${err.message}). Falling back to heuristic parsing.`
     );
-    cacheManager.set(cacheKey, result, CACHE_EXPIRATION).catch(() => {});
-    trackUsage('global', response.usage);
+    return generateHeuristicTask(cleanInput);
   }
-
-  return result;
 };
 
 exports.processPrompt = async (systemPrompt, userPrompt, config = {}) => {

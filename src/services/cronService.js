@@ -6,10 +6,10 @@ const actionExecutor = require('./actionExecutor');
 const riskMonitorService = require('./riskMonitorService');
 const logger = require('../utils/logger');
 
-const SERVICE_NAME = 'CronService (Autonomous Sentinel)';
+const SERVICE_NAME = 'Jobs';
 
 const start = () => {
-  logger.info(`[${SERVICE_NAME}] Autonomous routine managed by BullMQ.`);
+  logger.info(`[${SERVICE_NAME}] Scheduled jobs managed by BullMQ`);
 };
 
 const runMorningDiagnostic = async () => {
@@ -18,13 +18,13 @@ const runMorningDiagnostic = async () => {
     for (const workspaceId of workspaces) {
       if (!workspaceId) continue;
 
-      logger.info(
-        `[${SERVICE_NAME}] Running intelligence diagnostic for workspace: ${workspaceId}`
+      logger.debug(
+        `[${SERVICE_NAME}] Running risk analysis for workspace ${workspaceId}`
       );
       await riskMonitorService.runProjectRiskAnalysis(workspaceId);
     }
   } catch (error) {
-    logger.error(`[${SERVICE_NAME}] Global telemetry failure:`, error);
+    logger.error(`[${SERVICE_NAME}] Morning risk analysis failed:`, error);
   }
 };
 

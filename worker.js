@@ -20,42 +20,39 @@ const workerManager = require('./src/utils/workerManager');
 
 async function startWorker() {
   try {
-    logger.info('[WORKER-BOOT] Initializing background worker process...');
+    logger.info('[Worker] Starting background worker process');
 
     const connectDB = require('./src/config/db');
 
     await Promise.all([connectRedis(), connectDB()]);
 
-    logger.info('[WORKER-BOOT] Infrastructure connected.');
+    logger.debug('[Worker] Database and Redis connected');
 
     initOrchestratorQueue();
     initAiExtractionQueue();
     await initStorageQueue();
+    logger.info('[Queues] Worker queues registered');
 
     initOrchestratorWorker();
     initAiExtractionWorker();
     initStorageWorker();
 
-    logger.info(
-      '[WORKER-BOOT] All workers are operational and listening for jobs.'
-    );
+    logger.info('[Workers] Background workers started');
 
     const shutdown = async (signal) => {
-      logger.info(
-        `[WORKER-SHUTDOWN] Signal ${signal} detected. Closing workers...`
-      );
+      logger.info(`[Shutdown] Received ${signal}, closing workers...`);
 
       try {
         await workerManager.shutdown();
 
         await mongoose.connection.close();
-        const redis = getBullRedisClient();
+        const redis = getRedisClient();
         if (redis) await redis.quit();
 
-        logger.info('[WORKER-SHUTDOWN] Cleanup complete. Exit 0.');
+        logger.info('[Shutdown] Worker cleanup complete');
         process.exit(0);
       } catch (err) {
-        logger.error(`[WORKER-SHUTDOWN] Cleanup failed: ${err.message}`);
+        logger.error(`[Shutdown] Worker cleanup failed: ${err.message}`);
         process.exit(1);
       }
     };
@@ -63,7 +60,7 @@ async function startWorker() {
     process.on('SIGTERM', () => shutdown('SIGTERM'));
     process.on('SIGINT', () => shutdown('SIGINT'));
   } catch (err) {
-    logger.error(`[WORKER-FATAL] Startup failed: ${err.message}`);
+    logger.error(`[Worker] Startup failed: ${err.message}`);
     process.exit(1);
   }
 }
