@@ -29,13 +29,13 @@ const initCronQueue = async () => {
         jobId: 'daily-morning-diagnostic',
       }
     );
-    logger.info('[QUEUE] Cron Repeatable Jobs scheduled.');
+    logger.debug('[Jobs] Cron repeatable jobs registered');
   } catch (err) {
-    logger.error(`[QUEUE] Failed to schedule cron jobs: ${err.message}`);
+    logger.error(`[Jobs] Failed to register cron jobs: ${err.message}`);
   }
 
   workerManager.registerQueue(cronQueue);
-  logger.info('[QUEUE] Cron Queue initialized.');
+  logger.debug('[Queues] Cron queue registered');
 };
 
 const initCronWorker = () => {
@@ -62,7 +62,7 @@ const initCronWorker = () => {
   );
 
   workerManager.registerWorker(cronWorker);
-  logger.info('[QUEUE] Cron Worker operational.');
+  logger.debug('[Workers] Cron worker started');
 };
 
 const getCronQueue = () => cronQueue;

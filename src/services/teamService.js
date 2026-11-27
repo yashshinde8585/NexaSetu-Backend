@@ -289,7 +289,8 @@ const getWorkspaceTeamStats = async (workspaceId) => {
     const lastActiveTime = u.lastActive || u.updatedAt || u.createdAt;
     if (
       lastActiveTime &&
-      Date.now() - new Date(lastActiveTime).getTime() <= 30 * 24 * 60 * 60 * 1000
+      Date.now() - new Date(lastActiveTime).getTime() <=
+        30 * 24 * 60 * 60 * 1000
     ) {
       activePerformersSet.add(u._id.toString());
     }
@@ -664,14 +665,21 @@ const getWorkspaceTeam = async (
 
   // 7. Calculate Stats for the workspace
   const stats = await getWorkspaceTeamStats(workspaceId);
+  const projectActiveCount = memberItems.filter(
+    (m) => m.status === 'Active'
+  ).length;
 
   return {
     items: paginatedItems,
     total: totalItems,
+    activeCount: projectActiveCount,
     page: pageNum,
     limit: limitNum,
     pages: Math.ceil(totalItems / limitNum),
-    stats,
+    stats: {
+      ...stats,
+      projectActiveCount,
+    },
   };
 };
 

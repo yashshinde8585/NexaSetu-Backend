@@ -19,9 +19,9 @@ const connectDB = async () => {
       serverSelectionTimeoutMS: 5000, // Fail fast to prevent request hang during outages
       heartbeatFrequencyMS: 10000,
     });
-    logger.info(`Connected to MongoDB [${config.env}] (Pool: 100)`);
+    logger.info(`[DB] MongoDB connected (${config.env})`);
   } catch (error) {
-    logger.error(`Database Connection Failed: ${error.message}`);
+    logger.error(`[DB] MongoDB connection failed: ${error.message}`);
     process.exit(1);
   }
 };

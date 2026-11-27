@@ -20,7 +20,7 @@ const initMagicBarQueue = () => {
     },
   });
   workerManager.registerQueue(magicBarQueue);
-  logger.info('[QUEUE] Magic Bar Queue initialized.');
+  logger.debug('[Queues] Magic Bar queue registered');
 };
 
 const initMagicBarWorker = () => {
@@ -84,7 +84,7 @@ const initMagicBarWorker = () => {
 
   workerManager.registerWorker(magicBarWorker);
 
-  logger.info('[QUEUE] Magic Bar Worker operational.');
+  logger.debug('[Workers] Magic Bar worker started');
 };
 
 const getMagicBarQueue = () => magicBarQueue;
