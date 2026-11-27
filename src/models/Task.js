@@ -49,6 +49,12 @@ const taskSchema = new mongoose.Schema(
       ref: 'Sprint',
       index: true,
     },
+    storyPoints: {
+      type: Number,
+      default: null,
+      min: [0, 'Story points cannot be negative'],
+      index: true,
+    },
     source: {
       type: String,
       enum: ['manual', 'ai-generated', 'github'],

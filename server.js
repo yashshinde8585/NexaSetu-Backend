@@ -24,7 +24,7 @@ const mongoose = require('mongoose');
 
 async function bootstrap() {
   try {
-    logger.info(`[BOOTSTRAP] Initializing services in ${config.env} mode...`);
+    logger.info(`[Startup] Starting backend (${config.env})`);
 
     const connectDB = require('./src/config/db');
     const infraPromise = Promise.all([connectRedis(), connectDB()]);
@@ -34,23 +34,18 @@ async function bootstrap() {
     initMagicBarQueue();
     initCronQueue();
     await initStorageQueue();
+    logger.info('[Queues] All 5 queues registered');
 
     if (process.env.RUN_WORKERS === 'true') {
-      logger.info(
-        '[BOOTSTRAP] Initializing Workers in API process (RUN_WORKERS=true)'
-      );
       initOrchestratorWorker();
       initAiExtractionWorker();
       initStorageWorker();
       initMagicBarWorker();
       initCronWorker();
+      logger.info('[Workers] All 5 workers started');
     }
 
-    logger.info('[BOOTSTRAP] Redis & Queue Services initialized');
-
     await infraPromise;
-
-    logger.info('[BOOTSTRAP] Database & Cache Connectivity established');
 
     const app = require('./src/app');
     const socketIO = require('./src/socket');
@@ -61,20 +56,17 @@ async function bootstrap() {
     server.timeout = 30000;
     server.headersTimeout = 31000;
     server.keepAliveTimeout = 5000;
-    logger.info('[BOOTSTRAP] Network timeouts enforced');
+    logger.debug('[Startup] HTTP server timeouts configured');
 
     socketIO.init(server);
     cronService.start();
-    logger.info('[BOOTSTRAP] Real-time & Scheduled services synchronized');
 
     server.listen(config.port, () => {
-      logger.info(
-        `[NEXA-SETU] API Server listening on port ${config.port} [${config.env}]`
-      );
+      logger.info(`[Server] Listening on port ${config.port} (${config.env})`);
     });
 
     const shutdown = async (signal) => {
-      logger.info(`[SHUTDOWN] Signal ${signal} detected. Purging resources...`);
+      logger.info(`[Shutdown] Received ${signal}, closing connections...`);
 
       server.close(async () => {
         try {
@@ -85,16 +77,16 @@ async function bootstrap() {
           const redis = getRedisClient();
           if (redis) await redis.quit();
 
-          logger.info('[SHUTDOWN] All connections terminated. Goodbye.');
+          logger.info('[Shutdown] All connections closed');
           process.exit(0);
         } catch (err) {
-          logger.error(`[SHUTDOWN] Cleanup failure: ${err.message}`);
+          logger.error(`[Shutdown] Cleanup failed: ${err.message}`);
           process.exit(1);
         }
       });
 
       setTimeout(() => {
-        logger.error('[SHUTDOWN] Force exit triggered after timeout.');
+        logger.error('[Shutdown] Force exit after timeout');
         process.exit(1);
       }, 10000);
     };
@@ -102,7 +94,7 @@ async function bootstrap() {
     process.on('SIGTERM', () => shutdown('SIGTERM'));
     process.on('SIGINT', () => shutdown('SIGINT'));
   } catch (err) {
-    logger.error(`[FATAL] Bootstrap failed: ${err.message}`);
+    logger.error(`[Startup] Bootstrap failed: ${err.message}`);
     process.exit(1);
   }
 }

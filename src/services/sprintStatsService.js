@@ -3,6 +3,18 @@ const Task = require('../models/Task');
 const Sprint = require('../models/Sprint');
 const AgentOrchestrator = require('../services/agentOrchestrator');
 const AppError = require('../utils/appError');
+const { getProjectAccessQuery } = require('../utils/queryHelpers');
+
+const ensureSprintProjectAccess = async (user, projectRef) => {
+  if (!projectRef) return;
+  const Project = mongoose.model('Project');
+  const projectId = projectRef._id || projectRef;
+  const accessQuery = getProjectAccessQuery(user);
+  const hasAccess = await Project.exists({ ...accessQuery, _id: projectId });
+  if (!hasAccess) {
+    throw new AppError('You do not have access to this project', 403);
+  }
+};
 
 const getProjectsForSprint = async (sprintId, workspaceId) => {
   const Project = mongoose.model('Project');
@@ -18,6 +30,7 @@ const finalizeSprint = async (user, sprintId) => {
     workspaceId: user.workspaceId,
   });
   if (!sprint) throw new AppError('Sprint not found', 404);
+  await ensureSprintProjectAccess(user, sprint.project);
 
   const sprintProjects = await getProjectsForSprint(
     sprintObjectId,
@@ -104,6 +117,7 @@ const getSprintStats = async (user, sprintId) => {
   if (!sprint) {
     return null;
   }
+  await ensureSprintProjectAccess(user, sprint.project);
 
   const sprintProjects = await getProjectsForSprint(
     sprintObjectId,
@@ -120,15 +134,7 @@ const getSprintStats = async (user, sprintId) => {
   const aggregation = await Task.aggregate([
     {
       $match: {
-        $or: [
-          { sprint: sprintObjectId },
-          {
-            $and: [
-              { project: { $in: sprintProjects } },
-              { $or: [{ sprint: null }, { sprint: { $exists: false } }] },
-            ],
-          },
-        ],
+        sprint: sprintObjectId,
       },
     },
     {
@@ -152,6 +158,18 @@ const getSprintStats = async (user, sprintId) => {
               },
               totalOpen: {
                 $sum: { $cond: [{ $ne: ['$status', 'done'] }, 1, 0] },
+              },
+              totalPoints: {
+                $sum: { $ifNull: ['$storyPoints', 0] },
+              },
+              completedPoints: {
+                $sum: {
+                  $cond: [
+                    { $eq: ['$status', 'done'] },
+                    { $ifNull: ['$storyPoints', 0] },
+                    0,
+                  ],
+                },
               },
               overdue: {
                 $sum: {
@@ -198,7 +216,10 @@ const getSprintStats = async (user, sprintId) => {
         blockers: [
           {
             $match: {
-              dependencies: { $not: { $size: 0 } },
+              $or: [
+                { blocked: true },
+                { dependencies: { $exists: true, $not: { $size: 0 } } },
+              ],
               status: { $ne: 'done' },
             },
           },
@@ -210,6 +231,10 @@ const getSprintStats = async (user, sprintId) => {
             $group: {
               _id: '$assignedUser',
               count: { $sum: 1 },
+              points: { $sum: { $ifNull: ['$storyPoints', 0] } },
+              completedCount: {
+                $sum: { $cond: [{ $eq: ['$status', 'done'] }, 1, 0] },
+              },
             },
           },
           {
@@ -227,6 +252,8 @@ const getSprintStats = async (user, sprintId) => {
               name: '$user.name',
               role: '$user.role',
               count: 1,
+              points: 1,
+              completedCount: 1,
             },
           },
           { $sort: { count: -1 } },
@@ -234,15 +261,6 @@ const getSprintStats = async (user, sprintId) => {
         velocityHistory: [
           {
             $match: {
-              $or: [
-                { sprint: sprintObjectId },
-                {
-                  $and: [
-                    { project: { $in: sprintProjects } },
-                    { $or: [{ sprint: null }, { sprint: { $exists: false } }] },
-                  ],
-                },
-              ],
               status: 'done',
               completedAt: {
                 $gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
@@ -371,6 +389,7 @@ const getSprintReportData = async (user, sprintId) => {
     workspaceId: user.workspaceId,
   });
   if (!sprint) throw new AppError('Sprint not found', 404);
+  await ensureSprintProjectAccess(user, sprint.project);
 
   const sprintProjects = await getProjectsForSprint(
     sprintObjectId,

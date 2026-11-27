@@ -20,7 +20,7 @@ const initOrchestratorQueue = () => {
     },
   });
   workerManager.registerQueue(orchestratorQueue);
-  logger.info('[QUEUE] Orchestrator Queue initialized.');
+  logger.debug('[Queues] Orchestrator queue registered');
 };
 
 const initOrchestratorWorker = () => {
@@ -111,7 +111,7 @@ const initOrchestratorWorker = () => {
     logger.debug(`[QUEUE] Job ${job.id} completed successfully.`);
   });
 
-  logger.info('[QUEUE] Orchestrator Worker operational.');
+  logger.debug('[Workers] Orchestrator worker started');
 };
 
 const getOrchestratorQueue = () => orchestratorQueue;

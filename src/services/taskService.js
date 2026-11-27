@@ -1,6 +1,7 @@
 const mongoose = require('mongoose');
 const Task = require('../models/Task');
 const Project = require('../models/Project');
+const Sprint = require('../models/Sprint');
 const Notification = require('../models/Notification');
 const TaskStatusHistory = require('../models/TaskStatusHistory');
 const AgentOrchestrator = require('../services/agentOrchestrator');
@@ -250,6 +251,7 @@ const createTask = async (user, data) => {
       durationUnit: durationUnit || 'minutes',
       priority: priority || 'medium',
       type: type || 'task',
+      storyPoints: data.storyPoints !== undefined ? data.storyPoints : null,
       estimatedDuration: estimatedDuration || 30,
       remainingDuration: estimatedDuration || 30,
       createdBy: user._id,
@@ -473,6 +475,8 @@ const updateTask = async (user, id, data) => {
     'description',
     'status',
     'assignedUser',
+    'sprint',
+    'storyPoints',
     'dueDate',
     'startDate',
     'durationUnit',
@@ -490,6 +494,28 @@ const updateTask = async (user, id, data) => {
     }
   });
 
+  if (updateData.sprint !== undefined && updateData.sprint !== null) {
+    if (!mongoose.Types.ObjectId.isValid(updateData.sprint)) {
+      throw new AppError('Invalid sprint ID format.', 400);
+    }
+    const targetSprint = await Sprint.findOne({
+      _id: updateData.sprint,
+      workspaceId: project.workspaceId,
+    });
+    if (!targetSprint) {
+      throw new AppError('Target sprint not found in this workspace.', 404);
+    }
+    if (targetSprint.status === 'completed') {
+      throw new AppError('Cannot assign tasks to a completed sprint.', 400);
+    }
+    if (
+      targetSprint.project &&
+      targetSprint.project.toString() !== task.project.toString()
+    ) {
+      throw new AppError('Target sprint belongs to a different project.', 400);
+    }
+  }
+
   if (updateData.attachments) {
     const totalNewSize = await validateTaskStorage(
       project.workspaceId,
@@ -501,13 +527,27 @@ const updateTask = async (user, id, data) => {
     await storageService.updateStorageUsage(project.workspaceId, totalNewSize);
   }
 
-  const clientVersion = data.version !== undefined ? data.version : data.__v;
-  if (clientVersion === undefined) {
+  // Require explicit version for general edits; allow versionless quick-edits only for scalar sprint/storyPoints updates while still guarding against concurrent writes via task.__v.
+  const versionlessQuickEditFields = new Set(['storyPoints', 'sprint']);
+  const updatedKeys = Object.keys(updateData);
+  const isQuickEditOnly =
+    updatedKeys.length > 0 &&
+    updatedKeys.every((key) => versionlessQuickEditFields.has(key));
+
+  const explicitVersion = data.version !== undefined ? data.version : data.__v;
+
+  if (explicitVersion === undefined && !isQuickEditOnly) {
     throw new AppError(
       'Conflict Prevention: Version number is required for updates.',
       400
     );
   }
+
+  const clientVersion =
+    explicitVersion !== undefined ? explicitVersion : task.__v;
+
+  const versionQuery =
+    clientVersion !== undefined ? { _id: id, __v: clientVersion } : { _id: id };
 
   const status = updateData.status;
   if (status && status !== task.status) {
@@ -541,7 +581,7 @@ const updateTask = async (user, id, data) => {
   }
 
   const updatedTask = await Task.findOneAndUpdate(
-    { _id: id, __v: clientVersion },
+    versionQuery,
     { $set: updateData, $inc: { __v: 1 } },
     {
       returnDocument: 'after',
@@ -688,7 +728,7 @@ const getMyTasks = async (user, scope, page = 1, limit = 20) => {
     .sort('-completedAt -updatedAt')
     .skip(skip)
     .limit(limitValue)
-    .populate('project', 'name')
+    .populate('project', 'name key')
     .populate('assignedUser', 'name email')
     .lean();
 
@@ -697,6 +737,7 @@ const getMyTasks = async (user, scope, page = 1, limit = 20) => {
     return {
       ...t,
       delayStatus,
+      projectKey: t.project?.key || 'NEXA',
       createdFormatted: formatDueDate(t.createdAt),
     };
   });
